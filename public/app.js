@@ -510,7 +510,7 @@ function renderDevices(data) {
 
   for (const device of data.devices) {
     const card = document.createElement('article');
-    card.className = 'device-card';
+    card.className = `device-card${device.local || device.self ? ' host' : ''}`;
 
     const heading = document.createElement('div');
     heading.className = 'device-heading';

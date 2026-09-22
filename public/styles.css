@@ -405,6 +405,11 @@ h2 { font-size: 0.95rem; font-weight: 650; }
 }
 
 .device-card { display: grid; gap: 0.35rem; }
+.device-card.host {
+  border-color: #2563eb;
+  background: #172554;
+}
+
 .device-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .device-name { color: #f3f4f6; font-weight: 650; }
 .device-meta, .setting-label { color: #9ca3af; font-size: 0.75rem; }
