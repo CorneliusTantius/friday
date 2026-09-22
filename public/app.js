@@ -14,6 +14,7 @@ let activeModel = '';
 let activeThinkingLevel = 'off';
 let suggestionRequest = 0;
 let suggestionTimer;
+let filesRoot = '';
 let filesPath = '';
 let selectedFilePath = '';
 let activeFeature = 'pi';
@@ -329,6 +330,7 @@ function formatBytes(bytes) {
 }
 
 function renderFiles(data) {
+  filesRoot = data.root;
   filesPath = data.path;
   filesPathLabel.textContent = data.path ? `/${data.path}` : '/';
   filesUp.disabled = !data.path;
@@ -371,7 +373,10 @@ function renderFiles(data) {
 }
 
 async function loadFiles(path = filesPath) {
-  const response = await apiFetch(`/api/files?cwd=${encodeURIComponent(workspace.value)}&path=${encodeURIComponent(path)}`);
+  const params = new URLSearchParams({ cwd: workspace.value });
+  if (filesRoot) params.set('root', filesRoot);
+  if (filesRoot || path) params.set('path', path);
+  const response = await apiFetch(`/api/files?${params}`);
   if (!response.ok) {
     const data = await response.json();
     fileList.replaceChildren();
@@ -384,7 +389,9 @@ async function loadFiles(path = filesPath) {
 }
 
 async function loadFile(path) {
-  const response = await apiFetch(`/api/files/content?cwd=${encodeURIComponent(workspace.value)}&path=${encodeURIComponent(path)}`);
+  const params = new URLSearchParams({ cwd: workspace.value, path });
+  if (filesRoot) params.set('root', filesRoot);
+  const response = await apiFetch(`/api/files/content?${params}`);
   if (!response.ok) {
     const data = await response.json();
     fileTitle.textContent = 'Preview unavailable';
@@ -396,11 +403,11 @@ async function loadFile(path) {
   }
 
   const data = await response.json();
-  selectedFilePath = data.path;
+  selectedFilePath = data.workspacePath || '';
   fileTitle.textContent = data.path.split('/').pop() || data.path;
-  fileMeta.textContent = `${data.path} · ${formatBytes(data.size)} · modified ${new Date(data.modified).toLocaleString()}`;
+  fileMeta.textContent = `${data.path} · ${formatBytes(data.size)} · modified ${new Date(data.modified).toLocaleString()}${data.workspacePath ? '' : ' · outside active Pi workspace'}`;
   fileContent.textContent = data.content;
-  openFileInPi.disabled = false;
+  openFileInPi.disabled = !data.workspacePath;e;
 }
 
 function renderDevices(data) {
@@ -586,6 +593,7 @@ workspace.addEventListener('input', () => {
 async function updateWorkspaceSessions() {
   messages.replaceChildren();
   sessionList.replaceChildren();
+  filesRoot = '';
   filesPath = '';
   selectedFilePath = '';
   openFileInPi.disabled = true;

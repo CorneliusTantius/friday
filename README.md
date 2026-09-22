@@ -46,7 +46,7 @@ npm run dev
 - `GET /api/models` — available Pi models
 - `POST /api/model` with `{ "provider": "...", "modelId": "..." }` — change the current model
 - `GET /api/thinking-levels` and `POST /api/thinking-level` — read or change Pi's thinking level
-- `GET /api/files` and `GET /api/files/content` — browse and preview files inside an allowed workspace
+- `GET /api/files` and `GET /api/files/content` — browse and preview files inside the configured workspace root while keeping the active Pi workspace contextce
 - `GET /api/devices` — read-only Tailscale device status
 - `GET /api/settings` — safe runtime and server configuration details
 - `POST /api/settings/workspace` with `{ "workspace": "..." }` — persist the default workspace

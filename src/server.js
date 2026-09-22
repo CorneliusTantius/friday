@@ -189,6 +189,26 @@ async function persistWorkspace(workspace) {
   preferredWorkspace = workspace;
 }
 
+async function configuredWorkspaceRoot(workspace) {
+  const roots = await allowedRootPaths();
+  const root = roots
+    .filter((candidate) => isWithin(candidate, workspace))
+    .sort((a, b) => b.length - a.length)[0];
+  if (!root) {
+    throw new RequestError('workspace is outside the configured workspace roots');
+  }
+  return root;
+}
+
+async function resolveConfiguredRoot(path) {
+  const candidate = await resolveWorkspace(path);
+  const roots = await allowedRootPaths();
+  if (!roots.includes(candidate)) {
+    throw new RequestError('file root must be a configured workspace root');
+  }
+  return candidate;
+}
+
 async function resolveWorkspaceEntry(cwd, inputPath = '') {
   const workspace = await resolveWorkspace(cwd);
   if (typeof inputPath !== 'string' || inputPath.includes('\0') || isAbsolute(inputPath)) {
@@ -223,8 +243,22 @@ async function resolveWorkspaceEntry(cwd, inputPath = '') {
   };
 }
 
-async function listWorkspaceFiles(cwd, inputPath = '') {
-  const directory = await resolveWorkspaceEntry(cwd, inputPath);
+async function resolveFileContext(cwd, rootInput, inputPath, pathProvided) {
+  const workspace = await resolveWorkspace(cwd);
+  const root = rootInput ? await resolveConfiguredRoot(rootInput) : await configuredWorkspaceRoot(workspace);
+  if (!isWithin(root, workspace)) {
+    throw new RequestError('file root does not contain the workspace');
+  }
+
+  const initialPath = relative(root, workspace).split(sep).join('/');
+  const targetPath = pathProvided ? inputPath : initialPath;
+  const entry = await resolveWorkspaceEntry(root, targetPath);
+  return { workspace, root, entry };
+}
+
+async function listWorkspaceFiles(cwd, rootInput, inputPath, pathProvided) {
+  const context = await resolveFileContext(cwd, rootInput, inputPath, pathProvided);
+  const directory = context.entry;
   if (!directory.info.isDirectory()) {
     throw new RequestError('file path is not a directory', 400);
   }
@@ -251,9 +285,13 @@ async function listWorkspaceFiles(cwd, inputPath = '') {
     if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) {
       continue;
     }
+    const childRelativePath = `${directory.relativePath ? `${directory.relativePath}/` : ''}${entry.name}`;
     entries.push({
       name: entry.name,
-      path: `${directory.relativePath ? `${directory.relativePath}/` : ''}${entry.name}`,
+      path: childRelativePath,
+      workspacePath: isWithin(context.workspace, childPath)
+        ? relative(context.workspace, childPath).split(sep).join('/')
+        : null,
       type: info.isDirectory() ? 'directory' : 'file',
       size: info.isFile() ? info.size : null,
       modified: info.mtime.toISOString(),
@@ -264,11 +302,17 @@ async function listWorkspaceFiles(cwd, inputPath = '') {
     if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
     return a.name.localeCompare(b.name);
   });
-  return { workspace: directory.workspace, path: directory.relativePath, entries };
+  return {
+    workspace: context.workspace,
+    root: directory.workspace,
+    path: directory.relativePath,
+    entries,
+  };
 }
 
-async function readWorkspaceFile(cwd, inputPath) {
-  const file = await resolveWorkspaceEntry(cwd, inputPath);
+async function readWorkspaceFile(cwd, rootInput, inputPath) {
+  const context = await resolveFileContext(cwd, rootInput, inputPath, true);
+  const file = context.entry;
   if (!file.info.isFile()) {
     throw new RequestError('file path is not a regular file', 400);
   }
@@ -281,8 +325,12 @@ async function readWorkspaceFile(cwd, inputPath) {
     throw new RequestError('binary files cannot be previewed', 415);
   }
   return {
-    workspace: file.workspace,
+    workspace: context.workspace,
+    root: file.workspace,
     path: file.relativePath,
+    workspacePath: isWithin(context.workspace, file.path)
+      ? relative(context.workspace, file.path).split(sep).join('/')
+      : null,
     size: content.length,
     modified: file.info.mtime.toISOString(),
     content: content.toString('utf8'),
@@ -569,7 +617,9 @@ async function handleRequest(request, response) {
   if (request.method === 'GET' && pathname === '/api/files') {
     sendJson(response, 200, await listWorkspaceFiles(
       url.searchParams.get('cwd') || pi.workspace,
+      url.searchParams.get('root') || '',
       url.searchParams.get('path') || '',
+      url.searchParams.has('path'),
     ));
     return;
   }
@@ -579,6 +629,7 @@ async function handleRequest(request, response) {
     if (!path) throw new RequestError('file path is required');
     sendJson(response, 200, await readWorkspaceFile(
       url.searchParams.get('cwd') || pi.workspace,
+      url.searchParams.get('root') || '',
       path,
     ));
     return;
