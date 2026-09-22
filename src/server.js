@@ -13,7 +13,7 @@ import { PiSession } from './pi-session.js';
 const host = process.env.HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.PORT || '3000', 10);
 const workspaceRoots = [resolve(homedir())];
-let initialWorkspace = resolve(process.env.PI_CWD || homedir());
+let initialWorkspace = resolve(homedir());
 let preferredWorkspace = initialWorkspace;
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'));
 const settingsFile = resolve(process.env.FRIDAY_SETTINGS_FILE || join(agentDir, 'friday-settings.json'));
@@ -170,7 +170,6 @@ async function resolveWorkspace(path) {
 }
 
 async function loadPersistedWorkspace() {
-  if (process.env.PI_CWD) return;
   try {
     const settings = JSON.parse(await readFile(settingsFile, 'utf8'));
     const workspace = await resolveWorkspace(settings.workspace);
