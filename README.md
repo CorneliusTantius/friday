@@ -20,15 +20,14 @@ Open <http://127.0.0.1:3000>.
 
 ## Workspaces and sessions
 
-Pi starts in the host home directory by default. Configure the allowed workspace roots before starting the server:
+Pi starts in the host home directory by default. Set `PI_CWD` only if you want a different initial directory inside the home directory:
 
 ```bash
-PI_CWD=/home/nelly \
-FRIDAY_WORKSPACE_ROOTS=/home/nelly \
+PI_CWD=/home/nelly/Workspace \
 npm start
 ```
 
-The workspace field autocompletes existing directories under the configured roots and validates the final path. Relative paths such as `..` and an optional `cd ` prefix are supported when they stay inside an allowed root. The session picker lists saved Pi sessions for the selected workspace. Choose **Open session** to continue one, or **New session** to start fresh.
+The workspace field autocompletes existing directories under `$HOME` and validates the final path. Relative paths such as `..` and an optional `cd ` prefix are supported when they stay inside `$HOME`. The selected workspace is persisted by Friday. The session picker lists saved Pi sessions for the selected workspace. Choose **Open session** to continue one, or **New session** to start fresh.
 
 The directory on disk is still `/home/nelly/Workspace/fridai`; the application/package name is now `friday`.
 

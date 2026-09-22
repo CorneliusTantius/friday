@@ -12,18 +12,9 @@ import { PiSession } from './pi-session.js';
 
 const host = process.env.HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.PORT || '3000', 10);
-const configuredWorkspaceRoots = process.env.FRIDAY_WORKSPACE_ROOTS || homedir();
-const configuredRootList = configuredWorkspaceRoots
-  .split(sep === '\\' ? ';' : ':')
-  .map((path) => path.trim())
-  .filter(Boolean);
-let initialWorkspace = resolve(process.env.PI_CWD || configuredRootList[0] || homedir());
+const workspaceRoots = [resolve(homedir())];
+let initialWorkspace = resolve(process.env.PI_CWD || homedir());
 let preferredWorkspace = initialWorkspace;
-const workspaceRoots = configuredWorkspaceRoots
-  .split(sep === '\\' ? ';' : ':')
-  .map((path) => path.trim())
-  .filter(Boolean)
-  .map((path) => resolve(path));
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'));
 const settingsFile = resolve(process.env.FRIDAY_SETTINGS_FILE || join(agentDir, 'friday-settings.json'));
 const sessionStorage = resolve(process.env.PI_CODING_AGENT_SESSION_DIR || join(agentDir, 'sessions'));
