@@ -3,7 +3,6 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 
 const COMMAND_TIMEOUT_MS = 30_000;
-const HISTORY_LIMIT = 20;
 
 function textFromMessage(message) {
   if (typeof message?.content === 'string') {
@@ -208,14 +207,14 @@ export class PiSession extends EventEmitter {
     }
   }
 
-  async history() {
+  async history(limit = null) {
     await this.start();
     const response = await this.#send({ type: 'get_messages' });
-    return response.data.messages
+    const messages = response.data.messages
       .filter((message) => ['user', 'assistant', 'toolResult'].includes(message.role))
       .map(clientMessage)
-      .filter((message) => message.content || message.toolCalls?.length)
-      .slice(-HISTORY_LIMIT);
+      .filter((message) => message.content || message.toolCalls?.length);
+    return Number.isInteger(limit) && limit > 0 ? messages.slice(-limit) : messages;
   }
 
   async reset(cwd = this.cwd) {

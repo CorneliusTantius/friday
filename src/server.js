@@ -697,8 +697,17 @@ async function handleRequest(request, response) {
   }
 
   if (request.method === 'GET' && pathname === '/api/history') {
+    let limit = null;
+    if (url.searchParams.has('limit')) {
+      const rawLimit = url.searchParams.get('limit');
+      const parsedLimit = Number.parseInt(rawLimit, 10);
+      if (!/^\d+$/.test(rawLimit) || parsedLimit < 1 || parsedLimit > 100) {
+        throw new RequestError('history limit must be between 1 and 100');
+      }
+      limit = parsedLimit;
+    }
     sendJson(response, 200, {
-      messages: await pi.history(),
+      messages: await pi.history(limit),
       workspace: pi.workspace,
       sessionPath: pi.currentSessionPath,
     });

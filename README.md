@@ -44,7 +44,7 @@ npm run dev
 - `POST /api/settings/workspace` with `{ "workspace": "..." }` — persist the default workspace
 - `GET /api/workspaces`s` — allowed workspace directories
 - `GET /api/sessions?cwd=...` — saved sessions with running/working runtime indicators for a workspace
-- `GET /api/history` — latest 20 current-session messages and tool callsls
+- `GET /api/history` — full current-session messages and tool calls; add `?limit=20` for a taillsls
 - `POST /api/chat` with `{ "message": "..." }` — send a message
 - `POST /api/session/reset` with `{ "cwd": "..." }` — start a new session
 - `POST /api/session/select` with `{ "cwd": "...", "path": "..." }` — open a saved session

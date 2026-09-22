@@ -16,6 +16,7 @@ let suggestionRequest = 0;
 let suggestionTimer;
 let historyPollTimer = null;
 let historyPollInFlight = false;
+let historyMessages = [];
 let filesRoot = '';
 let filesPath = '';
 let selectedFilePath = '';
@@ -298,16 +299,28 @@ async function loadWorkspace() {
   await loadSessions(workspace.value);
 }
 
-async function loadHistory({ scroll = true } = {}) {
-  const shouldStickToBottom = scroll || messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
-  const response = await apiFetch('/api/history');
-  if (!response.ok) {
-    throw new Error('Could not load conversation');
+function messagesEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function mergeHistoryTail(tail) {
+  if (!historyMessages.length) return tail;
+  const maxOverlap = Math.min(historyMessages.length, tail.length);
+  let overlap = maxOverlap;
+  while (overlap > 0) {
+    const existingStart = historyMessages.length - overlap;
+    if (tail.slice(0, overlap).every((message, index) => messagesEqual(historyMessages[existingStart + index], message))) {
+      break;
+    }
+    overlap -= 1;
   }
-  const data = await response.json();
+  return [...historyMessages, ...tail.slice(overlap)];
+}
+
+function renderHistory(history) {
   messages.replaceChildren();
   const pendingToolCalls = new Map();
-  for (const message of data.messages) {
+  for (const message of history) {
     if (message.role === 'tool') {
       const toolCall = pendingToolCalls.get(message.toolCallId);
       if (toolCall) {
@@ -328,6 +341,18 @@ async function loadHistory({ scroll = true } = {}) {
   for (const toolCall of pendingToolCalls.values()) {
     addCombinedToolEntry(toolCall, null);
   }
+}
+
+async function loadHistory({ scroll = true, limit = null } = {}) {
+  const shouldStickToBottom = scroll || messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
+  const endpoint = limit ? `/api/history?limit=${limit}` : '/api/history';
+  const response = await apiFetch(endpoint);
+  if (!response.ok) {
+    throw new Error('Could not load conversation');
+  }
+  const data = await response.json();
+  historyMessages = limit ? mergeHistoryTail(data.messages) : data.messages;
+  renderHistory(historyMessages);
   if (shouldStickToBottom) scrollToLatest();
 }
 
@@ -350,7 +375,7 @@ async function pollHistory() {
     const data = await response.json();
     if (data.busy) {
       status.textContent = 'Pi is working…';
-      await loadHistory({ scroll: false });
+      await loadHistory({ scroll: false, limit: 20 });
       scheduleHistoryPoll();
     } else {
       await loadHistory({ scroll: false });
