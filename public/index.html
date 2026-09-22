@@ -23,10 +23,7 @@
             <span class="feature-icon" aria-hidden="true">▧</span>
             <span>Files</span>
           </button>
-          <button class="feature" type="button" data-feature="devices">
-            <span class="feature-icon" aria-hidden="true">⌘</span>
-            <span>Devices</span>
-          </button>
+>
           <button class="feature" type="button" data-feature="settings">
             <span class="feature-icon" aria-hidden="true">⚙</span>
             <span>Settings</span>
@@ -117,18 +114,6 @@
           </section>
         </section>
 
-        <section id="devices-feature" class="feature-page" hidden>
-          <header class="feature-header">
-            <div>
-              <h1>Devices</h1>
-              <p>Hosts visible to the Friday server.</p>
-            </div>
-            <button id="refresh-devices" class="secondary" type="button">Refresh</button>
-          </header>
-          <div id="device-status" class="feature-notice"></div>
-          <div id="device-list" class="device-list"></div>
-        </section>
-
         <section id="settings-feature" class="feature-page" hidden>
           <header class="feature-header">
             <div>
@@ -138,6 +123,17 @@
             <button id="refresh-settings" class="secondary" type="button">Refresh</button>
           </header>
           <div id="settings-list" class="settings-list"></div>
+          <section class="settings-devices" aria-label="Devices">
+            <header class="feature-header">
+              <div>
+                <h2>Devices</h2>
+                <p>Hosts visible to the Friday server.</p>
+              </div>
+              <button id="refresh-devices" class="secondary" type="button">Refresh</button>
+            </header>
+            <div id="device-status" class="feature-notice"></div>
+            <div id="device-list" class="device-list"></div>
+          </section>
         </section>
       </main>
     </div>

@@ -349,10 +349,12 @@ function normalizeDevice(raw, id, { local = false, self = false } = {}) {
 }
 
 async function listDevices() {
+  const usage = await getSystemUsage();
   const localDevice = normalizeDevice({ HostName: hostname(), OS: platform() }, 'local', {
     local: true,
     self: true,
   });
+  localDevice.usage = usage;
   try {
     const { stdout } = await execFileAsync('tailscale', ['status', '--json'], {
       encoding: 'utf8',
@@ -360,7 +362,9 @@ async function listDevices() {
       timeout: 5_000,
     });
     const status = JSON.parse(stdout);
-    const devices = [normalizeDevice(status.Self, 'self', { self: true })];
+    const self = normalizeDevice(status.Self, 'self', { local: true, self: true });
+    self.usage = usage;
+    const devices = [self];
     for (const [id, peer] of Object.entries(status.Peer || {})) {
       devices.push(normalizeDevice(peer, id));
     }
@@ -648,6 +652,7 @@ async function handleRequest(request, response) {
       sessionPath: pi.currentSessionPath,
       model: modelForClient(pi.currentModel),
       thinkingLevel: pi.currentThinkingLevel,
+      systemUsage: await getSystemUsage(),
       piRunning: pi.isRunning,
       busy: pi.isBusy,
     });
@@ -806,7 +811,7 @@ function cpuSnapshot() {
   }));
 }
 
-async function logSystemUsage() {
+async function getSystemUsage() {
   const before = cpuSnapshot();
   await new Promise((resolve) => setTimeout(resolve, 100));
   const after = cpuSnapshot();
@@ -816,12 +821,22 @@ async function logSystemUsage() {
     idleDelta += after[index].idle - before[index].idle;
     totalDelta += after[index].total - before[index].total;
   }
-  const cpuPercent = totalDelta > 0 ? (1 - idleDelta / totalDelta) * 100 : 0;
   const memoryTotal = totalmem();
   const memoryUsed = memoryTotal - freemem();
-  const [oneMinuteLoad] = loadavg();
+  const [load1] = loadavg();
+  return {
+    memoryUsed,
+    memoryTotal,
+    memoryPercent: (memoryUsed / memoryTotal) * 100,
+    cpuPercent: totalDelta > 0 ? (1 - idleDelta / totalDelta) * 100 : 0,
+    cpuCores: after.length,
+    load1,
+  };
+}
 
-  console.log(`device usage: memory ${formatBytes(memoryUsed)} / ${formatBytes(memoryTotal)} (${((memoryUsed / memoryTotal) * 100).toFixed(1)}%); cpu ${cpuPercent.toFixed(1)}% across ${after.length} cores (load ${oneMinuteLoad.toFixed(2)})`);
+async function logSystemUsage() {
+  const usage = await getSystemUsage();
+  console.log(`device usage: memory ${formatBytes(usage.memoryUsed)} / ${formatBytes(usage.memoryTotal)} (${usage.memoryPercent.toFixed(1)}%); cpu ${usage.cpuPercent.toFixed(1)}% across ${usage.cpuCores} cores (load ${usage.load1.toFixed(2)})`);
 }
 
 let usageTimer;

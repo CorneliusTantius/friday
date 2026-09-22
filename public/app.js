@@ -26,7 +26,6 @@ const featureButtons = [...document.querySelectorAll('[data-feature]')];
 const featureViews = new Map([
   ['pi', document.querySelector('#pi-feature')],
   ['files', document.querySelector('#files-feature')],
-  ['devices', document.querySelector('#devices-feature')],
   ['settings', document.querySelector('#settings-feature')],
 ]);
 const fileList = document.querySelector('#file-list');
@@ -416,6 +415,11 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function formatUsage(usage) {
+  if (!usage) return 'Unavailable';
+  return `Memory ${formatBytes(usage.memoryUsed)} / ${formatBytes(usage.memoryTotal)} (${usage.memoryPercent.toFixed(1)}%); CPU ${usage.cpuPercent.toFixed(1)}% · load ${usage.load1.toFixed(2)}`;
+}
+
 function renderFiles(data) {
   filesRoot = data.root;
   filesPath = data.path;
@@ -494,7 +498,7 @@ async function loadFile(path) {
   fileTitle.textContent = data.path.split('/').pop() || data.path;
   fileMeta.textContent = `${data.path} · ${formatBytes(data.size)} · modified ${new Date(data.modified).toLocaleString()}${data.workspacePath ? '' : ' · outside active Pi workspace'}`;
   fileContent.textContent = data.content;
-  openFileInPi.disabled = !data.workspacePath;e;
+  openFileInPi.disabled = !data.workspacePath;
 }
 
 function renderDevices(data) {
@@ -523,6 +527,13 @@ function renderDevices(data) {
     meta.textContent = `${device.self ? 'This host' : device.os}${device.dnsName ? ` · ${device.dnsName}` : ''}`;
     card.append(heading, meta);
 
+    if (device.usage) {
+      const usage = document.createElement('div');
+      usage.className = 'device-usage';
+      usage.textContent = formatUsage(device.usage);
+      card.append(usage);
+    }
+
     if (device.addresses.length) {
       const addresses = document.createElement('div');
       addresses.className = 'device-addresses';
@@ -550,6 +561,7 @@ function renderSettings(data) {
     ['Active Pi workspace', data.workspace],
     ['Workspace roots', data.workspaceRoots.join(', ')],
     ['Current session', data.sessionPath || 'None'],
+    ['System usage', formatUsage(data.systemUsage)],
     ['Model', data.model ? `${data.model.name} · ${data.model.provider}` : 'None'],
     ['Thinking level', data.thinkingLevel],
   ];
@@ -568,10 +580,16 @@ function renderSettings(data) {
 }
 
 async function loadSettings() {
-  const response = await apiFetch('/api/settings');
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Could not load settings');
+  const [settingsResponse, devicesResponse] = await Promise.all([
+    apiFetch('/api/settings'),
+    apiFetch('/api/devices'),
+  ]);
+  const data = await settingsResponse.json();
+  const devices = await devicesResponse.json();
+  if (!settingsResponse.ok) throw new Error(data.error || 'Could not load settings');
+  if (!devicesResponse.ok) throw new Error(devices.error || 'Could not load devices');
   renderSettings(data);
+  renderDevices(devices);
 }
 
 async function setFeature(name) {
@@ -587,10 +605,9 @@ async function setFeature(name) {
 
   try {
     if (name === 'files') await loadFiles(filesPath);
-    if (name === 'devices') await loadDevices();
     if (name === 'settings') await loadSettings();
   } catch (error) {
-    const target = name === 'devices' ? deviceStatus : name === 'settings' ? settingsList : fileContent;
+    const target = name === 'settings' ? settingsList : fileContent;
     target.textContent = `Error: ${error.message}`;
   }
 }

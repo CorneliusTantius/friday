@@ -153,8 +153,9 @@ button, textarea, input, select { font: inherit; }
   padding-bottom: 0.85rem;
 }
 
-h1, p { margin: 0; }
+h1, h2, p { margin: 0; }
 h1 { font-size: 1.1rem; font-weight: 650; }
+h2 { font-size: 0.95rem; font-weight: 650; }
 .header p, .status { color: #9ca3af; font-size: 0.75rem; }
 
 .workspace-panel {
@@ -420,6 +421,13 @@ h1 { font-size: 1.1rem; font-weight: 650; }
 .device-state.online::before { background: #22c55e; }
 .device-addresses { color: #93c5fd; font-size: 0.75rem; overflow-wrap: anywhere; }
 .settings-list { max-width: 720px; }
+.settings-devices {
+  max-width: 900px;
+  margin-top: 1.5rem;
+}
+
+.settings-devices .feature-header { margin-bottom: 1rem; }
+.device-usage { color: #d1d5db; font-size: 0.75rem; }
 .setting-card { display: grid; grid-template-columns: minmax(130px, 0.4fr) 1fr; gap: 0.35rem 1rem; }
 .setting-value { color: #e5e7eb; overflow-wrap: anywhere; }
 
