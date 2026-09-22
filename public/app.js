@@ -80,6 +80,132 @@ function addCombinedToolEntry(toolCall, toolResult) {
   addSystemEntry(title, sections.join('\n\n'), isError);
 }
 
+function appendInlineMarkdown(parent, source) {
+  const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_|\[[^\]\n]+\]\([^) \n]+\))/g;
+  let cursor = 0;
+  for (const match of source.matchAll(pattern)) {
+    const token = match[0];
+    parent.append(document.createTextNode(source.slice(cursor, match.index)));
+    cursor = match.index + token.length;
+
+    if (token.startsWith('`')) {
+      const code = document.createElement('code');
+      code.textContent = token.slice(1, -1);
+      parent.append(code);
+    } else if (token.startsWith('**') || token.startsWith('__')) {
+      const strong = document.createElement('strong');
+      strong.textContent = token.slice(2, -2);
+      parent.append(strong);
+    } else if (token.startsWith('*') || token.startsWith('_')) {
+      const emphasis = document.createElement('em');
+      emphasis.textContent = token.slice(1, -1);
+      parent.append(emphasis);
+    } else {
+      const linkMatch = token.match(/^\[([^\]]+)\]\((https?:\/\/[^) \n]+)\)$/);
+      if (!linkMatch) {
+        parent.append(document.createTextNode(token));
+        continue;
+      }
+      const link = document.createElement('a');
+      link.href = linkMatch[2];
+      link.target = '_blank';
+      link.rel = 'noreferrer noopener';
+      link.textContent = linkMatch[1];
+      parent.append(link);
+    }
+  }
+  parent.append(document.createTextNode(source.slice(cursor)));
+}
+
+function renderMarkdown(parent, source) {
+  const lines = source.replaceAll('\r\n', '\n').split('\n');
+  let paragraph = [];
+  let list = null;
+  let code = null;
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    const element = document.createElement('p');
+    paragraph.forEach((line, index) => {
+      if (index) element.append(document.createElement('br'));
+      appendInlineMarkdown(element, line);
+    });
+    parent.append(element);
+    paragraph = [];
+  };
+
+  const flushList = () => {
+    if (!list) return;
+    parent.append(list.element);
+    list = null;
+  };
+
+  const addCode = () => {
+    const pre = document.createElement('pre');
+    pre.textContent = code.join('\n');
+    parent.append(pre);
+    code = null;
+  };
+
+  for (const line of lines) {
+    if (code) {
+      if (line.trim() === '```') addCode();
+      else code.push(line);
+      continue;
+    }
+    if (line.trim().startsWith('```')) {
+      flushParagraph();
+      flushList();
+      code = [];
+      continue;
+    }
+    if (!line.trim()) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const element = document.createElement(`h${heading[1].length}`);
+      appendInlineMarkdown(element, heading[2]);
+      parent.append(element);
+      continue;
+    }
+
+    const listItem = line.match(/^\s*(?:[-*+]\s+|\d+\.\s+)(.+)$/);
+    if (listItem) {
+      flushParagraph();
+      const ordered = /^\s*\d+\./.test(line);
+      if (!list || list.ordered !== ordered) {
+        flushList();
+        list = { ordered, element: document.createElement(ordered ? 'ol' : 'ul') };
+      }
+      const item = document.createElement('li');
+      appendInlineMarkdown(item, listItem[1]);
+      list.element.append(item);
+      continue;
+    }
+
+    if (line.startsWith('>')) {
+      flushParagraph();
+      flushList();
+      const quote = document.createElement('blockquote');
+      appendInlineMarkdown(quote, line.replace(/^>\s?/, ''));
+      parent.append(quote);
+      continue;
+    }
+
+    paragraph.push(line);
+  }
+
+  if (code) addCode();
+  flushParagraph();
+  flushList();
+}
+
 function addMessage(message) {
   if (message.role === 'tool') {
     addSystemEntry(
@@ -100,7 +226,7 @@ function addMessage(message) {
 
     const text = document.createElement('div');
     text.className = 'message-content';
-    text.textContent = message.content;
+    renderMarkdown(text, message.content);
     item.append(label, text);
     messages.append(item);
   }

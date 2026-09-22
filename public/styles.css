@@ -483,6 +483,42 @@ textarea {
 
 .message.user .message-label { color: #dbeafe; }
 .message-content { line-height: 1.48; }
+.message-content p { margin: 0 0 0.7rem; }
+.message-content p:last-child { margin-bottom: 0; }
+.message-content h1, .message-content h2, .message-content h3,
+.message-content h4, .message-content h5, .message-content h6 {
+  margin: 0 0 0.55rem;
+  color: #f3f4f6;
+  font-size: 1rem;
+}
+.message-content ul, .message-content ol { margin: 0 0 0.7rem; padding-left: 1.3rem; }
+.message-content li + li { margin-top: 0.25rem; }
+.message-content blockquote {
+  margin: 0 0 0.7rem;
+  border-left: 2px solid #60a5fa;
+  color: #cbd5e1;
+  padding-left: 0.7rem;
+}
+.message-content code {
+  border-radius: 0.25rem;
+  background: #111827;
+  color: #bfdbfe;
+  padding: 0.1rem 0.25rem;
+  font-size: 0.9em;
+}
+.message-content pre {
+  max-height: 24rem;
+  overflow: auto;
+  margin: 0 0 0.7rem;
+  border: 1px solid #374151;
+  border-radius: 0.4rem;
+  background: #111827;
+  color: #d1d5db;
+  padding: 0.7rem;
+  white-space: pre-wrap;
+}
+.message-content a { color: #93c5fd; }
+.message-content a:hover { color: #dbeafe; }
 
 .system-entry {
   width: min(100%, 900px);
