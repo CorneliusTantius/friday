@@ -821,9 +821,10 @@ async function logSystemUsage() {
   const memoryUsed = memoryTotal - freemem();
   const [oneMinuteLoad] = loadavg();
 
-  console.log(`device memory: ${formatBytes(memoryUsed)} / ${formatBytes(memoryTotal)} (${((memoryUsed / memoryTotal) * 100).toFixed(1)}%)`);
-  console.log(`device cpu: ${cpuPercent.toFixed(1)}% across ${after.length} cores (load ${oneMinuteLoad.toFixed(2)})`);
+  console.log(`device usage: memory ${formatBytes(memoryUsed)} / ${formatBytes(memoryTotal)} (${((memoryUsed / memoryTotal) * 100).toFixed(1)}%); cpu ${cpuPercent.toFixed(1)}% across ${after.length} cores (load ${oneMinuteLoad.toFixed(2)})`);
 }
+
+let usageTimer;
 
 const startServer = async () => {
   await loadPersistedWorkspace();
@@ -833,6 +834,7 @@ const startServer = async () => {
     console.log(`pi workspace: ${initialWorkspace}`);
     console.log(`workspace roots: ${workspaceRoots.join(', ')}`);
   });
+  usageTimer = setInterval(() => void logSystemUsage(), 60_000);
 };
 
 void startServer();
@@ -844,6 +846,7 @@ const shutdown = async (signal) => {
   }
   shuttingDown = true;
   console.log(`${signal} received; shutting down`);
+  if (usageTimer) clearInterval(usageTimer);
 
   await new Promise((resolve) => server.close(resolve));
   await Promise.all([...piSessions.values()].map(({ pi }) => pi.stop()));
