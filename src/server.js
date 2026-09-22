@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
-import { homedir, hostname, platform } from 'node:os';
+import { cpus, freemem, homedir, hostname, loadavg, platform, totalmem } from 'node:os';
 import { createInterface } from 'node:readline';
 import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -788,8 +788,46 @@ const server = createServer((request, response) => {
 
 server.requestTimeout = 30_000;
 
+function formatBytes(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function cpuSnapshot() {
+  return cpus().map(({ times }) => ({
+    idle: times.idle,
+    total: Object.values(times).reduce((sum, value) => sum + value, 0),
+  }));
+}
+
+async function logSystemUsage() {
+  const before = cpuSnapshot();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const after = cpuSnapshot();
+  let idleDelta = 0;
+  let totalDelta = 0;
+  for (let index = 0; index < Math.min(before.length, after.length); index += 1) {
+    idleDelta += after[index].idle - before[index].idle;
+    totalDelta += after[index].total - before[index].total;
+  }
+  const cpuPercent = totalDelta > 0 ? (1 - idleDelta / totalDelta) * 100 : 0;
+  const memoryTotal = totalmem();
+  const memoryUsed = memoryTotal - freemem();
+  const [oneMinuteLoad] = loadavg();
+
+  console.log(`device memory: ${formatBytes(memoryUsed)} / ${formatBytes(memoryTotal)} (${((memoryUsed / memoryTotal) * 100).toFixed(1)}%)`);
+  console.log(`device cpu: ${cpuPercent.toFixed(1)}% across ${after.length} cores (load ${oneMinuteLoad.toFixed(2)})`);
+}
+
 const startServer = async () => {
   await loadPersistedWorkspace();
+  await logSystemUsage();
   server.listen(port, host, () => {
     console.log(`friday listening on http://${host}:${port}`);
     console.log(`pi workspace: ${initialWorkspace}`);
