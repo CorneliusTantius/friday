@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#111827">
+    <title>friday</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar" aria-label="Features">
+        <div class="brand">
+          <span class="brand-mark">f</span>
+          <span>friday</span>
+        </div>
+        <nav class="feature-nav" aria-label="Features">
+          <button class="feature active" type="button" data-feature="pi" aria-current="page">
+            <span class="feature-icon" aria-hidden="true">✦</span>
+            <span>Pi agent</span>
+          </button>
+          <button class="feature" type="button" data-feature="files">
+            <span class="feature-icon" aria-hidden="true">▧</span>
+            <span>Files</span>
+          </button>
+          <button class="feature" type="button" data-feature="devices">
+            <span class="feature-icon" aria-hidden="true">⌘</span>
+            <span>Devices</span>
+          </button>
+          <button class="feature" type="button" data-feature="settings">
+            <span class="feature-icon" aria-hidden="true">⚙</span>
+            <span>Settings</span>
+          </button>
+        </nav>
+        <div class="sidebar-footer">Local device</div>
+      </aside>
+
+      <main class="feature-shell">
+        <section id="pi-feature" class="feature-layout pi-layout">
+          <aside class="pi-sidebar" aria-label="Pi agent sessions">
+          <section class="workspace-panel" aria-label="Workspace">
+            <label class="workspace-field">
+              Workspace
+              <div class="workspace-row">
+                <input id="workspace" list="workspace-options" autocomplete="off" spellcheck="false" placeholder="Type a workspace path…">
+                <button id="browse-workspace" class="secondary" type="button">Browse</button>
+              </div>
+              <datalist id="workspace-options"></datalist>
+            </label>
+          </section>
+
+          <section class="session-panel" aria-label="Sessions">
+            <div class="panel-heading">
+              <span>Sessions</span>
+              <button id="refresh-sessions" class="icon-button" type="button" title="Refresh sessions" aria-label="Refresh sessions">↻</button>
+            </div>
+            <div id="session-list" class="session-list" role="listbox" aria-label="Saved sessions"></div>
+          </section>
+        </aside>
+
+        <section class="app">
+        <header class="header">
+          <div>
+            <h1>Pi agent</h1>
+            <p>Remote workspace assistant</p>
+          </div>
+          <button id="reset" class="secondary" type="button">New session</button>
+        </header>
+
+
+
+        <section id="messages" class="messages" aria-live="polite" aria-label="Conversation"></section>
+
+        <form id="chat-form" class="composer">
+          <label class="sr-only" for="message">Message</label>
+          <textarea id="message" rows="3" placeholder="Ask Pi to do something…" required></textarea>
+          <div class="composer-footer">
+            <div class="agent-controls">
+              <label>
+                Model
+                <select id="model" aria-label="Model"></select>
+              </label>
+              <label>
+                Thinking
+                <select id="thinking-level" aria-label="Thinking level"></select>
+              </label>
+            </div>
+            <div class="send-controls">
+              <span id="status" class="status">Ready</span>
+              <button id="send" type="submit">Send</button>
+            </div>
+          </div>
+        </form>
+        </section>
+        </section>
+
+        <section id="files-feature" class="feature-layout files-layout" hidden>
+          <aside class="files-sidebar" aria-label="Files">
+            <div class="panel-heading">
+              <span>Files</span>
+              <button id="refresh-files" class="icon-button" type="button" title="Refresh files" aria-label="Refresh files">↻</button>
+            </div>
+            <div class="files-location">
+              <button id="files-up" class="secondary" type="button">Up</button>
+              <span id="files-path">/</span>
+            </div>
+            <div id="file-list" class="file-list" role="listbox" aria-label="Workspace files"></div>
+          </aside>
+          <section class="file-preview" aria-label="File preview">
+            <header class="feature-header">
+              <div>
+                <h1 id="file-title">File preview</h1>
+                <p id="file-meta">Select a text file to preview it.</p>
+              </div>
+              <button id="open-file-in-pi" class="secondary" type="button" disabled>Open in Pi</button>
+            </header>
+            <pre id="file-content" class="file-content">Select a file from the workspace.</pre>
+          </section>
+        </section>
+
+        <section id="devices-feature" class="feature-page" hidden>
+          <header class="feature-header">
+            <div>
+              <h1>Devices</h1>
+              <p>Hosts visible to the Friday server.</p>
+            </div>
+            <button id="refresh-devices" class="secondary" type="button">Refresh</button>
+          </header>
+          <div id="device-status" class="feature-notice"></div>
+          <div id="device-list" class="device-list"></div>
+        </section>
+
+        <section id="settings-feature" class="feature-page" hidden>
+          <header class="feature-header">
+            <div>
+              <h1>Settings</h1>
+              <p>Runtime and connection information.</p>
+            </div>
+            <button id="refresh-settings" class="secondary" type="button">Refresh</button>
+          </header>
+          <div id="settings-list" class="settings-list"></div>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

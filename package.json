@@ -1,0 +1,17 @@
+{
+  "name": "friday",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Friday remote agent server",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "tailscale:serve": "tailscale serve --bg http://127.0.0.1:3000",
+    "tailscale:status": "tailscale serve status",
+    "tailscale:reset": "tailscale serve reset"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,750 @@
+import { createReadStream } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { createServer } from 'node:http';
+import { homedir, hostname, platform } from 'node:os';
+import { createInterface } from 'node:readline';
+import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import { PiSession } from './pi-session.js';
+
+const host = process.env.HOST || '127.0.0.1';
+const port = Number.parseInt(process.env.PORT || '3000', 10);
+const configuredWorkspaceRoots = process.env.FRIDAY_WORKSPACE_ROOTS || homedir();
+const configuredRootList = configuredWorkspaceRoots
+  .split(sep === '\\' ? ';' : ':')
+  .map((path) => path.trim())
+  .filter(Boolean);
+const initialWorkspace = resolve(process.env.PI_CWD || configuredRootList[0] || homedir());
+const workspaceRoots = configuredWorkspaceRoots
+  .split(sep === '\\' ? ';' : ':')
+  .map((path) => path.trim())
+  .filter(Boolean)
+  .map((path) => resolve(path));
+const agentDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'));
+const sessionStorage = resolve(process.env.PI_CODING_AGENT_SESSION_DIR || join(agentDir, 'sessions'));
+const publicRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../public');
+const piSessions = new Map();
+const execFileAsync = promisify(execFile);
+const piCommand = process.env.PI_COMMAND || 'pi';
+const maxPiSessions = 32;
+const maxFileEntries = 500;
+const maxFilePreviewBytes = 1_000_000;
+
+if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+  throw new Error('PORT must be an integer between 1 and 65535');
+}
+
+class RequestError extends Error {
+  constructor(message, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const contentTypes = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+};
+
+function clientIdFor(request) {
+  const value = request.headers['x-friday-session'];
+  return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value) ? value : 'default';
+}
+
+function piForRequest(request) {
+  const clientId = clientIdFor(request);
+  let entry = piSessions.get(clientId);
+  if (!entry) {
+    if (piSessions.size >= maxPiSessions) {
+      const idle = [...piSessions.entries()]
+        .filter(([, candidate]) => !candidate.pi.isBusy)
+        .sort(([, a], [, b]) => a.lastUsed - b.lastUsed)[0];
+      if (!idle) {
+        throw new RequestError('Too many active Pi sessions', 429);
+      }
+      piSessions.delete(idle[0]);
+      void idle[1].pi.stop();
+    }
+
+    entry = {
+      pi: new PiSession({ cwd: initialWorkspace, command: piCommand }),
+      lastUsed: 0,
+    };
+    piSessions.set(clientId, entry);
+  }
+  entry.lastUsed = Date.now();
+  return entry.pi;
+}
+
+function runningPiSessions(workspace) {
+  return [...piSessions.entries()]
+    .map(([runtimeId, entry]) => ({
+      runtimeId,
+      workspace: entry.pi.workspace,
+      sessionPath: entry.pi.currentSessionPath,
+      running: entry.pi.isRunning,
+      busy: entry.pi.isBusy,
+      lastUsed: entry.lastUsed,
+    }))
+    .filter((entry) => entry.workspace === workspace && entry.sessionPath);
+}
+
+function sendJson(response, status, body) {
+  response.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+  response.end(JSON.stringify(body));
+}
+
+function modelForClient(model) {
+  if (!model) return null;
+  return {
+    provider: model.provider,
+    id: model.id,
+    name: model.name,
+    reasoning: model.reasoning,
+    input: model.input,
+  };
+}
+
+async function readJson(request) {
+  let body = '';
+  for await (const chunk of request) {
+    body += chunk;
+    if (Buffer.byteLength(body) > 64 * 1024) {
+      throw new RequestError('Request body is too large');
+    }
+  }
+
+  try {
+    return JSON.parse(body || '{}');
+  } catch {
+    throw new RequestError('Request body must be valid JSON');
+  }
+}
+
+function isWithin(root, candidate) {
+  const path = relative(root, candidate);
+  return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !isAbsolute(path));
+}
+
+function normalizeWorkspaceInput(value) {
+  const input = value.trim();
+  return input.startsWith('cd ') ? input.slice(3).trim() : input;
+}
+
+async function existingDirectory(path) {
+  try {
+    const realPath = await realpath(path);
+    return (await stat(realPath)).isDirectory() ? realPath : null;
+  } catch {
+    return null;
+  }
+}
+
+async function allowedRootPaths() {
+  const roots = await Promise.all(workspaceRoots.map(existingDirectory));
+  return roots.filter(Boolean);
+}
+
+async function resolveWorkspace(path) {
+  if (typeof path !== 'string' || !path.trim()) {
+    throw new RequestError('cwd is required');
+  }
+
+  const candidate = await existingDirectory(normalizeWorkspaceInput(path));
+  if (!candidate) {
+    throw new RequestError('cwd must be an existing directory');
+  }
+
+  const roots = await allowedRootPaths();
+  if (!roots.some((root) => isWithin(root, candidate))) {
+    throw new RequestError('cwd is outside the configured workspace roots');
+  }
+
+  return candidate;
+}
+
+async function resolveWorkspaceEntry(cwd, inputPath = '') {
+  const workspace = await resolveWorkspace(cwd);
+  if (typeof inputPath !== 'string' || inputPath.includes('\0') || isAbsolute(inputPath)) {
+    throw new RequestError('file path must be relative to the workspace');
+  }
+
+  const candidate = resolve(workspace, inputPath || '.');
+  if (!isWithin(workspace, candidate)) {
+    throw new RequestError('file path is outside the workspace');
+  }
+
+  let info;
+  try {
+    info = await lstat(candidate);
+  } catch {
+    throw new RequestError('file or directory was not found', 404);
+  }
+  if (info.isSymbolicLink()) {
+    throw new RequestError('symbolic links are not available in Files', 403);
+  }
+
+  const realPath = await realpath(candidate);
+  if (!isWithin(workspace, realPath)) {
+    throw new RequestError('file path is outside the workspace');
+  }
+
+  return {
+    workspace,
+    path: realPath,
+    relativePath: relative(workspace, realPath).split(sep).join('/'),
+    info,
+  };
+}
+
+async function listWorkspaceFiles(cwd, inputPath = '') {
+  const directory = await resolveWorkspaceEntry(cwd, inputPath);
+  if (!directory.info.isDirectory()) {
+    throw new RequestError('file path is not a directory', 400);
+  }
+
+  let names;
+  try {
+    names = await readdir(directory.path, { withFileTypes: true });
+  } catch {
+    throw new RequestError('directory could not be read', 403);
+  }
+  if (names.length > maxFileEntries) {
+    throw new RequestError(`directory contains more than ${maxFileEntries} entries`, 413);
+  }
+
+  const entries = [];
+  for (const entry of names) {
+    const childPath = join(directory.path, entry.name);
+    let info;
+    try {
+      info = await lstat(childPath);
+    } catch {
+      continue;
+    }
+    if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) {
+      continue;
+    }
+    entries.push({
+      name: entry.name,
+      path: `${directory.relativePath ? `${directory.relativePath}/` : ''}${entry.name}`,
+      type: info.isDirectory() ? 'directory' : 'file',
+      size: info.isFile() ? info.size : null,
+      modified: info.mtime.toISOString(),
+    });
+  }
+
+  entries.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return { workspace: directory.workspace, path: directory.relativePath, entries };
+}
+
+async function readWorkspaceFile(cwd, inputPath) {
+  const file = await resolveWorkspaceEntry(cwd, inputPath);
+  if (!file.info.isFile()) {
+    throw new RequestError('file path is not a regular file', 400);
+  }
+  if (file.info.size > maxFilePreviewBytes) {
+    throw new RequestError(`file is larger than ${maxFilePreviewBytes} bytes`, 413);
+  }
+
+  const content = await readFile(file.path);
+  if (content.includes(0)) {
+    throw new RequestError('binary files cannot be previewed', 415);
+  }
+  return {
+    workspace: file.workspace,
+    path: file.relativePath,
+    size: content.length,
+    modified: file.info.mtime.toISOString(),
+    content: content.toString('utf8'),
+  };
+}
+
+function normalizeDevice(raw, id, { local = false, self = false } = {}) {
+  return {
+    id: raw?.ID || id,
+    hostname: raw?.HostName || raw?.DNSName || id,
+    dnsName: raw?.DNSName || null,
+    os: raw?.OS || platform(),
+    addresses: Array.isArray(raw?.TailscaleIPs) ? raw.TailscaleIPs : [],
+    online: local ? true : raw?.Online === true,
+    lastSeen: raw?.LastSeen || null,
+    local,
+    self,
+  };
+}
+
+async function listDevices() {
+  const localDevice = normalizeDevice({ HostName: hostname(), OS: platform() }, 'local', {
+    local: true,
+    self: true,
+  });
+  try {
+    const { stdout } = await execFileAsync('tailscale', ['status', '--json'], {
+      encoding: 'utf8',
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 5_000,
+    });
+    const status = JSON.parse(stdout);
+    const devices = [normalizeDevice(status.Self, 'self', { self: true })];
+    for (const [id, peer] of Object.entries(status.Peer || {})) {
+      devices.push(normalizeDevice(peer, id));
+    }
+    return { available: true, devices };
+  } catch (error) {
+    return {
+      available: false,
+      error: error.code === 'ENOENT'
+        ? 'Tailscale is not installed on the Friday host'
+        : 'Tailscale is unavailable or not authenticated',
+      devices: [localDevice],
+    };
+  }
+}
+
+async function pickWorkspaceOnHost(pi) {
+  if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+    throw new RequestError('Host file picker requires a graphical session', 503);
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      'zenity',
+      [
+        '--file-selection',
+        '--directory',
+        '--title=Choose Friday workspace',
+        `--filename=${pi.workspace}${sep}`,
+      ],
+      { encoding: 'utf8', maxBuffer: 4 * 1024 },
+    );
+    return stdout.trim() || null;
+  } catch (error) {
+    if (error.code === 1) return null;
+    if (error.code === 'ENOENT') {
+      throw new RequestError('Host file picker is unavailable: install zenity', 503);
+    }
+    throw new RequestError(`Host file picker failed: ${error.message}`, 503);
+  }
+}
+
+async function listWorkspaceSuggestions(prefix = '') {
+  const roots = await allowedRootPaths();
+  const paths = new Map();
+  const add = (path) => paths.set(path, path);
+  const addChildren = async (parent, filter = '') => {
+    let entries;
+    try {
+      entries = await readdir(parent, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || (filter && !entry.name.toLowerCase().startsWith(filter.toLowerCase()))) {
+        continue;
+      }
+      const child = await existingDirectory(join(parent, entry.name));
+      if (child && roots.some((root) => isWithin(root, child))) {
+        add(child);
+      }
+    }
+  };
+
+  const input = normalizeWorkspaceInput(prefix);
+  if (!input) {
+    for (const root of roots) {
+      add(root);
+      await addChildren(root);
+    }
+  } else {
+    const candidate = resolve(input);
+    const direct = await existingDirectory(candidate);
+    if (direct && roots.some((root) => isWithin(root, direct))) {
+      add(direct);
+      await addChildren(direct);
+    } else {
+      const parent = await existingDirectory(dirname(candidate));
+      if (parent && roots.some((root) => isWithin(root, parent))) {
+        await addChildren(parent, basename(candidate));
+      }
+    }
+  }
+
+  return [...paths.values()]
+    .sort((a, b) => a.localeCompare(b))
+    .map((path) => ({ path, label: basename(path) || path }));
+}
+
+function sessionDirectoryFor(cwd) {
+  if (process.env.PI_CODING_AGENT_SESSION_DIR) {
+    return sessionStorage;
+  }
+
+  const safePath = resolve(cwd).replace(/^[/\\]/, '').replace(/[/\\:]/g, '-');
+  return join(sessionStorage, `--${safePath}--`);
+}
+
+function textFromMessage(message) {
+  if (typeof message?.content === 'string') {
+    return message.content;
+  }
+  if (!Array.isArray(message?.content)) {
+    return '';
+  }
+  return message.content
+    .filter((part) => part?.type === 'text')
+    .map((part) => part.text || '')
+    .join('');
+}
+
+async function readSessionMetadata(path, workspace) {
+  const input = createReadStream(path, { encoding: 'utf8' });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  let header;
+  let name;
+  let firstMessage = '';
+  let messageCount = 0;
+  let modified = null;
+
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) continue;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      if (entry.type === 'session') {
+        header = entry;
+        modified = entry.timestamp;
+      } else if (entry.type === 'session_info') {
+        name = entry.name;
+      } else if (entry.type === 'message') {
+        const message = entry.message;
+        if (['user', 'assistant', 'toolResult'].includes(message?.role)) {
+          messageCount += 1;
+          modified = entry.timestamp || modified;
+          if (!firstMessage && message.role === 'user') {
+            firstMessage = textFromMessage(message);
+          }
+        }
+      }
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+
+  if (!header || resolve(header.cwd) !== resolve(workspace)) {
+    return null;
+  }
+
+  const fileStats = await stat(path);
+  return {
+    id: header.id,
+    path,
+    cwd: workspace,
+    name: name || firstMessage.slice(0, 100) || 'Untitled session',
+    preview: firstMessage.slice(0, 160),
+    created: header.timestamp,
+    modified: fileStats.mtime.toISOString() || modified,
+    messageCount,
+  };
+}
+
+async function listSessions(workspace) {
+  const directory = sessionDirectoryFor(workspace);
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const sessions = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl'))
+      .map((entry) => readSessionMetadata(join(directory, entry.name), workspace)),
+  );
+
+  return sessions
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.modified) - new Date(a.modified));
+}
+
+async function serveStatic(pathname, response) {
+  const filenames = {
+    '/': 'index.html',
+    '/index.html': 'index.html',
+    '/app.js': 'app.js',
+    '/styles.css': 'styles.css',
+  };
+  const filename = filenames[pathname];
+  if (!filename) {
+    return false;
+  }
+
+  const body = await readFile(join(publicRoot, filename));
+  response.writeHead(200, {
+    'Content-Type': contentTypes[filename.slice(filename.lastIndexOf('.'))] || 'application/octet-stream',
+    'Cache-Control': 'no-cache',
+  });
+  response.end(body);
+  return true;
+}
+
+async function handleRequest(request, response) {
+  const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+  const { pathname } = url;
+  const pi = piForRequest(request);
+
+  if (request.method === 'GET' && pathname === '/healthz') {
+    sendJson(response, 200, {
+      status: 'ok',
+      piRunning: pi.isRunning,
+      workspace: pi.workspace,
+      sessionPath: pi.currentSessionPath,
+    });
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/status') {
+    sendJson(response, 200, {
+      workspace: pi.workspace,
+      sessionPath: pi.currentSessionPath,
+      model: modelForClient(pi.currentModel),
+      thinkingLevel: pi.currentThinkingLevel,
+      piRunning: pi.isRunning,
+      busy: pi.isBusy,
+    });
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/models') {
+    const models = await pi.availableModels();
+    sendJson(response, 200, {
+      models: models.map(modelForClient),
+      current: modelForClient(pi.currentModel),
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/model') {
+    const body = await readJson(request);
+    if (typeof body.provider !== 'string' || typeof body.modelId !== 'string' || !body.provider || !body.modelId) {
+      throw new RequestError('provider and modelId are required');
+    }
+
+    const model = await pi.setModel(body.provider, body.modelId);
+    sendJson(response, 200, { model: modelForClient(model) });
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/thinking-levels') {
+    sendJson(response, 200, {
+      levels: await pi.availableThinkingLevels(),
+      current: pi.currentThinkingLevel,
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/thinking-level') {
+    const body = await readJson(request);
+    if (typeof body.level !== 'string' || !body.level) {
+      throw new RequestError('level is required');
+    }
+
+    await pi.setThinkingLevel(body.level);
+    sendJson(response, 200, { level: pi.currentThinkingLevel });
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/files') {
+    sendJson(response, 200, await listWorkspaceFiles(
+      url.searchParams.get('cwd') || pi.workspace,
+      url.searchParams.get('path') || '',
+    ));
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/files/content') {
+    const path = url.searchParams.get('path');
+    if (!path) throw new RequestError('file path is required');
+    sendJson(response, 200, await readWorkspaceFile(
+      url.searchParams.get('cwd') || pi.workspace,
+      path,
+    ));
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/devices') {
+    sendJson(response, 200, await listDevices());
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/settings') {
+    sendJson(response, 200, {
+      host,
+      port,
+      piCommand,
+      workspaceRoots,
+      workspace: pi.workspace,
+      sessionPath: pi.currentSessionPath,
+      model: modelForClient(pi.currentModel),
+      thinkingLevel: pi.currentThinkingLevel,
+      piRunning: pi.isRunning,
+      busy: pi.isBusy,
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/workspace/pick') {
+    const selectedPath = await pickWorkspaceOnHost(pi);
+    if (!selectedPath) {
+      sendJson(response, 200, { cancelled: true, workspace: pi.workspace });
+      return;
+    }
+
+    sendJson(response, 200, {
+      cancelled: false,
+      workspace: await resolveWorkspace(selectedPath),
+    });
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/workspaces') {
+    sendJson(response, 200, {
+      workspaces: await listWorkspaceSuggestions(url.searchParams.get('prefix') || ''),
+    });
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/sessions') {
+    const workspace = url.searchParams.has('cwd')
+      ? await resolveWorkspace(url.searchParams.get('cwd'))
+      : pi.workspace;
+    const runtimes = runningPiSessions(workspace);
+    const runtimeByPath = new Map(runtimes.map((runtime) => [runtime.sessionPath, runtime]));
+    const sessions = (await listSessions(workspace)).map((session) => {
+      const runtime = runtimeByPath.get(session.path);
+      return {
+        ...session,
+        runtimeId: runtime?.runtimeId || null,
+        running: runtime?.running || false,
+        busy: runtime?.busy || false,
+      };
+    });
+    sendJson(response, 200, {
+      workspace,
+      currentSession: workspace === pi.workspace ? pi.currentSessionPath : null,
+      sessions,
+      runtimes,
+    });
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/history') {
+    sendJson(response, 200, {
+      messages: await pi.history(),
+      workspace: pi.workspace,
+      sessionPath: pi.currentSessionPath,
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/chat') {
+    const body = await readJson(request);
+    if (typeof body.message !== 'string' || !body.message.trim()) {
+      throw new RequestError('message is required');
+    }
+    if (body.message.length > 20_000) {
+      throw new RequestError('message is too long');
+    }
+
+    const reply = await pi.chat(body.message.trim());
+    sendJson(response, 200, { role: 'assistant', content: reply });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/session/reset') {
+    const body = await readJson(request);
+    const workspace = body.cwd === undefined ? pi.workspace : await resolveWorkspace(body.cwd);
+    await pi.reset(workspace);
+    sendJson(response, 200, {
+      ok: true,
+      workspace: pi.workspace,
+      sessionPath: pi.currentSessionPath,
+    });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/session/select') {
+    const body = await readJson(request);
+    const workspace = await resolveWorkspace(body.cwd);
+    const sessions = await listSessions(workspace);
+    const selected = sessions.find((session) => session.path === body.path);
+    if (!selected) {
+      throw new RequestError('session was not found in the selected workspace');
+    }
+
+    await pi.switchSession(selected.path, workspace);
+    sendJson(response, 200, {
+      ok: true,
+      workspace: pi.workspace,
+      sessionPath: pi.currentSessionPath,
+    });
+    return;
+  }
+
+  if (request.method === 'GET' && await serveStatic(pathname, response)) {
+    return;
+  }
+
+  sendJson(response, 404, { error: 'Not found' });
+}
+
+const server = createServer((request, response) => {
+  handleRequest(request, response).catch((error) => {
+    const status = error.status || (error.message.includes('already responding') ? 409 : 500);
+    if (!response.headersSent) {
+      sendJson(response, status, { error: error.message });
+    } else {
+      response.destroy(error);
+    }
+  });
+});
+
+server.requestTimeout = 30_000;
+
+server.listen(port, host, () => {
+  console.log(`friday listening on http://${host}:${port}`);
+  console.log(`pi workspace: ${initialWorkspace}`);
+  console.log(`workspace roots: ${workspaceRoots.join(', ')}`);
+});
+
+let shuttingDown = false;
+const shutdown = async (signal) => {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  console.log(`${signal} received; shutting down`);
+
+  await new Promise((resolve) => server.close(resolve));
+  await Promise.all([...piSessions.values()].map(({ pi }) => pi.stop()));
+};
+
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
