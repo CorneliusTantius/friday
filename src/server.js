@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { homedir, hostname, platform } from 'node:os';
 import { createInterface } from 'node:readline';
-import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -16,13 +16,15 @@ const configuredRootList = configuredWorkspaceRoots
   .split(sep === '\\' ? ';' : ':')
   .map((path) => path.trim())
   .filter(Boolean);
-const initialWorkspace = resolve(process.env.PI_CWD || configuredRootList[0] || homedir());
+let initialWorkspace = resolve(process.env.PI_CWD || configuredRootList[0] || homedir());
+let preferredWorkspace = initialWorkspace;
 const workspaceRoots = configuredWorkspaceRoots
   .split(sep === '\\' ? ';' : ':')
   .map((path) => path.trim())
   .filter(Boolean)
   .map((path) => resolve(path));
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'));
+const settingsFile = resolve(process.env.FRIDAY_SETTINGS_FILE || join(agentDir, 'friday-settings.json'));
 const sessionStorage = resolve(process.env.PI_CODING_AGENT_SESSION_DIR || join(agentDir, 'sessions'));
 const publicRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../public');
 const piSessions = new Map();
@@ -70,7 +72,7 @@ function piForRequest(request) {
     }
 
     entry = {
-      pi: new PiSession({ cwd: initialWorkspace, command: piCommand }),
+      pi: new PiSession({ cwd: preferredWorkspace, command: piCommand }),
       lastUsed: 0,
     };
     piSessions.set(clientId, entry);
@@ -167,6 +169,24 @@ async function resolveWorkspace(path) {
   }
 
   return candidate;
+}
+
+async function loadPersistedWorkspace() {
+  if (process.env.PI_CWD) return;
+  try {
+    const settings = JSON.parse(await readFile(settingsFile, 'utf8'));
+    const workspace = await resolveWorkspace(settings.workspace);
+    initialWorkspace = workspace;
+    preferredWorkspace = workspace;
+  } catch {
+    // Missing or stale settings should fall back to the configured default root.
+  }
+}
+
+async function persistWorkspace(workspace) {
+  await mkdir(dirname(settingsFile), { recursive: true });
+  await writeFile(settingsFile, `${JSON.stringify({ workspace }, null, 2)}\n`, 'utf8');
+  preferredWorkspace = workspace;
 }
 
 async function resolveWorkspaceEntry(cwd, inputPath = '') {
@@ -497,6 +517,7 @@ async function handleRequest(request, response) {
   if (request.method === 'GET' && pathname === '/api/status') {
     sendJson(response, 200, {
       workspace: pi.workspace,
+      preferredWorkspace,
       sessionPath: pi.currentSessionPath,
       model: modelForClient(pi.currentModel),
       thinkingLevel: pi.currentThinkingLevel,
@@ -575,12 +596,24 @@ async function handleRequest(request, response) {
       piCommand,
       workspaceRoots,
       workspace: pi.workspace,
+      preferredWorkspace,
       sessionPath: pi.currentSessionPath,
       model: modelForClient(pi.currentModel),
       thinkingLevel: pi.currentThinkingLevel,
       piRunning: pi.isRunning,
       busy: pi.isBusy,
     });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/settings/workspace') {
+    const body = await readJson(request);
+    const workspace = await resolveWorkspace(body.workspace);
+    if (pi.workspace !== workspace) {
+      await pi.reset(workspace);
+    }
+    await persistWorkspace(workspace);
+    sendJson(response, 200, { workspace, preferredWorkspace });
     return;
   }
 
@@ -642,6 +675,7 @@ async function handleRequest(request, response) {
     const body = await readJson(request);
     const workspace = body.cwd === undefined ? pi.workspace : await resolveWorkspace(body.cwd);
     await pi.reset(workspace);
+    await persistWorkspace(workspace);
     sendJson(response, 200, {
       ok: true,
       workspace: pi.workspace,
@@ -660,6 +694,7 @@ async function handleRequest(request, response) {
     }
 
     await pi.switchSession(selected.path, workspace);
+    await persistWorkspace(workspace);
     sendJson(response, 200, {
       ok: true,
       workspace: pi.workspace,
@@ -688,11 +723,16 @@ const server = createServer((request, response) => {
 
 server.requestTimeout = 30_000;
 
-server.listen(port, host, () => {
-  console.log(`friday listening on http://${host}:${port}`);
-  console.log(`pi workspace: ${initialWorkspace}`);
-  console.log(`workspace roots: ${workspaceRoots.join(', ')}`);
-});
+const startServer = async () => {
+  await loadPersistedWorkspace();
+  server.listen(port, host, () => {
+    console.log(`friday listening on http://${host}:${port}`);
+    console.log(`pi workspace: ${initialWorkspace}`);
+    console.log(`workspace roots: ${workspaceRoots.join(', ')}`);
+  });
+};
+
+void startServer();
 
 let shuttingDown = false;
 const shutdown = async (signal) => {

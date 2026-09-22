@@ -49,8 +49,8 @@ npm run dev
 - `GET /api/files` and `GET /api/files/content` — browse and preview files inside an allowed workspace
 - `GET /api/devices` — read-only Tailscale device status
 - `GET /api/settings` — safe runtime and server configuration details
-)
-- `GET /api/workspaces` — allowed workspace directories
+- `POST /api/settings/workspace` with `{ "workspace": "..." }` — persist the default workspace
+- `GET /api/workspaces`s` — allowed workspace directories
 - `GET /api/sessions?cwd=...` — saved sessions with running/working runtime indicators for a workspace
 - `GET /api/history` — current session messages and tool calls
 - `POST /api/chat` with `{ "message": "..." }` — send a message

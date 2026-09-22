@@ -285,8 +285,8 @@ async function loadWorkspace() {
   const current = await statusResponse.json();
   const data = await workspacesResponse.json();
   setWorkspaceSuggestions(data.workspaces);
-  workspace.value = current.workspace;
-  await loadSessions(current.workspace);
+  workspace.value = current.preferredWorkspace || current.workspace;
+  await loadSessions(workspace.value);
 }
 
 async function loadHistory() {
@@ -452,7 +452,8 @@ function renderSettings(data) {
     ['Server', `${data.host}:${data.port}`],
     ['Pi command', data.piCommand],
     ['Pi status', data.busy ? 'Working' : data.piRunning ? 'Running' : 'Stopped'],
-    ['Workspace', data.workspace],
+    ['Workspace setting', data.preferredWorkspace || data.workspace],
+    ['Active Pi workspace', data.workspace],
     ['Workspace roots', data.workspaceRoots.join(', ')],
     ['Current session', data.sessionPath || 'None'],
     ['Model', data.model ? `${data.model.name} · ${data.model.provider}` : 'None'],
@@ -590,7 +591,17 @@ async function updateWorkspaceSessions() {
   openFileInPi.disabled = true;
   status.textContent = 'Choose a session or start a new one';
   try {
-    await loadSessions(workspace.value);
+    const response = await apiFetch('/api/settings/workspace', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace: workspace.value }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Could not save workspace');
+    }
+    workspace.value = data.workspace;
+    await loadSessions(data.workspace);
     if (activeFeature === 'files') await loadFiles('');
   } catch (error) {
     addMessage({ role: 'assistant', content: `Error: ${error.message}` });
