@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -56,26 +57,32 @@ function clientIdFor(request) {
   return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value) ? value : 'default';
 }
 
+function createPiRuntime(runtimeId, cwd = preferredWorkspace) {
+  if (piSessions.size >= maxPiSessions) {
+    const idle = [...piSessions.entries()]
+      .filter(([, candidate]) => !candidate.pi.isBusy)
+      .sort(([, a], [, b]) => a.lastUsed - b.lastUsed)[0];
+    if (!idle) {
+      throw new RequestError('Too many active Pi sessions', 429);
+    }
+    piSessions.delete(idle[0]);
+    void idle[1].pi.stop();
+  }
+
+  const entry = {
+    pi: new PiSession({ cwd, command: piCommand }),
+    lastUsed: Date.now(),
+  };
+  piSessions.set(runtimeId, entry);
+  return entry.pi;
+}
+
 function piForRequest(request) {
   const clientId = clientIdFor(request);
   let entry = piSessions.get(clientId);
   if (!entry) {
-    if (piSessions.size >= maxPiSessions) {
-      const idle = [...piSessions.entries()]
-        .filter(([, candidate]) => !candidate.pi.isBusy)
-        .sort(([, a], [, b]) => a.lastUsed - b.lastUsed)[0];
-      if (!idle) {
-        throw new RequestError('Too many active Pi sessions', 429);
-      }
-      piSessions.delete(idle[0]);
-      void idle[1].pi.stop();
-    }
-
-    entry = {
-      pi: new PiSession({ cwd: preferredWorkspace, command: piCommand }),
-      lastUsed: 0,
-    };
-    piSessions.set(clientId, entry);
+    createPiRuntime(clientId);
+    entry = piSessions.get(clientId);
   }
   entry.lastUsed = Date.now();
   return entry.pi;
@@ -744,12 +751,20 @@ async function handleRequest(request, response) {
       throw new RequestError('session was not found in the selected workspace');
     }
 
-    await pi.switchSession(selected.path, workspace);
+    let selectedPi = pi;
+    let runtimeId = clientIdFor(request);
+    if (pi.isBusy) {
+      runtimeId = randomUUID();
+      selectedPi = createPiRuntime(runtimeId, workspace);
+    }
+
+    await selectedPi.switchSession(selected.path, workspace);
     await persistWorkspace(workspace);
     sendJson(response, 200, {
       ok: true,
-      workspace: pi.workspace,
-      sessionPath: pi.currentSessionPath,
+      runtimeId,
+      workspace: selectedPi.workspace,
+      sessionPath: selectedPi.currentSessionPath,
     });
     return;
   }

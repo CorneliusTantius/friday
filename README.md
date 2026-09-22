@@ -2,7 +2,7 @@
 
 A small web harness for a local [Pi](https://pi.dev) coding agent.
 
-The server starts one persistent Pi RPC session per browser tab. The plain UI supports workspace selection, session browsing, session switching, and collapsible tool-call details. Separate tabs or clients can run independent sessions concurrently. Pi-specific behavior stays behind its adapter so other device capabilities can be added later.
+The server starts one persistent Pi RPC session per browser tab. The plain UI supports workspace selection, session browsing, session switching, and collapsible tool-call details. Separate tabs or clients can run independent sessions concurrently; switching away from a working session creates a separate runtime so the original continues. Pi-specific behavior stays behind its adapter so other device capabilities can be added later.
 
 ## Requirements
 

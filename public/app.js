@@ -14,6 +14,8 @@ let activeModel = '';
 let activeThinkingLevel = 'off';
 let suggestionRequest = 0;
 let suggestionTimer;
+let historyPollTimer = null;
+let historyPollInFlight = false;
 let filesRoot = '';
 let filesPath = '';
 let selectedFilePath = '';
@@ -184,7 +186,9 @@ function renderSessions(items, currentPath) {
     details.append(meta, stateLabel);
     button.append(title, details);
     button.addEventListener('click', () => {
-      if (item.runtimeId && item.runtimeId !== sessionStorage.getItem('friday-session-id')) {
+      const currentRuntimeId = sessionStorage.getItem('friday-session-id');
+      if (item.path === currentPath && item.runtimeId === currentRuntimeId) return;
+      if (item.runtimeId && item.runtimeId !== currentRuntimeId) {
         attachRuntime(item.runtimeId);
         return;
       }
@@ -217,6 +221,10 @@ async function openSession(sessionPath) {
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.error || 'Could not open session');
+    }
+    if (data.runtimeId && data.runtimeId !== sessionStorage.getItem('friday-session-id')) {
+      attachRuntime(data.runtimeId);
+      return;
     }
     await loadHistory();
     await loadModels();
@@ -290,7 +298,8 @@ async function loadWorkspace() {
   await loadSessions(workspace.value);
 }
 
-async function loadHistory() {
+async function loadHistory({ scroll = true } = {}) {
+  const shouldStickToBottom = scroll || messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
   const response = await apiFetch('/api/history');
   if (!response.ok) {
     throw new Error('Could not load conversation');
@@ -319,7 +328,60 @@ async function loadHistory() {
   for (const toolCall of pendingToolCalls.values()) {
     addCombinedToolEntry(toolCall, null);
   }
-  scrollToLatest();
+  if (shouldStickToBottom) scrollToLatest();
+}
+
+function stopHistoryPolling() {
+  if (historyPollTimer) clearTimeout(historyPollTimer);
+  historyPollTimer = null;
+}
+
+function scheduleHistoryPoll() {
+  stopHistoryPolling();
+  historyPollTimer = setTimeout(() => void pollHistory(), 3_000);
+}
+
+async function pollHistory() {
+  if (historyPollInFlight) return;
+  historyPollInFlight = true;
+  try {
+    const response = await apiFetch('/api/status');
+    if (!response.ok) throw new Error('Could not read Pi status');
+    const data = await response.json();
+    if (data.busy) {
+      status.textContent = 'Pi is working…';
+      await loadHistory({ scroll: false });
+      scheduleHistoryPoll();
+    } else {
+      await loadHistory({ scroll: false });
+      stopHistoryPolling();
+      setBusy(false);
+    }
+  } catch {
+    scheduleHistoryPoll();
+  } finally {
+    historyPollInFlight = false;
+  }
+}
+
+function startHistoryPolling() {
+  if (!historyPollTimer) scheduleHistoryPoll();
+}
+
+async function syncHistoryPolling() {
+  try {
+    const response = await apiFetch('/api/status');
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data.busy) {
+      setBusy(true);
+      startHistoryPolling();
+    } else {
+      stopHistoryPolling();
+    }
+  } catch {
+    // Initial status errors are reported by the regular page loader.
+  }
 }
 
 function formatBytes(bytes) {
@@ -641,6 +703,7 @@ form.addEventListener('submit', async (event) => {
   addMessage({ role: 'user', content: message });
   input.value = '';
   setBusy(true);
+  startHistoryPolling();
 
   try {
     const response = await apiFetch('/api/chat', {
@@ -657,6 +720,7 @@ form.addEventListener('submit', async (event) => {
   } catch (error) {
     addMessage({ role: 'assistant', content: `Error: ${error.message}` });
   } finally {
+    stopHistoryPolling();
     setBusy(false);
     input.focus();
   }
@@ -694,6 +758,7 @@ reset.addEventListener('click', async () => {
     await loadModels();
     await loadThinkingLevels();
     await loadSessions(workspace.value);
+    await syncHistoryPolling();
   } catch (error) {
     addMessage({ role: 'assistant', content: `Error: ${error.message}` });
   }
