@@ -7,7 +7,6 @@ const refreshSessions = document.querySelector('#refresh-sessions');
 const sessionList = document.querySelector('#session-list');
 const status = document.querySelector('#status');
 const workspace = document.querySelector('#workspace');
-const browseWorkspace = document.querySelector('#browse-workspace');
 const workspaceOptions = document.querySelector('#workspace-options');
 const model = document.querySelector('#model');
 const thinkingLevel = document.querySelector('#thinking-level');
@@ -114,7 +113,6 @@ function setBusy(busy) {
   reset.disabled = busy;
   refreshSessions.disabled = busy;
   workspace.disabled = busy;
-  browseWorkspace.disabled = busy;
   model.disabled = busy || !model.value;
   thinkingLevel.disabled = busy || !thinkingLevel.value;
   status.textContent = busy ? 'Pi is working…' : 'Ready';
@@ -614,28 +612,7 @@ refreshSessions.addEventListener('click', async () => {
   }
 });
 
-browseWorkspace.addEventListener('click', async () => {
-  browseWorkspace.disabled = true;
-  status.textContent = 'Opening host file picker…';
-  try {
-    const response = await apiFetch('/api/workspace/pick', { method: 'POST' });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || 'Could not open host file picker');
-    }
-    if (data.cancelled) {
-      status.textContent = 'Ready';
-      return;
-    }
-    workspace.value = data.workspace;
-    await updateWorkspaceSessions();
-  } catch (error) {
-    addMessage({ role: 'assistant', content: `Error: ${error.message}` });
-    status.textContent = 'Ready';
-  } finally {
-    browseWorkspace.disabled = false;
-  }
-});
+
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();

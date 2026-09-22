@@ -311,32 +311,6 @@ async function listDevices() {
   }
 }
 
-async function pickWorkspaceOnHost(pi) {
-  if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
-    throw new RequestError('Host file picker requires a graphical session', 503);
-  }
-
-  try {
-    const { stdout } = await execFileAsync(
-      'zenity',
-      [
-        '--file-selection',
-        '--directory',
-        '--title=Choose Friday workspace',
-        `--filename=${pi.workspace}${sep}`,
-      ],
-      { encoding: 'utf8', maxBuffer: 4 * 1024 },
-    );
-    return stdout.trim() || null;
-  } catch (error) {
-    if (error.code === 1) return null;
-    if (error.code === 'ENOENT') {
-      throw new RequestError('Host file picker is unavailable: install zenity', 503);
-    }
-    throw new RequestError(`Host file picker failed: ${error.message}`, 503);
-  }
-}
-
 async function listWorkspaceSuggestions(prefix = '') {
   const roots = await allowedRootPaths();
   const paths = new Map();
@@ -606,20 +580,6 @@ async function handleRequest(request, response) {
       thinkingLevel: pi.currentThinkingLevel,
       piRunning: pi.isRunning,
       busy: pi.isBusy,
-    });
-    return;
-  }
-
-  if (request.method === 'POST' && pathname === '/api/workspace/pick') {
-    const selectedPath = await pickWorkspaceOnHost(pi);
-    if (!selectedPath) {
-      sendJson(response, 200, { cancelled: true, workspace: pi.workspace });
-      return;
-    }
-
-    sendJson(response, 200, {
-      cancelled: false,
-      workspace: await resolveWorkspace(selectedPath),
     });
     return;
   }

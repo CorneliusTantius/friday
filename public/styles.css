@@ -182,8 +182,6 @@ h1 { font-size: 1.1rem; font-weight: 650; }
   min-width: 0;
 }
 
-.workspace-row button { width: 100%; }
-
 .workspace-field input, .agent-controls select, textarea {
   min-width: 0;
   border: 1px solid #4b5563;
