@@ -104,8 +104,10 @@ button, textarea, input, select { font: inherit; }
 }
 
 .feature-icon {
-  width: 1.2rem;
+  width: 1.5rem;
   color: #93c5fd;
+  font-size: 1.25rem;
+  line-height: 1;
   text-align: center;
 }
 
@@ -343,7 +345,13 @@ h1 { font-size: 1.1rem; font-weight: 650; }
 }
 
 .file-item:hover { border-color: #374151; background: #1f2937; }
-.file-icon { width: 1rem; color: #93c5fd; text-align: center; }
+.file-icon {
+  width: 1.35rem;
+  color: #93c5fd;
+  font-size: 1.15rem;
+  line-height: 1;
+  text-align: center;
+}
 .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-size { margin-left: auto; color: #6b7280; font-size: 0.68rem; }
 
