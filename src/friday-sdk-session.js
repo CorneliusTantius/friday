@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { mkdir } from 'node:fs/promises';
+import { fridaySystemPrompt } from './friday-system-prompt.js';
 
 function textFromContent(content) {
   if (typeof content === 'string') return content;
@@ -13,14 +14,21 @@ function textFromContent(content) {
 export function fridayHistory(messages) {
   return messages
     .filter((message) => ['user', 'assistant', 'toolResult'].includes(message.role))
-    .map((message) => ({
-      role: message.role === 'toolResult' ? 'tool' : message.role,
-      content: textFromContent(message.content).trim(),
-      ...(message.toolCallId ? { toolCallId: message.toolCallId } : {}),
-      ...(message.toolName ? { toolName: message.toolName } : {}),
-      ...(message.isError !== undefined ? { isError: message.isError } : {}),
-    }))
-    .filter((message) => message.content);
+    .map((message) => {
+      const content = textFromContent(message.content).trim();
+      const toolCalls = Array.isArray(message.content)
+        ? message.content.filter((part) => part?.type === 'toolCall').map(({ id, name, arguments: args }) => ({ id, name, arguments: args ?? {} }))
+        : [];
+      return {
+        role: message.role === 'toolResult' ? 'tool' : message.role,
+        content,
+        ...(toolCalls.length ? { toolCalls } : {}),
+        ...(message.toolCallId ? { toolCallId: message.toolCallId } : {}),
+        ...(message.toolName ? { toolName: message.toolName } : {}),
+        ...(message.isError !== undefined ? { isError: message.isError } : {}),
+      };
+    })
+    .filter((message) => message.content || message.toolCalls?.length);
 }
 
 /** Friday-owned SDK-backed PiSession-compatible runtime. */
@@ -56,9 +64,9 @@ export class FridaySdkSession extends EventEmitter {
           modelsPath: join(this.agentDir, 'models.json'),
         });
         return this.createSession({
-          cwd: this.cwd, agentDir: this.agentDir, noTools: 'all', modelRuntime, settingsManager,
+          cwd: this.cwd, agentDir: this.agentDir, tools: ['bash', 'edit', 'read', 'write'], modelRuntime, settingsManager,
           resourceLoader: new DefaultResourceLoader({ cwd: this.cwd, agentDir: this.agentDir, settingsManager,
-            systemPrompt: 'You are Friday, a helpful general-purpose chat assistant. You cannot access other Pi sessions or control this device. Do not claim to have done so.',
+            systemPrompt: fridaySystemPrompt,
             noSkills: true, noExtensions: true, noPromptTemplates: true, noThemes: true, noContextFiles: true }),
           sessionManager: manager, model: this.model, thinkingLevel: this.thinkingLevel,
         });

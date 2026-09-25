@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { PiSession } from './pi-session.js';
 import { FridaySdkSession } from './friday-sdk-session.js';
+import { fridaySystemPrompt } from './friday-system-prompt.js';
 import { createProviderAuth } from './provider-auth.js';
 import { fridayPaths, loadConfig, migrateDirectory, migrateStorage } from './config.js';
 import { createRepositoryStore } from './repos.js';
@@ -209,9 +210,9 @@ async function getFridayPi() {
         cwd: fridayChatDir,
         command: piCommand,
         args: [
-          '--no-tools', '--no-extensions', '--no-skills', '--no-context-files',
+          '--tools', 'bash,edit,read,write', '--no-extensions', '--no-skills', '--no-context-files',
           '--session-dir', fridaySessionDir,
-          '--system-prompt', 'You are Friday, a helpful general-purpose chat assistant. You cannot access other Pi sessions or control this device. Do not claim to have done so.',
+          '--system-prompt', fridaySystemPrompt,
         ],
       });
       try {

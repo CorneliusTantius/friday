@@ -108,18 +108,67 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
     return article;
   }
 
+  function makeToolGroup(records) {
+    const group = document.createElement('details');
+    group.className = 'tool-group';
+    const summary = document.createElement('summary');
+    const counts = new Map();
+    for (const { call } of records) counts.set(call.name || 'tool', (counts.get(call.name || 'tool') || 0) + 1);
+    const names = [...counts].map(([name, count]) => `${name}${count > 1 ? ` ×${count}` : ''}`).join(', ');
+    const errors = records.filter(({ result }) => result?.isError).length;
+    summary.textContent = `${records.length} tool call${records.length === 1 ? '' : 's'} · ${names}${errors ? ` · ${errors} failed` : ''}`;
+    const list = document.createElement('div');
+    list.className = 'tool-group-list';
+    records.forEach(({ call, result }) => {
+      const entry = document.createElement('details');
+      entry.className = `system-entry${result?.isError ? ' error' : ''}`;
+      const title = document.createElement('summary');
+      title.textContent = `${call.name || 'tool'} · ${result ? result.isError ? 'error' : 'complete' : 'running'}`;
+      entry.append(title);
+      const output = [`Call\n${JSON.stringify(call.arguments || {}, null, 2)}`];
+      if (result) output.push(`Result\n${result.content || '(empty)'}`);
+      const pre = document.createElement('pre');
+      pre.textContent = output.join('\n\n');
+      entry.append(pre);
+      list.append(entry);
+    });
+    group.append(summary, list);
+    return group;
+  }
+
+  function historyBlocks() {
+    const blocks = [];
+    const calls = new Map();
+    for (const message of history) {
+      if (message.role === 'tool') {
+        const record = calls.get(message.toolCallId);
+        if (record) record.result = message;
+        else blocks.push({ type: 'tools', records: [{ call: { name: message.toolName || 'tool', arguments: {} }, result: message }] });
+        continue;
+      }
+      if (!['user', 'assistant'].includes(message.role)) continue;
+      if (message.content) blocks.push({ type: 'message', message });
+      if (message.role === 'assistant' && message.toolCalls?.length) {
+        const records = message.toolCalls.map((call) => ({ call, result: null }));
+        blocks.push({ type: 'tools', records });
+        for (const record of records) if (record.call.id) calls.set(record.call.id, record);
+      }
+    }
+    if (optimistic) blocks.push({ type: 'message', message: { role: 'user', content: optimistic.content } });
+    return blocks;
+  }
+
   function render() {
     const stick = nearBottom();
-    const visible = history.filter((item) => (item.role === 'user' || item.role === 'assistant') && item.content);
-    if (optimistic) visible.push({ role: 'user', content: optimistic.content });
-    if (!visible.length) {
+    const blocks = historyBlocks();
+    if (!blocks.length) {
       if (!messages.querySelector('.welcome')) {
         const welcome = document.createElement('div');
         welcome.className = 'welcome';
         const title = document.createElement('h2');
         title.textContent = 'Good to see you.';
         const copy = document.createElement('p');
-        copy.textContent = 'Friday is here to talk things through. Your Pi workspace conversations stay separate.';
+        copy.textContent = 'Friday can read and edit files or run shell commands in its workspace. These tools use the Friday host account and are not sandboxed.';
         welcome.append(title, copy);
         messages.replaceChildren(welcome);
       }
@@ -128,14 +177,15 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
 
     if (messages.querySelector('.welcome')) messages.replaceChildren();
     const current = [...messages.children];
-    visible.forEach((message, index) => {
-      const key = JSON.stringify(message);
+    blocks.forEach((block, index) => {
+      const key = JSON.stringify(block);
       if (current[index]?.messageKey === key) return;
-      const item = makeMessage(message);
+      const item = block.type === 'tools' ? makeToolGroup(block.records) : makeMessage(block.message);
+      item.messageKey = key;
       if (current[index]) current[index].replaceWith(item);
       else messages.append(item);
     });
-    for (let index = visible.length; index < current.length; index += 1) current[index].remove();
+    for (let index = blocks.length; index < current.length; index += 1) current[index].remove();
     if (stick) messages.scrollTop = messages.scrollHeight;
   }
 

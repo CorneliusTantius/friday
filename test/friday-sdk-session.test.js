@@ -7,11 +7,15 @@ test('Friday history projects SDK messages and limits the tail', () => {
     { role: 'system', content: 'hidden' },
     { role: 'user', content: [{ type: 'text', text: ' hello ' }] },
     { role: 'toolResult', toolCallId: 'call-1', toolName: 'tool', content: [{ type: 'text', text: 'result' }] },
+    { role: 'assistant', content: [{ type: 'toolCall', id: 'call-2', name: 'read', arguments: { path: 'README.md' } }] },
+    { role: 'toolResult', toolCallId: 'call-2', toolName: 'read', content: [{ type: 'text', text: 'file contents' }] },
     { role: 'assistant', content: [{ type: 'text', text: ' answer ' }] },
   ];
   assert.deepEqual(fridayHistory(messages), [
     { role: 'user', content: 'hello' },
     { role: 'tool', content: 'result', toolCallId: 'call-1', toolName: 'tool' },
+    { role: 'assistant', content: '', toolCalls: [{ id: 'call-2', name: 'read', arguments: { path: 'README.md' } }] },
+    { role: 'tool', content: 'file contents', toolCallId: 'call-2', toolName: 'read' },
     { role: 'assistant', content: 'answer' },
   ]);
 });
@@ -34,7 +38,8 @@ test('SDK session initializes once, disables tools, and disposes', async () => {
   adapter.onEvent((event) => events.push(event));
   assert.equal(await adapter.chat('test'), 'test');
   assert.equal(options.cwd, '/tmp/friday');
-  assert.equal(options.noTools, 'all');
+  assert.deepEqual(options.tools, ['bash', 'edit', 'read', 'write']);
+  assert.equal(options.noTools, undefined);
   assert.equal(options.modelRuntime.authPath, '/tmp/friday-sdk-config/auth.json');
   assert.equal(options.modelRuntime.modelsPath, '/tmp/friday-sdk-config/models.json');
   assert.ok(options.settingsManager, 'Friday uses its own SDK settings manager');

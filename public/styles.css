@@ -209,6 +209,7 @@ h2 { font-size: 14px; }
 .agent-orb span { width: .42rem; height: .42rem; border-radius: 50%; background: white; box-shadow: 0 0 9px white; }
 .agent-orb.working { animation: breathe 1.8s ease-in-out infinite; }
 .friday-app .header { justify-content: space-between; }
+.friday-tool-notice { flex: 0 0 auto; margin-top: .45rem; color: var(--muted); font-size: 11px; line-height: 1.4; }
 .friday-app .composer-footer { align-items: center; }
 .friday-app .message-avatar { color: #c4b5fd; font-size: 12px; }
 

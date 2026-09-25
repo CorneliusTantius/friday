@@ -122,7 +122,8 @@ rl.on('line', line => {
   const argsLog = (await (await import('node:fs/promises')).readFile(join(dir, 'pi-args.jsonl'), 'utf8')).trim().split(/\n/).map(JSON.parse);
   const fridaySpawn = argsLog.find(({ cwd }) => cwd === join(dir, 'friday'));
   assert.ok(fridaySpawn, 'Friday Pi should use its separate cwd');
-  for (const flag of ['--no-tools', '--no-extensions', '--no-skills', '--no-context-files']) assert.ok(fridaySpawn.args.includes(flag), `Friday Pi should receive ${flag}`);
+  for (const flag of ['--no-extensions', '--no-skills', '--no-context-files']) assert.ok(fridaySpawn.args.includes(flag), `Friday Pi should receive ${flag}`);
+  assert.equal(fridaySpawn.args[fridaySpawn.args.indexOf('--tools') + 1], 'bash,edit,read,write');
   assert.equal(fridaySpawn.args[fridaySpawn.args.indexOf('--session-dir') + 1], join(dir, 'friday', 'sessions'));
 
   const codingResponse = await request('/api/events/token', { method: 'POST' });
