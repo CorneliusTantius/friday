@@ -4,27 +4,56 @@ import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { cpus, freemem, homedir, hostname, loadavg, platform, totalmem } from 'node:os';
 import { createInterface } from 'node:readline';
-import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { PiSession } from './pi-session.js';
+import { FridaySdkSession } from './friday-sdk-session.js';
+import { createProviderAuth } from './provider-auth.js';
+import { fridayPaths, loadConfig, migrateDirectory, migrateStorage } from './config.js';
+import { createRepositoryStore } from './repos.js';
+import { browseNotes, readNote } from './notes.js';
+import { listAgentFiles, readAgentFile } from './agent-files.js';
+import { syncGitHubSnapshot, validateGitHubSyncTarget } from './github-sync.js';
 
 const host = process.env.HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.PORT || '3000', 10);
-const workspaceRoots = [resolve(homedir())];
-let initialWorkspace = resolve(homedir());
-let preferredWorkspace = initialWorkspace;
+const paths = fridayPaths();
+const repositories = createRepositoryStore({ directory: paths.reposDir });
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'));
-const settingsFile = resolve(process.env.FRIDAY_SETTINGS_FILE || join(agentDir, 'friday-settings.json'));
+const piWorkspaceDir = join(dirname(agentDir), 'workspace');
+const piLegacyRepositoriesDir = join(dirname(agentDir), 'repos');
+const piRepositories = createRepositoryStore({ directory: join(piWorkspaceDir, 'repos') });
+const fridayAuth = createProviderAuth({ agentDir: paths.configDir });
+const piAuth = createProviderAuth({ agentDir });
+const syncConfigs = { friday: join(paths.configDir, 'github-sync.json'), pi: join(agentDir, 'friday-sync.json') };
+const syncState = { friday: { busy: false, error: null }, pi: { busy: false, error: null } };
+const workspaceRoots = [resolve(homedir()), repositories.directory, piRepositories.directory];
+let initialWorkspace = piWorkspaceDir;
+let preferredWorkspace = initialWorkspace;
+const settingsFile = paths.configFile;
 const sessionStorage = resolve(process.env.PI_CODING_AGENT_SESSION_DIR || join(agentDir, 'sessions'));
-const publicRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../public');
+const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const fridayChatDir = process.env.FRIDAY_CHAT_DIR ? resolve(process.env.FRIDAY_CHAT_DIR) : paths.workspaceDir;
+const fridaySessionDir = process.env.FRIDAY_CHAT_DIR ? join(fridayChatDir, 'sessions') : paths.dataDir;
+const publicRoot = join(projectRoot, 'public');
 const piSessions = new Map();
+let fridayPi;
+let fridayInit;
+const fridayRuntimeId = '$friday'; // Not a valid X-Friday-Session value.
+const eventTokens = new Map();
+const eventConnections = new Set();
+const runtimeViewers = new Map();
+const sessionMutations = new Set();
 const execFileAsync = promisify(execFile);
 const piCommand = process.env.PI_COMMAND || 'pi';
 const maxPiSessions = 32;
-const maxFileEntries = 500;
-const maxFilePreviewBytes = 1_000_000;
+const eventTokenTtlMs = 30_000;
+const eventHeartbeatMs = 15_000;
+const runtimeViewerTtlMs = 60_000;
+const runtimeIdleTtlMs = 15 * 60_000;
+const runtimeCleanupIntervalMs = 60_000;
 
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error('PORT must be an integer between 1 and 65535');
@@ -41,22 +70,101 @@ const contentTypes = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
+  '.png': 'image/png',
 };
+
+function validClientId(value) {
+  return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value);
+}
 
 function clientIdFor(request) {
   const value = request.headers['x-friday-session'];
-  return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value) ? value : 'default';
+  return validClientId(value) ? value : 'default';
+}
+
+function viewerIdFor(request) {
+  const value = request.headers['x-friday-client'];
+  return validClientId(value) ? value : clientIdFor(request);
+}
+
+function touchRuntimeViewer(runtimeId, viewerId, now = Date.now()) {
+  let viewers = runtimeViewers.get(runtimeId);
+  if (!viewers) {
+    viewers = new Map();
+    runtimeViewers.set(runtimeId, viewers);
+  }
+  viewers.set(viewerId, now);
+}
+
+function pruneRuntimeViewers(now = Date.now()) {
+  for (const [runtimeId, viewers] of runtimeViewers) {
+    for (const [viewerId, lastSeen] of viewers) {
+      if (now - lastSeen > runtimeViewerTtlMs) viewers.delete(viewerId);
+    }
+    if (!viewers.size) runtimeViewers.delete(runtimeId);
+  }
+}
+
+function runtimeHasViewers(runtimeId) {
+  pruneRuntimeViewers();
+  const viewers = runtimeViewers.get(runtimeId);
+  return Boolean(viewers?.size) || [...eventConnections].some(
+    (connection) => connection.runtimeId === runtimeId,
+  );
+}
+
+function runtimeHasOtherViewers(runtimeId, viewerId) {
+  pruneRuntimeViewers();
+  const viewers = runtimeViewers.get(runtimeId);
+  if ([...(viewers?.keys() || [])].some((candidate) => candidate !== viewerId)) return true;
+  return [...eventConnections].some(
+    (connection) => connection.runtimeId === runtimeId && connection.viewerId !== viewerId,
+  );
+}
+
+async function retireRuntime(runtimeId, entry) {
+  if (piSessions.get(runtimeId) !== entry) return;
+  piSessions.delete(runtimeId);
+  runtimeViewers.delete(runtimeId);
+  for (const [token, record] of eventTokens) {
+    if (record.runtimeId === runtimeId) eventTokens.delete(token);
+  }
+  for (const connection of [...eventConnections]) {
+    if (connection.runtimeId !== runtimeId) continue;
+    connection.cleanup();
+    connection.response.end();
+  }
+  await entry.pi.stop();
+}
+
+async function cleanupIdleRuntimes(now = Date.now()) {
+  pruneRuntimeViewers(now);
+  const stopping = [];
+  for (const [runtimeId, entry] of piSessions) {
+    if (
+      now - entry.lastUsed <= runtimeIdleTtlMs
+      || entry.pi.hasActiveWork
+      || runtimeHasViewers(runtimeId)
+    ) continue;
+
+    stopping.push(retireRuntime(runtimeId, entry).catch(() => {}));
+  }
+  await Promise.all(stopping);
 }
 
 function createPiRuntime(runtimeId, cwd = preferredWorkspace) {
   if (piSessions.size >= maxPiSessions) {
     const idle = [...piSessions.entries()]
-      .filter(([, candidate]) => !candidate.pi.isBusy)
+      .filter(([runtimeId, candidate]) => (
+        !candidate.pi.hasActiveWork
+        && !runtimeHasViewers(runtimeId)
+      ))
       .sort(([, a], [, b]) => a.lastUsed - b.lastUsed)[0];
     if (!idle) {
       throw new RequestError('Too many active Pi sessions', 429);
     }
     piSessions.delete(idle[0]);
+    runtimeViewers.delete(idle[0]);
     void idle[1].pi.stop();
   }
 
@@ -76,8 +184,173 @@ function piForRequest(request) {
     entry = piSessions.get(clientId);
   }
   entry.lastUsed = Date.now();
+  touchRuntimeViewer(clientId, viewerIdFor(request), entry.lastUsed);
   return entry.pi;
 }
+
+async function resetFridayAfterAuth() {
+  if (process.env.FRIDAY_CHAT_DRIVER !== 'sdk' || !fridayPi) return;
+  if (fridayPi.isBusy) throw new RequestError('Friday is busy; retry after the current reply', 409);
+  const previous = fridayPi;
+  fridayPi = null;
+  for (const connection of eventConnections) {
+    if (connection.runtimeId === fridayRuntimeId) connection.response.end();
+  }
+  await previous.stop();
+}
+
+async function getFridayPi() {
+  if (fridayPi) return fridayPi;
+  if (!fridayInit) {
+    fridayInit = (async () => {
+      await mkdir(fridaySessionDir, { recursive: true, mode: 0o700 });
+      const useSdk = process.env.FRIDAY_CHAT_DRIVER === 'sdk';
+      const pi = useSdk ? new FridaySdkSession({ cwd: fridayChatDir, dataDir: fridaySessionDir, agentDir: paths.configDir }) : new PiSession({
+        cwd: fridayChatDir,
+        command: piCommand,
+        args: [
+          '--no-tools', '--no-extensions', '--no-skills', '--no-context-files',
+          '--session-dir', fridaySessionDir,
+          '--system-prompt', 'You are Friday, a helpful general-purpose chat assistant. You cannot access other Pi sessions or control this device. Do not claim to have done so.',
+        ],
+      });
+      try {
+        if (useSdk) await pi.start();
+        else {
+          const legacyWorkspaces = process.env.FRIDAY_CHAT_DIR ? [] : [paths.dataDir];
+          const [latest] = await listSessions(fridayChatDir, fridaySessionDir, legacyWorkspaces);
+          if (latest) await pi.switchSession(latest.path, fridayChatDir);
+          else await pi.start();
+        }
+        fridayPi = pi;
+        return pi;
+      } catch (error) {
+        await pi.stop();
+        throw error;
+      }
+    })().finally(() => { fridayInit = null; });
+  }
+  return fridayInit;
+}
+
+function createEventToken(request, runtimeId = clientIdFor(request), pi = null) {
+  const entry = pi ? { pi } : piSessions.get(runtimeId);
+  if (!entry) {
+    throw new RequestError('Runtime was not found', 404);
+  }
+
+  const now = Date.now();
+  for (const [token, record] of eventTokens) {
+    if (record.expiresAt <= now) eventTokens.delete(token);
+  }
+
+  const token = randomUUID();
+  eventTokens.set(token, {
+    runtimeId,
+    viewerId: viewerIdFor(request),
+    pi: entry.pi,
+    expiresAt: now + eventTokenTtlMs,
+  });
+  return token;
+}
+
+function writeEvent(response, event, data) {
+  response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+function serveEventStream(request, response, url) {
+  const token = url.searchParams.get('token');
+  const record = token ? eventTokens.get(token) : null;
+  if (token) eventTokens.delete(token);
+  const entry = record?.runtimeId === fridayRuntimeId
+    ? { pi: fridayPi }
+    : piSessions.get(record?.runtimeId);
+  if (!record || record.expiresAt <= Date.now() || !entry || entry.pi !== record.pi) {
+    sendJson(response, 401, { error: 'Event token is invalid or expired' });
+    return;
+  }
+
+  const pi = record.pi;
+  response.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-store, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  response.flushHeaders?.();
+  response.write('retry: 3000\n\n');
+
+  let closed = false;
+  const send = (kind, extra = {}) => {
+    if (closed || response.destroyed || response.writableEnded) return;
+    writeEvent(response, 'runtime', {
+      kind,
+      busy: pi.isBusy,
+      sessionPath: pi.currentSessionPath,
+      ...extra,
+    });
+  };
+  const onActivity = (event) => send('activity', { activity: event.type || 'event' });
+  const onStatus = (status) => send('status', {
+    busy: status.busy,
+    operation: status.operation,
+    sessionPath: status.sessionPath,
+  });
+  const onExit = () => send('exit', { busy: false });
+  const onRpcError = () => send('error');
+  const connection = {
+    response,
+    runtimeId: record.runtimeId,
+    viewerId: record.viewerId,
+  };
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    pi.off('event', onActivity);
+    pi.off('status', onStatus);
+    pi.off('exit', onExit);
+    pi.off('rpc_error', onRpcError);
+    eventConnections.delete(connection);
+  };
+  connection.cleanup = cleanup;
+
+  pi.on('event', onActivity);
+  pi.on('status', onStatus);
+  pi.on('exit', onExit);
+  pi.on('rpc_error', onRpcError);
+  eventConnections.add(connection);
+  response.once('close', cleanup);
+  response.once('error', cleanup);
+  request.once('aborted', cleanup);
+  send('ready');
+}
+
+const eventHeartbeat = setInterval(() => {
+  const now = Date.now();
+  for (const [token, record] of eventTokens) {
+    if (record.expiresAt <= now) eventTokens.delete(token);
+  }
+  pruneRuntimeViewers(now);
+  for (const connection of eventConnections) {
+    const { response } = connection;
+    touchRuntimeViewer(connection.runtimeId, connection.viewerId, now);
+    if (response.destroyed || response.writableEnded) {
+      connection.cleanup();
+    } else {
+      try {
+        response.write(': heartbeat\n\n');
+      } catch {
+        connection.cleanup();
+      }
+    }
+  }
+}, eventHeartbeatMs);
+eventHeartbeat.unref();
+
+const runtimeCleanupTimer = setInterval(() => {
+  void cleanupIdleRuntimes();
+}, runtimeCleanupIntervalMs);
+runtimeCleanupTimer.unref();
 
 function runningPiSessions(workspace) {
   return [...piSessions.entries()]
@@ -171,10 +444,13 @@ async function resolveWorkspace(path) {
 
 async function loadPersistedWorkspace() {
   try {
-    const settings = JSON.parse(await readFile(settingsFile, 'utf8'));
-    const workspace = await resolveWorkspace(settings.workspace);
+    const config = await loadConfig();
+    const legacyDefault = resolve(dirname(agentDir));
+    const migrateDefault = !process.env.FRIDAY_WORKSPACE && resolve(config.workspace) === legacyDefault;
+    const workspace = await resolveWorkspace(migrateDefault ? initialWorkspace : config.workspace);
     initialWorkspace = workspace;
     preferredWorkspace = workspace;
+    if (migrateDefault) await persistWorkspace(workspace);
   } catch {
     // Missing or stale settings should fall back to the configured default root.
   }
@@ -182,156 +458,10 @@ async function loadPersistedWorkspace() {
 
 async function persistWorkspace(workspace) {
   await mkdir(dirname(settingsFile), { recursive: true });
-  await writeFile(settingsFile, `${JSON.stringify({ workspace }, null, 2)}\n`, 'utf8');
+  let config = {};
+  try { config = JSON.parse(await readFile(settingsFile, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  await writeFile(settingsFile, `${JSON.stringify({ ...config, workspace }, null, 2)}\n`, { mode: 0o600 });
   preferredWorkspace = workspace;
-}
-
-async function configuredWorkspaceRoot(workspace) {
-  const roots = await allowedRootPaths();
-  const root = roots
-    .filter((candidate) => isWithin(candidate, workspace))
-    .sort((a, b) => b.length - a.length)[0];
-  if (!root) {
-    throw new RequestError('workspace is outside the configured workspace roots');
-  }
-  return root;
-}
-
-async function resolveConfiguredRoot(path) {
-  const candidate = await resolveWorkspace(path);
-  const roots = await allowedRootPaths();
-  if (!roots.includes(candidate)) {
-    throw new RequestError('file root must be a configured workspace root');
-  }
-  return candidate;
-}
-
-async function resolveWorkspaceEntry(cwd, inputPath = '') {
-  const workspace = await resolveWorkspace(cwd);
-  if (typeof inputPath !== 'string' || inputPath.includes('\0') || isAbsolute(inputPath)) {
-    throw new RequestError('file path must be relative to the workspace');
-  }
-
-  const candidate = resolve(workspace, inputPath || '.');
-  if (!isWithin(workspace, candidate)) {
-    throw new RequestError('file path is outside the workspace');
-  }
-
-  let info;
-  try {
-    info = await lstat(candidate);
-  } catch {
-    throw new RequestError('file or directory was not found', 404);
-  }
-  if (info.isSymbolicLink()) {
-    throw new RequestError('symbolic links are not available in Files', 403);
-  }
-
-  const realPath = await realpath(candidate);
-  if (!isWithin(workspace, realPath)) {
-    throw new RequestError('file path is outside the workspace');
-  }
-
-  return {
-    workspace,
-    path: realPath,
-    relativePath: relative(workspace, realPath).split(sep).join('/'),
-    info,
-  };
-}
-
-async function resolveFileContext(cwd, rootInput, inputPath, pathProvided) {
-  const workspace = await resolveWorkspace(cwd);
-  const root = rootInput ? await resolveConfiguredRoot(rootInput) : await configuredWorkspaceRoot(workspace);
-  if (!isWithin(root, workspace)) {
-    throw new RequestError('file root does not contain the workspace');
-  }
-
-  const initialPath = relative(root, workspace).split(sep).join('/');
-  const targetPath = pathProvided ? inputPath : initialPath;
-  const entry = await resolveWorkspaceEntry(root, targetPath);
-  return { workspace, root, entry };
-}
-
-async function listWorkspaceFiles(cwd, rootInput, inputPath, pathProvided) {
-  const context = await resolveFileContext(cwd, rootInput, inputPath, pathProvided);
-  const directory = context.entry;
-  if (!directory.info.isDirectory()) {
-    throw new RequestError('file path is not a directory', 400);
-  }
-
-  let names;
-  try {
-    names = await readdir(directory.path, { withFileTypes: true });
-  } catch {
-    throw new RequestError('directory could not be read', 403);
-  }
-  if (names.length > maxFileEntries) {
-    throw new RequestError(`directory contains more than ${maxFileEntries} entries`, 413);
-  }
-
-  const entries = [];
-  for (const entry of names) {
-    const childPath = join(directory.path, entry.name);
-    let info;
-    try {
-      info = await lstat(childPath);
-    } catch {
-      continue;
-    }
-    if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) {
-      continue;
-    }
-    const childRelativePath = `${directory.relativePath ? `${directory.relativePath}/` : ''}${entry.name}`;
-    entries.push({
-      name: entry.name,
-      path: childRelativePath,
-      workspacePath: isWithin(context.workspace, childPath)
-        ? relative(context.workspace, childPath).split(sep).join('/')
-        : null,
-      type: info.isDirectory() ? 'directory' : 'file',
-      size: info.isFile() ? info.size : null,
-      modified: info.mtime.toISOString(),
-    });
-  }
-
-  entries.sort((a, b) => {
-    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-  return {
-    workspace: context.workspace,
-    root: directory.workspace,
-    path: directory.relativePath,
-    entries,
-  };
-}
-
-async function readWorkspaceFile(cwd, rootInput, inputPath) {
-  const context = await resolveFileContext(cwd, rootInput, inputPath, true);
-  const file = context.entry;
-  if (!file.info.isFile()) {
-    throw new RequestError('file path is not a regular file', 400);
-  }
-  if (file.info.size > maxFilePreviewBytes) {
-    throw new RequestError(`file is larger than ${maxFilePreviewBytes} bytes`, 413);
-  }
-
-  const content = await readFile(file.path);
-  if (content.includes(0)) {
-    throw new RequestError('binary files cannot be previewed', 415);
-  }
-  return {
-    workspace: context.workspace,
-    root: file.workspace,
-    path: file.relativePath,
-    workspacePath: isWithin(context.workspace, file.path)
-      ? relative(context.workspace, file.path).split(sep).join('/')
-      : null,
-    size: content.length,
-    modified: file.info.mtime.toISOString(),
-    content: content.toString('utf8'),
-  };
 }
 
 function normalizeDevice(raw, id, { local = false, self = false } = {}) {
@@ -377,6 +507,35 @@ async function listDevices() {
         : 'Tailscale is unavailable or not authenticated',
       devices: [localDevice],
     };
+  }
+}
+
+async function listInstalledPiPackages(workspace, requirePi = false) {
+  try {
+    const { stdout } = await execFileAsync(piCommand, ['list'], {
+      cwd: workspace,
+      env: process.env,
+      encoding: 'utf8',
+      maxBuffer: 256 * 1024,
+      timeout: 5_000,
+    });
+    const packages = [];
+    let scope = 'user';
+    for (const rawLine of stdout.replace(/\u001b\[[0-9;]*m/g, '').split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (line === 'User packages:') { scope = 'user'; continue; }
+      if (line === 'Project packages:') { scope = 'project'; continue; }
+      if (/^  \S/.test(rawLine) && !/^    /.test(rawLine)) {
+        const filtered = line.endsWith(' (filtered)');
+        packages.push({ source: filtered ? line.slice(0, -11) : line, scope, filtered, installedPath: null });
+      } else if (/^    \S/.test(rawLine) && packages.length) {
+        packages[packages.length - 1].installedPath = line;
+      }
+    }
+    return { packages, error: null };
+  } catch (error) {
+    if (requirePi && error.code === 'ENOENT') throw new RequestError('Pi is not installed. Install the Pi CLI from https://pi.dev and ensure pi is on PATH, or set PI_COMMAND.', 404);
+    return { packages: [], error: 'Installed Pi packages could not be loaded' };
   }
 }
 
@@ -450,7 +609,7 @@ function textFromMessage(message) {
     .join('');
 }
 
-async function readSessionMetadata(path, workspace) {
+async function readSessionMetadata(path, workspace, legacyWorkspaces = []) {
   const input = createReadStream(path, { encoding: 'utf8' });
   const lines = createInterface({ input, crlfDelay: Infinity });
   let header;
@@ -490,7 +649,7 @@ async function readSessionMetadata(path, workspace) {
     input.destroy();
   }
 
-  if (!header || resolve(header.cwd) !== resolve(workspace)) {
+  if (!header || (resolve(header.cwd) !== resolve(workspace) && !legacyWorkspaces.some((path) => resolve(path) === resolve(header.cwd)))) {
     return null;
   }
 
@@ -507,8 +666,7 @@ async function readSessionMetadata(path, workspace) {
   };
 }
 
-async function listSessions(workspace) {
-  const directory = sessionDirectoryFor(workspace);
+async function listSessions(workspace, directory = sessionDirectoryFor(workspace), legacyWorkspaces = []) {
   let entries;
   try {
     entries = await readdir(directory, { withFileTypes: true });
@@ -519,7 +677,7 @@ async function listSessions(workspace) {
   const sessions = await Promise.all(
     entries
       .filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl'))
-      .map((entry) => readSessionMetadata(join(directory, entry.name), workspace)),
+      .map((entry) => readSessionMetadata(join(directory, entry.name), workspace, legacyWorkspaces)),
   );
 
   return sessions
@@ -527,12 +685,36 @@ async function listSessions(workspace) {
     .sort((a, b) => new Date(b.modified) - new Date(a.modified));
 }
 
+async function findSession(workspace, path) {
+  if (typeof path !== 'string' || !path) {
+    throw new RequestError('session path is required');
+  }
+  const session = (await listSessions(workspace)).find((item) => item.path === path);
+  if (!session) throw new RequestError('session was not found in the selected workspace', 404);
+  return session;
+}
+
+async function mutateSession(session, operation) {
+  if (sessionMutations.has(session.path)) {
+    throw new RequestError('This session is already being changed', 409);
+  }
+  sessionMutations.add(session.path);
+  try {
+    const current = await findSession(session.cwd, session.path);
+    return await operation(current);
+  } finally {
+    sessionMutations.delete(session.path);
+  }
+}
+
 async function serveStatic(pathname, response) {
   const filenames = {
     '/': 'index.html',
     '/index.html': 'index.html',
     '/app.js': 'app.js',
+    '/friday-chat.js': 'friday-chat.js',
     '/styles.css': 'styles.css',
+    '/friday-logo.png': 'friday-logo.png',
   };
   const filename = filenames[pathname];
   if (!filename) {
@@ -548,15 +730,307 @@ async function serveStatic(pathname, response) {
   return true;
 }
 
+async function handleFridayRequest(request, response, pathname) {
+  const pi = await getFridayPi();
+  if (request.method === 'GET' && pathname === '/api/friday/status') {
+    sendJson(response, 200, {
+      busy: pi.isBusy,
+      sessionPath: pi.currentSessionPath,
+      model: modelForClient(pi.currentModel),
+      thinkingLevel: pi.currentThinkingLevel,
+    });
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/friday/models') {
+    sendJson(response, 200, {
+      models: (await pi.availableModels()).map(modelForClient),
+      current: modelForClient(pi.currentModel),
+    });
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/api/friday/model') {
+    const body = await readJson(request);
+    if (typeof body.provider !== 'string' || typeof body.modelId !== 'string' || !body.provider || !body.modelId) {
+      throw new RequestError('provider and modelId are required');
+    }
+    sendJson(response, 200, { model: modelForClient(await pi.setModel(body.provider, body.modelId)) });
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/friday/thinking-levels') {
+    sendJson(response, 200, {
+      levels: await pi.availableThinkingLevels(),
+      current: pi.currentThinkingLevel,
+    });
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/api/friday/thinking-level') {
+    const body = await readJson(request);
+    if (typeof body.level !== 'string' || !body.level) {
+      throw new RequestError('level is required');
+    }
+    await pi.setThinkingLevel(body.level);
+    sendJson(response, 200, { level: pi.currentThinkingLevel });
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/friday/history') {
+    sendJson(response, 200, { messages: await pi.history() });
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/api/friday/chat') {
+    const body = await readJson(request);
+    if (typeof body.message !== 'string' || !body.message.trim()) {
+      throw new RequestError('message is required');
+    }
+    if (body.message.length > 20_000) {
+      throw new RequestError('message is too long');
+    }
+    const reply = await pi.chat(body.message.trim());
+    sendJson(response, 200, { role: 'assistant', content: reply });
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/api/friday/events/token') {
+    sendJson(response, 200, { token: createEventToken(request, fridayRuntimeId, pi) });
+    return;
+  }
+  sendJson(response, 404, { error: 'Not found' });
+}
+
+async function readSyncConfig(scope) {
+  try {
+    const value = JSON.parse(await readFile(syncConfigs[scope], 'utf8'));
+    return {
+      owner: typeof value.owner === 'string' ? value.owner : '',
+      repo: typeof value.repo === 'string' ? value.repo : '',
+      lastSync: typeof value.lastSync === 'string' ? value.lastSync : null,
+    };
+  } catch (error) {
+    if (error.code === 'ENOENT') return { owner: '', repo: '', lastSync: null };
+    throw error;
+  }
+}
+
+async function writeSyncConfig(scope, value) {
+  const file = syncConfigs[scope];
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+    await rename(temporary, file);
+  } finally {
+    await unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+  }
+}
+
+async function githubStatus() {
+  try {
+    await execFileAsync('gh', ['--version'], { timeout: 5000, maxBuffer: 64 * 1024 });
+  } catch { return { available: false, authenticated: false }; }
+  try {
+    await execFileAsync('gh', ['auth', 'status', '--hostname', 'github.com'], { timeout: 5000, maxBuffer: 64 * 1024 });
+    return { available: true, authenticated: true };
+  } catch { return { available: true, authenticated: false }; }
+}
+
 async function handleRequest(request, response) {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
   const { pathname } = url;
+
+  if (request.method === 'GET' && pathname === '/pi-not-installed') {
+    response.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pi is not installed — Friday</title><main style="font:1rem system-ui;max-width:36rem;margin:10vh auto;padding:1rem"><h1>Pi is not installed</h1><p>Install the <a href="https://pi.dev">Pi CLI</a> on the server and ensure <code>pi</code> is on PATH, or set <code>PI_COMMAND</code> to its executable path. Then restart Friday.</p><a href="/">Back to Friday</a></main></html>');
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/system/github') {
+    sendJson(response, 200, await githubStatus());
+    return;
+  }
+  const syncRoute = pathname.match(/^\/api\/(friday|pi)\/sync\/(settings|run)$/);
+  if (syncRoute) {
+    const [, scope, action] = syncRoute;
+    const state = syncState[scope];
+    if (action === 'settings' && request.method === 'GET') {
+      const config = await readSyncConfig(scope);
+      sendJson(response, 200, { ...config, status: state.busy ? 'Syncing…' : config.owner ? 'Ready' : 'Not configured', error: state.error });
+      return;
+    }
+    if (action === 'settings' && request.method === 'POST') {
+      if (state.busy) throw new RequestError('GitHub sync is already running', 409);
+      const body = await readJson(request);
+      try { validateGitHubSyncTarget(body.owner, body.repo); }
+      catch { throw new RequestError('Enter a valid GitHub owner and repository'); }
+      const previous = await readSyncConfig(scope);
+      const config = { owner: body.owner, repo: body.repo, lastSync: previous.owner === body.owner && previous.repo === body.repo ? previous.lastSync : null };
+      await writeSyncConfig(scope, config);
+      state.error = null;
+      sendJson(response, 200, { ...config, status: 'Ready', error: null });
+      return;
+    }
+    if (action === 'run' && request.method === 'POST') {
+      if (state.busy) throw new RequestError('GitHub sync is already running', 409);
+      const config = await readSyncConfig(scope);
+      try { validateGitHubSyncTarget(config.owner, config.repo); }
+      catch { throw new RequestError('Configure a private GitHub repository in agent Settings first'); }
+      state.busy = true;
+      state.error = null;
+      try {
+        const result = await syncGitHubSnapshot({
+          directory: scope === 'friday' ? paths.root : dirname(agentDir),
+          snapshotName: scope === 'friday' ? '.friday' : '.pi',
+          managedRepos: [scope === 'friday' ? repositories.directory : piRepositories.directory],
+          owner: config.owner, repo: config.repo,
+        });
+        config.lastSync = new Date().toISOString();
+        await writeSyncConfig(scope, config);
+        sendJson(response, 200, { ...result, lastSync: config.lastSync });
+      } catch {
+        state.error = 'Sync failed. Check gh authentication, repository privacy, and push permissions.';
+        throw new RequestError(state.error, 502);
+      } finally { state.busy = false; }
+      return;
+    }
+    throw new RequestError('Not found', 404);
+  }
+  const repoPullRoute = pathname.match(/^\/api\/(pi\/)?repos\/pull$/);
+  if (request.method === 'POST' && repoPullRoute) {
+    const body = await readJson(request);
+    const store = repoPullRoute[1] ? piRepositories : repositories;
+    try {
+      sendJson(response, 200, await store.pullRepository(body.name));
+    } catch (error) {
+      const status = error.code === 'DIRTY' || error.code === 'BUSY' ? 409
+        : error.code === 'ENOENT' ? 404
+          : error.code === 'INVALID' ? 400 : 502;
+      throw new RequestError(error.message || 'Git pull failed', status);
+    }
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/repos') {
+    sendJson(response, 200, { repos: await repositories.listRepositories() });
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/api/repos') {
+    const body = await readJson(request);
+    if (typeof body.url !== 'string') throw new RequestError('url is required');
+    try { sendJson(response, 201, { repo: await repositories.cloneRepository(body.url) }); }
+    catch (error) { throw new RequestError(error.message, 400); }
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/pi/repos') {
+    sendJson(response, 200, { repos: await piRepositories.listRepositories() });
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/api/pi/repos') {
+    const body = await readJson(request);
+    if (typeof body.url !== 'string') throw new RequestError('url is required');
+    try { sendJson(response, 201, { repo: await piRepositories.cloneRepository(body.url) }); }
+    catch (error) { throw new RequestError(error.message, 400); }
+    return;
+  }
+  const scopedFiles = pathname.match(/^\/api\/(friday|pi)\/files(\/content)?$/);
+  if (scopedFiles && request.method === 'GET') {
+    const root = scopedFiles[1];
+    const path = url.searchParams.get('path') || '';
+    try {
+      sendJson(response, 200, scopedFiles[2]
+        ? await readAgentFile({ root, path })
+        : await listAgentFiles({ root, path }));
+    } catch (error) {
+      throw new RequestError(error.message, 400);
+    }
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/notes') {
+    sendJson(response, 200, { notes: (await browseNotes({ root: paths.notesDir })).map((path) => ({ name: path, path })) });
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/notes/content') {
+    const content = await readNote(url.searchParams.get('path'), { root: paths.notesDir });
+    if (content === null) throw new RequestError('Note not found', 404);
+    sendJson(response, 200, { content });
+    return;
+  }
+  const authRoute = pathname.match(/^\/api\/(friday|pi)\/auth(?:\/(login|logout|flow))?$/);
+  if (authRoute) {
+    const service = authRoute[1] === 'friday' ? fridayAuth : piAuth;
+    const action = authRoute[2];
+    if (authRoute[1] === 'friday' && ['login', 'logout'].includes(action) && fridayPi?.isBusy) {
+      throw new RequestError('Friday is busy; retry after the current reply', 409);
+    }
+    if (!action && request.method === 'GET') {
+      sendJson(response, 200, { providers: await Promise.all(['openai-codex', 'openai'].map((id) => service.status(id))) });
+      return;
+    }
+    if (action === 'login' && request.method === 'POST') {
+      const body = await readJson(request);
+      if (body.type === 'api_key' && body.provider === 'openai' && typeof body.key === 'string' && body.key.length <= 4096) {
+        const result = await service.loginApiKey(body.provider, body.key);
+        if (authRoute[1] === 'friday') await resetFridayAfterAuth();
+        sendJson(response, 200, result); return;
+      }
+      if (body.type === 'oauth' && body.provider === 'openai-codex') {
+        sendJson(response, 202, { token: (await service.beginOAuth(body.provider)).id }); return;
+      }
+      throw new RequestError('Unsupported provider or login method');
+    }
+    if (action === 'logout' && request.method === 'POST') {
+      const body = await readJson(request);
+      if (!['openai', 'openai-codex'].includes(body.provider)) throw new RequestError('Unsupported provider');
+      await (await service.runtime()).logout(body.provider);
+      if (authRoute[1] === 'friday') await resetFridayAfterAuth();
+      sendJson(response, 200, { ok: true }); return;
+    }
+    if (action === 'flow' && request.method === 'GET') {
+      const state = await service.next(url.searchParams.get('token'));
+      if (state.ok && !state.step && authRoute[1] === 'friday') await resetFridayAfterAuth();
+      sendJson(response, 200, state.step ? { ...state.step } : state.ok ? { complete: true } : { pending: state.error === 'Pending', error: state.error });
+      return;
+    }
+    if (action === 'flow' && request.method === 'POST') {
+      const body = await readJson(request);
+      sendJson(response, 200, await service.answer(body.token, body.response)); return;
+    }
+    if (action === 'flow' && request.method === 'DELETE') {
+      sendJson(response, 200, { cancelled: service.cancel(url.searchParams.get('token')) }); return;
+    }
+    throw new RequestError('Not found', 404);
+  }
+  if (request.method === 'GET' && pathname === '/api/friday/settings') {
+    sendJson(response, 200, { fridayChat: {
+      directory: fridayChatDir,
+      sessionsDirectory: fridaySessionDir,
+      sessionPath: fridayPi?.currentSessionPath || null,
+      model: modelForClient(fridayPi?.currentModel),
+      running: fridayPi?.isRunning || false,
+      busy: fridayPi?.isBusy || false,
+    } });
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/system/settings') {
+    sendJson(response, 200, { host, port, piCommand, systemUsage: await getSystemUsage() });
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/devices') {
+    sendJson(response, 200, await listDevices());
+    return;
+  }
+  if (pathname.startsWith('/api/friday/')) {
+    await handleFridayRequest(request, response, pathname);
+    return;
+  }
+
+  if (request.method === 'GET' && pathname === '/api/events') {
+    serveEventStream(request, response, url);
+    return;
+  }
+  if (request.method === 'GET' && await serveStatic(pathname, response)) return;
+
   const pi = piForRequest(request);
 
   if (request.method === 'GET' && pathname === '/healthz') {
     sendJson(response, 200, {
       status: 'ok',
       piRunning: pi.isRunning,
+      eventConnections: eventConnections.size,
       workspace: pi.workspace,
       sessionPath: pi.currentSessionPath,
     });
@@ -573,6 +1047,11 @@ async function handleRequest(request, response) {
       piRunning: pi.isRunning,
       busy: pi.isBusy,
     });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/events/token') {
+    sendJson(response, 200, { token: createEventToken(request) });
     return;
   }
 
@@ -615,37 +1094,35 @@ async function handleRequest(request, response) {
     return;
   }
 
-  if (request.method === 'GET' && pathname === '/api/files') {
-    sendJson(response, 200, await listWorkspaceFiles(
-      url.searchParams.get('cwd') || pi.workspace,
-      url.searchParams.get('root') || '',
-      url.searchParams.get('path') || '',
-      url.searchParams.has('path'),
-    ));
+  if (request.method === 'GET' && pathname === '/api/pi/settings') {
+    const piPackages = await listInstalledPiPackages(pi.workspace, true);
+    sendJson(response, 200, {
+      workspace: pi.workspace,
+      preferredWorkspace,
+      sessionPath: pi.currentSessionPath,
+      model: modelForClient(pi.currentModel),
+      thinkingLevel: pi.currentThinkingLevel,
+      piRunning: pi.isRunning,
+      busy: pi.isBusy,
+      piPackages: piPackages.packages,
+      piPackagesError: piPackages.error,
+    });
     return;
   }
-
-  if (request.method === 'GET' && pathname === '/api/files/content') {
-    const path = url.searchParams.get('path');
-    if (!path) throw new RequestError('file path is required');
-    sendJson(response, 200, await readWorkspaceFile(
-      url.searchParams.get('cwd') || pi.workspace,
-      url.searchParams.get('root') || '',
-      path,
-    ));
-    return;
-  }
-
-  if (request.method === 'GET' && pathname === '/api/devices') {
-    sendJson(response, 200, await listDevices());
-    return;
-  }
-
   if (request.method === 'GET' && pathname === '/api/settings') {
+    const piPackages = await listInstalledPiPackages(pi.workspace);
     sendJson(response, 200, {
       host,
       port,
       piCommand,
+      fridayChat: {
+        directory: fridayChatDir,
+        sessionsDirectory: fridaySessionDir,
+        sessionPath: fridayPi?.currentSessionPath || null,
+        model: modelForClient(fridayPi?.currentModel),
+        running: fridayPi?.isRunning || false,
+        busy: fridayPi?.isBusy || false,
+      },
       workspaceRoots,
       workspace: pi.workspace,
       preferredWorkspace,
@@ -655,18 +1132,30 @@ async function handleRequest(request, response) {
       systemUsage: await getSystemUsage(),
       piRunning: pi.isRunning,
       busy: pi.isBusy,
+      piPackages: piPackages.packages,
+      piPackagesError: piPackages.error,
     });
     return;
   }
 
   if (request.method === 'POST' && pathname === '/api/settings/workspace') {
+    if (process.env.FRIDAY_WORKSPACE) throw new RequestError('Workspace is controlled by FRIDAY_WORKSPACE; change the environment variable and restart Friday', 409);
     const body = await readJson(request);
     const workspace = await resolveWorkspace(body.workspace);
-    if (pi.workspace !== workspace) {
+    let workspacePi = pi;
+    let runtimeId = clientIdFor(request);
+    if (pi.workspace !== workspace && (pi.isBusy || runtimeHasOtherViewers(runtimeId, viewerIdFor(request)))) {
+      runtimeId = randomUUID();
+      workspacePi = createPiRuntime(runtimeId, workspace);
+    } else if (pi.workspace !== workspace) {
       await pi.reset(workspace);
     }
     await persistWorkspace(workspace);
-    sendJson(response, 200, { workspace, preferredWorkspace });
+    sendJson(response, 200, {
+      workspace: workspacePi.workspace,
+      preferredWorkspace,
+      runtimeId,
+    });
     return;
   }
 
@@ -701,6 +1190,66 @@ async function handleRequest(request, response) {
     return;
   }
 
+  if (request.method === 'POST' && pathname === '/api/session/rename') {
+    const body = await readJson(request);
+    const workspace = await resolveWorkspace(body.cwd);
+    const session = await findSession(workspace, body.path);
+    if (typeof body.name !== 'string' || !body.name.trim() || body.name.trim().length > 100) {
+      throw new RequestError('session name must be between 1 and 100 characters');
+    }
+    await mutateSession(session, async (current) => {
+      const runtime = [...piSessions.values()].find((entry) => entry.pi.currentSessionPath === current.path);
+      if (runtime) {
+        await runtime.pi.setSessionName(body.name.trim());
+        runtime.lastUsed = Date.now();
+        return;
+      }
+
+      const temporaryPi = new PiSession({ cwd: workspace, command: piCommand });
+      try {
+        await temporaryPi.switchSession(current.path, workspace);
+        await temporaryPi.setSessionName(body.name.trim());
+      } finally {
+        await temporaryPi.stop();
+      }
+    });
+    sendJson(response, 200, { ok: true, name: body.name.trim() });
+    return;
+  }
+
+  if (request.method === 'POST' && pathname === '/api/session/delete') {
+    const body = await readJson(request);
+    const workspace = await resolveWorkspace(body.cwd);
+    const session = await findSession(workspace, body.path);
+    const viewerId = viewerIdFor(request);
+    const requesterRuntimeId = clientIdFor(request);
+    const runtimeId = await mutateSession(session, async (current) => {
+      const targetRuntimes = [...piSessions.entries()].filter(([, entry]) => entry.pi.currentSessionPath === current.path);
+
+      for (const [targetRuntimeId, entry] of targetRuntimes) {
+        if (entry.pi.hasActiveWork) {
+          throw new RequestError('Cannot delete a session while it is working or opening', 409);
+        }
+        if (runtimeHasOtherViewers(targetRuntimeId, viewerId)) {
+          throw new RequestError('Cannot delete a session that is open on another device', 409);
+        }
+      }
+
+      const replaceRuntime = targetRuntimes.some(([targetRuntimeId]) => targetRuntimeId === requesterRuntimeId);
+      for (const [targetRuntimeId, entry] of targetRuntimes) {
+        await retireRuntime(targetRuntimeId, entry);
+      }
+      await unlink(current.path);
+
+      if (!replaceRuntime) return requesterRuntimeId;
+      const replacementRuntimeId = randomUUID();
+      createPiRuntime(replacementRuntimeId, workspace);
+      return replacementRuntimeId;
+    });
+    sendJson(response, 200, { ok: true, runtimeId, workspace });
+    return;
+  }
+
   if (request.method === 'GET' && pathname === '/api/history') {
     let limit = null;
     if (url.searchParams.has('limit')) {
@@ -711,8 +1260,10 @@ async function handleRequest(request, response) {
       }
       limit = parsedLimit;
     }
+    const history = await pi.history();
     sendJson(response, 200, {
-      messages: await pi.history(limit),
+      messages: limit ? history.slice(-limit) : history,
+      total: history.length,
       workspace: pi.workspace,
       sessionPath: pi.currentSessionPath,
     });
@@ -736,12 +1287,20 @@ async function handleRequest(request, response) {
   if (request.method === 'POST' && pathname === '/api/session/reset') {
     const body = await readJson(request);
     const workspace = body.cwd === undefined ? pi.workspace : await resolveWorkspace(body.cwd);
-    await pi.reset(workspace);
+    let resetPi = pi;
+    let runtimeId = clientIdFor(request);
+    if (pi.isBusy || runtimeHasOtherViewers(runtimeId, viewerIdFor(request))) {
+      runtimeId = randomUUID();
+      resetPi = createPiRuntime(runtimeId, workspace);
+    } else {
+      await pi.reset(workspace);
+    }
     await persistWorkspace(workspace);
     sendJson(response, 200, {
       ok: true,
-      workspace: pi.workspace,
-      sessionPath: pi.currentSessionPath,
+      runtimeId,
+      workspace: resetPi.workspace,
+      sessionPath: resetPi.currentSessionPath,
     });
     return;
   }
@@ -757,12 +1316,16 @@ async function handleRequest(request, response) {
 
     let selectedPi = pi;
     let runtimeId = clientIdFor(request);
-    if (pi.isBusy) {
+    const sharedRuntime = runtimeHasOtherViewers(runtimeId, viewerIdFor(request));
+    const changingSharedSession = sharedRuntime && pi.currentSessionPath !== selected.path;
+    if (pi.isBusy || changingSharedSession) {
       runtimeId = randomUUID();
       selectedPi = createPiRuntime(runtimeId, workspace);
     }
 
-    await selectedPi.switchSession(selected.path, workspace);
+    if (selectedPi.currentSessionPath !== selected.path || selectedPi.workspace !== workspace) {
+      await selectedPi.switchSession(selected.path, workspace);
+    }
     await persistWorkspace(workspace);
     sendJson(response, 200, {
       ok: true,
@@ -773,18 +1336,15 @@ async function handleRequest(request, response) {
     return;
   }
 
-  if (request.method === 'GET' && await serveStatic(pathname, response)) {
-    return;
-  }
-
   sendJson(response, 404, { error: 'Not found' });
 }
 
 const server = createServer((request, response) => {
   handleRequest(request, response).catch((error) => {
-    const status = error.status || (error.message.includes('already responding') ? 409 : 500);
+    const missingPi = error.code === 'ENOENT' && error.path === piCommand;
+    const status = missingPi ? 404 : error.status || (error.message.includes('already responding') ? 409 : 500);
     if (!response.headersSent) {
-      sendJson(response, status, { error: error.message });
+      sendJson(response, status, { error: missingPi ? 'Pi is not installed. Install the Pi CLI from https://pi.dev and ensure pi is on PATH, or set PI_COMMAND.' : error.message });
     } else {
       response.destroy(error);
     }
@@ -842,6 +1402,11 @@ async function logSystemUsage() {
 let usageTimer;
 
 const startServer = async () => {
+  await migrateStorage();
+  await mkdir(dirname(agentDir), { recursive: true, mode: 0o700 });
+  await mkdir(piWorkspaceDir, { recursive: true, mode: 0o700 });
+  await migrateDirectory(piLegacyRepositoriesDir, piRepositories.directory);
+  await mkdir(piRepositories.directory, { recursive: true, mode: 0o700 });
   await loadPersistedWorkspace();
   await logSystemUsage();
   server.listen(port, host, () => {
@@ -862,9 +1427,20 @@ const shutdown = async (signal) => {
   shuttingDown = true;
   console.log(`${signal} received; shutting down`);
   if (usageTimer) clearInterval(usageTimer);
+  clearInterval(eventHeartbeat);
+  clearInterval(runtimeCleanupTimer);
+  eventTokens.clear();
+  for (const connection of [...eventConnections]) {
+    connection.cleanup();
+    connection.response.end();
+  }
 
   await new Promise((resolve) => server.close(resolve));
-  await Promise.all([...piSessions.values()].map(({ pi }) => pi.stop()));
+  if (fridayInit) await fridayInit.catch(() => {});
+  await Promise.all([
+    ...[...piSessions.values()].map(({ pi }) => pi.stop()),
+    fridayPi?.stop(),
+  ]);
 };
 
 process.on('SIGINT', () => void shutdown('SIGINT'));

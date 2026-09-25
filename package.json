@@ -7,11 +7,15 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "test": "node --test",
     "tailscale:serve": "tailscale serve --bg http://127.0.0.1:3000",
     "tailscale:status": "tailscale serve status",
     "tailscale:reset": "tailscale serve reset"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.87.1"
   }
 }
