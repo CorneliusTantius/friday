@@ -17,11 +17,13 @@ import { createRepositoryStore } from './repos.js';
 import { browseNotes, readNote } from './notes.js';
 import { listAgentFiles, readAgentFile } from './agent-files.js';
 import { syncGitHubSnapshot, validateGitHubSyncTarget } from './github-sync.js';
+import { createFinanceStore } from './finances.js';
 
 const host = process.env.HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.PORT || '3000', 10);
 const paths = fridayPaths();
 const repositories = createRepositoryStore({ directory: paths.reposDir });
+const finances = createFinanceStore({ file: join(paths.dataDir, 'finances.json') });
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'));
 const piWorkspaceDir = join(dirname(agentDir), 'workspace');
 const piLegacyRepositoriesDir = join(dirname(agentDir), 'repos');
@@ -890,6 +892,35 @@ async function handleRequest(request, response) {
       return;
     }
     throw new RequestError('Not found', 404);
+  }
+  if (request.method === 'GET' && pathname === '/api/finances') {
+    sendJson(response, 200, { entries: await finances.list() });
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/api/finances') {
+    const body = await readJson(request);
+    try { sendJson(response, 201, { entry: await finances.add(body) }); }
+    catch (error) { throw new RequestError(error.message, 400); }
+    return;
+  }
+  const financeEntryRoute = pathname.match(/^\/api\/finances\/([^/]+)$/);
+  if (request.method === 'PATCH' && financeEntryRoute) {
+    const body = await readJson(request);
+    try {
+      const entry = await finances.updateEntry(financeEntryRoute[1], body);
+      if (!entry) throw new RequestError('Entry not found', 404);
+      sendJson(response, 200, { entry });
+    } catch (error) {
+      if (error instanceof RequestError) throw error;
+      throw new RequestError(error.message, 400);
+    }
+    return;
+  }
+  if (request.method === 'DELETE' && financeEntryRoute) {
+    if (!await finances.remove(financeEntryRoute[1])) throw new RequestError('Entry not found', 404);
+    response.writeHead(204, { 'Cache-Control': 'no-store' });
+    response.end();
+    return;
   }
   const repoPullRoute = pathname.match(/^\/api\/(pi\/)?repos\/pull$/);
   if (request.method === 'POST' && repoPullRoute) {

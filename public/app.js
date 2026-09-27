@@ -14,6 +14,11 @@ const elements = {
   serverSettingsList: $('#server-settings-list'), extensionsList: $('#extensions-list'),
   connectionDot: $('#connection-dot'), connectionLabel: $('#connection-label'),
   toastRegion: $('#toast-region'), drawerBackdrop: $('#drawer-backdrop'), agentOrb: $('.header .agent-orb'),
+  financeForm: $('#finance-form'), financeList: $('#finance-list'), financeStatus: $('#finance-status'),
+  financeBalance: $('#finance-balance'), financeIncome: $('#finance-income'), financeExpenses: $('#finance-expenses'),
+  financeSubmit: $('#finance-submit'), financeCancel: $('#finance-cancel'),
+  financeMonth: $('#finance-month'), financeTypeFilter: $('#finance-type-filter'),
+  financeCategoryFilter: $('#finance-category-filter'), financeExport: $('#finance-export'),
   announcement: $('#announcement'),
 };
 
@@ -23,6 +28,7 @@ const featureViews = new Map([
   ['pi', $('#pi-feature')],
   ['files', $('#files-feature')], ['pi-files', $('#files-feature')],
   ['repos', $('#repos-feature')], ['pi-repos', $('#pi-repos-feature')], ['notes', $('#notes-feature')],
+  ['finances', $('#finances-feature')],
   ['settings', $('#settings-feature')], ['friday-settings', $('#settings-feature')], ['pi-settings', $('#settings-feature')],
 ]);
 
@@ -1420,6 +1426,129 @@ const fridayChat = fridayChatModule
       stop() {},
     };
 
+const money = (rupiah) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(rupiah);
+let editingFinanceId = null;
+let financeEntries = [];
+
+function currentFinanceMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function currentFinanceDate() {
+  const now = new Date();
+  return `${currentFinanceMonth()}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function visibleFinanceEntries() {
+  return financeEntries.filter((entry) => (
+    (!elements.financeMonth.value || entry.date.startsWith(elements.financeMonth.value))
+    && (elements.financeTypeFilter.value === 'all' || entry.type === elements.financeTypeFilter.value)
+    && (elements.financeCategoryFilter.value === 'all' || entry.category === elements.financeCategoryFilter.value)
+  ));
+}
+
+function resetFinanceForm() {
+  editingFinanceId = null;
+  elements.financeForm.reset();
+  elements.financeForm.elements.date.value = currentFinanceDate();
+  elements.financeSubmit.textContent = 'Add entry';
+  elements.financeCancel.hidden = true;
+}
+
+function editFinance(entry) {
+  editingFinanceId = entry.id;
+  for (const field of ['type', 'amount', 'date', 'category', 'description']) {
+    if (field === 'amount') elements.financeForm.elements[field].value = String(entry.amount);
+    else elements.financeForm.elements[field].value = entry[field];
+  }
+  elements.financeSubmit.textContent = 'Save changes';
+  elements.financeCancel.hidden = false;
+  elements.financeForm.elements.amount.focus();
+}
+
+async function loadFinances() {
+  const { entries } = await apiJson('/api/finances', {}, 'finances');
+  financeEntries = entries;
+  const monthEntries = entries.filter((entry) => !elements.financeMonth.value || entry.date.startsWith(elements.financeMonth.value));
+  const totals = monthEntries.reduce((result, entry) => {
+    result[entry.type] += entry.amount;
+    return result;
+  }, { income: 0, expense: 0 });
+  elements.financeIncome.textContent = money(totals.income);
+  elements.financeExpenses.textContent = money(totals.expense);
+  elements.financeBalance.textContent = money(totals.income - totals.expense);
+  elements.financeList.replaceChildren();
+  const visibleEntries = visibleFinanceEntries();
+  if (!financeEntries.length) {
+    elements.financeStatus.textContent = 'No transactions yet. Add your first transaction above.';
+    return;
+  }
+  if (!visibleEntries.length) {
+    elements.financeStatus.textContent = 'No transactions match these filters.';
+    return;
+  }
+  elements.financeStatus.textContent = '';
+  for (const entry of visibleEntries) {
+    const row = document.createElement('article');
+    row.className = 'finance-entry';
+    const details = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = entry.description || entry.category;
+    const meta = document.createElement('span');
+    meta.textContent = `${entry.category} · ${entry.date}`;
+    details.append(title, meta);
+    const amount = document.createElement('strong');
+    amount.className = entry.type;
+    amount.textContent = `${entry.type === 'expense' ? '-' : '+'}${money(entry.amount)}`;
+    const actions = document.createElement('div');
+    actions.className = 'finance-actions';
+    const edit = document.createElement('button');
+    edit.className = 'text-button'; edit.type = 'button'; edit.textContent = 'Edit';
+    edit.addEventListener('click', () => editFinance(entry));
+    const remove = document.createElement('button');
+    remove.className = 'text-button'; remove.type = 'button'; remove.textContent = 'Delete';
+    remove.addEventListener('click', async () => {
+      if (!window.confirm(`Delete transaction “${entry.description || entry.category}”?`)) return;
+      try { await apiJson(`/api/finances/${encodeURIComponent(entry.id)}`, { method: 'DELETE' }); await loadFinances(); }
+      catch (error) { toast(error.message, 'error'); }
+    });
+    actions.append(edit, remove);
+    row.append(details, amount, actions);
+    elements.financeList.append(row);
+  }
+}
+
+function exportFinanceCsv() {
+  const escape = (value) => {
+    const text = String(value);
+    const safe = /^\s*[=+@-]/.test(text) ? `'${text}` : text;
+    return `"${safe.replaceAll('"', '""')}"`;
+  };
+  const rows = [['Date', 'Type', 'Category', 'Description', 'Amount'], ...visibleFinanceEntries().map((entry) => [
+    entry.date, entry.type, entry.category, entry.description, String(entry.amount),
+  ])];
+  const csv = rows.map((row) => row.map(escape).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `friday-transactions-${elements.financeMonth.value || 'all'}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function addFinance(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const body = Object.fromEntries(new FormData(form));
+  try {
+    const endpoint = editingFinanceId ? `/api/finances/${encodeURIComponent(editingFinanceId)}` : '/api/finances';
+    await apiJson(endpoint, { method: editingFinanceId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    resetFinanceForm();
+    await loadFinances();
+  } catch (error) { toast(error.message, 'error'); }
+}
+
 async function setFeature(name) {
   if (!featureViews.has(name)) return;
   state.activeFeature = name;
@@ -1435,7 +1564,8 @@ async function setFeature(name) {
         : view === $('#repos-feature') ? name === 'repos'
           : view === $('#pi-repos-feature') ? name === 'pi-repos'
             : view === $('#pi-feature') ? name === 'pi'
-              : view === $('#notes-feature') ? name === 'notes' : name === 'friday';
+              : view === $('#notes-feature') ? name === 'notes'
+                : view === $('#finances-feature') ? name === 'finances' : name === 'friday';
     view.hidden = !visible;
   }
   $('#friday-settings-view').hidden = name !== 'friday-settings';
@@ -1450,7 +1580,7 @@ async function setFeature(name) {
   }[name] || 'Server information and connected devices.';
   try {
     if (name === 'friday') await fridayChat.start();
-    else if (!['repos', 'pi-repos', 'notes', 'files', 'pi-files', 'friday-settings', 'settings'].includes(name)) await initializePi();
+    else if (!['repos', 'pi-repos', 'notes', 'files', 'pi-files', 'finances', 'friday-settings', 'settings'].includes(name)) await initializePi();
     if (name === 'files' || name === 'pi-files') {
       elements.fileTitle.textContent = 'File preview';
       elements.fileMeta.textContent = 'Select a text file to preview it.';
@@ -1461,6 +1591,7 @@ async function setFeature(name) {
     if (name === 'repos') await loadRepos();
     if (name === 'pi-repos') await loadPiRepos();
     if (name === 'notes') await loadNotes();
+    if (name === 'finances') await loadFinances();
   } catch (error) {
     if (!isAbort(error)) {
       if (error.message.startsWith('Pi is not installed') && name.startsWith('pi')) location.assign('/pi-not-installed');
@@ -1713,3 +1844,11 @@ function attachCloneForm(formId, progressId, endpoint, reload) {
 }
 attachCloneForm('#clone-repo-form', '#friday-clone-progress', '/api/repos', loadRepos);
 attachCloneForm('#clone-pi-repo-form', '#pi-clone-progress', '/api/pi/repos', loadPiRepos);
+resetFinanceForm();
+elements.financeMonth.value = currentFinanceMonth();
+elements.financeForm.addEventListener('submit', (event) => void addFinance(event));
+elements.financeCancel.addEventListener('click', resetFinanceForm);
+for (const filter of [elements.financeMonth, elements.financeTypeFilter, elements.financeCategoryFilter]) {
+  filter.addEventListener('change', () => void loadFinances());
+}
+elements.financeExport.addEventListener('click', exportFinanceCsv);
