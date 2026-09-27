@@ -192,7 +192,7 @@ function piForRequest(request) {
 }
 
 async function resetFridayAfterAuth() {
-  if (process.env.FRIDAY_CHAT_DRIVER !== 'sdk' || !fridayPi) return;
+  if (process.env.FRIDAY_CHAT_DRIVER === 'rpc' || !fridayPi) return;
   if (fridayPi.isBusy) throw new RequestError('Friday is busy; retry after the current reply', 409);
   const previous = fridayPi;
   fridayPi = null;
@@ -207,7 +207,7 @@ async function getFridayPi() {
   if (!fridayInit) {
     fridayInit = (async () => {
       await mkdir(fridaySessionDir, { recursive: true, mode: 0o700 });
-      const useSdk = process.env.FRIDAY_CHAT_DRIVER === 'sdk';
+      const useSdk = process.env.FRIDAY_CHAT_DRIVER !== 'rpc';
       const pi = useSdk ? new FridaySdkSession({ cwd: fridayChatDir, dataDir: fridaySessionDir, agentDir: paths.configDir }) : new PiSession({
         cwd: fridayChatDir,
         command: piCommand,
@@ -1321,7 +1321,7 @@ async function handleRequest(request, response) {
     const workspace = body.cwd === undefined ? pi.workspace : await resolveWorkspace(body.cwd);
     let resetPi = pi;
     let runtimeId = clientIdFor(request);
-    if (pi.isBusy || runtimeHasOtherViewers(runtimeId, viewerIdFor(request))) {
+    if (pi.isRunning || pi.isBusy || runtimeHasOtherViewers(runtimeId, viewerIdFor(request))) {
       runtimeId = randomUUID();
       resetPi = createPiRuntime(runtimeId, workspace);
     } else {

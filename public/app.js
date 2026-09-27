@@ -31,9 +31,11 @@ const featureViews = new Map([
   ['finances', $('#finances-feature')],
   ['settings', $('#settings-feature')], ['friday-settings', $('#settings-feature')], ['pi-settings', $('#settings-feature')],
 ]);
+const savedFeature = sessionStorage.getItem('friday-active-feature');
+const initialFeature = featureViews.has(savedFeature) ? savedFeature : 'friday';
 
 const state = {
-  activeFeature: 'friday',
+  activeFeature: initialFeature,
   activeModel: '',
   activeThinkingLevel: 'off',
   agentBusy: false,
@@ -1552,6 +1554,7 @@ async function addFinance(event) {
 async function setFeature(name) {
   if (!featureViews.has(name)) return;
   state.activeFeature = name;
+  sessionStorage.setItem('friday-active-feature', name);
   closeDrawer();
   for (const button of featureButtons) {
     const active = button.dataset.feature === name; button.classList.toggle('active', active);
@@ -1763,8 +1766,7 @@ elements.form.addEventListener('submit', async (event) => {
 });
 
 elements.reset.addEventListener('click', async () => {
-  if (!elements.workspace.value || state.agentBusy || state.locks.has('session')) return;
-  if (!window.confirm('Start a new session? Your current session will stay in the sidebar.')) return;
+  if (!elements.workspace.value || state.locks.has('session')) return;
   lock('session', true); ++state.contextVersion; closeEventStream(); stopPolling(); cancelRequest('history');
   try {
     const data = await apiJson('/api/session/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cwd: elements.workspace.value }) }, 'session-action');
@@ -1815,6 +1817,7 @@ function initializePi() {
 setConnection(navigator.onLine);
 updateControls();
 void fridayChat.start();
+if (state.activeFeature !== 'friday') void setFeature(state.activeFeature);
 
 function attachCloneForm(formId, progressId, endpoint, reload) {
   const form = $(formId);

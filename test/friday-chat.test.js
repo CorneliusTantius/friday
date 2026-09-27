@@ -43,7 +43,7 @@ rl.on('line', line => {
   const child = spawn(process.execPath, [join(root, 'src/server.js')], {
     cwd: dir, env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: fakePi, PI_ARGS_LOG: join(dir, 'pi-args.jsonl'), FRIDAY_HOME: join(dir, 'home'),
       PI_CODING_AGENT_DIR: join(dir, 'agent'), PI_CODING_AGENT_SESSION_DIR: join(dir, 'sessions'),
-      FRIDAY_CHAT_DIR: join(dir, 'friday') }, stdio: 'ignore',
+      FRIDAY_CHAT_DIR: join(dir, 'friday'), FRIDAY_CHAT_DRIVER: 'rpc' }, stdio: 'ignore',
   });
   const base = `http://127.0.0.1:${port}`;
   const request = async (path, options) => fetch(base + path, { ...options, signal: AbortSignal.timeout(5000) });
@@ -175,6 +175,20 @@ rl.on('line', line => {
   const codingResult = await Promise.race([codingRead.then(() => 'event'), delay(150).then(() => 'quiet')]);
   assert.equal(codingResult, 'quiet', 'coding SSE should not receive Friday activity or status');
   await codingReader.cancel();
+
+  const originalStatus = await (await request('/api/status')).json();
+  const reset = await request('/api/session/reset', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+  });
+  assert.equal(reset.status, 200);
+  const { runtimeId: newRuntimeId } = await reset.json();
+  assert.notEqual(newRuntimeId, 'default', 'new session should get a separate runtime');
+  const preservedStatus = await (await request('/api/status', { headers: { 'X-Friday-Session': 'default' } })).json();
+  assert.equal(preservedStatus.piRunning, true, 'the previous runtime should stay running');
+  assert.equal(preservedStatus.sessionPath, originalStatus.sessionPath, 'the previous runtime should keep its session');
+  const newHistory = await request('/api/history', { headers: { 'X-Friday-Session': newRuntimeId } });
+  assert.equal(newHistory.status, 200);
+  assert.deepEqual((await newHistory.json()).messages, [], 'the new runtime should start with empty history');
 });
 
 test('Friday chat reopens the latest persisted Pi session after server restart', { timeout: 30_000 }, async (t) => {
