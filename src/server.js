@@ -1319,14 +1319,8 @@ async function handleRequest(request, response) {
   if (request.method === 'POST' && pathname === '/api/session/reset') {
     const body = await readJson(request);
     const workspace = body.cwd === undefined ? pi.workspace : await resolveWorkspace(body.cwd);
-    let resetPi = pi;
-    let runtimeId = clientIdFor(request);
-    if (pi.isRunning || pi.isBusy || runtimeHasOtherViewers(runtimeId, viewerIdFor(request))) {
-      runtimeId = randomUUID();
-      resetPi = createPiRuntime(runtimeId, workspace);
-    } else {
-      await pi.reset(workspace);
-    }
+    const runtimeId = randomUUID();
+    const resetPi = createPiRuntime(runtimeId, workspace);
     await persistWorkspace(workspace);
     sendJson(response, 200, {
       ok: true,

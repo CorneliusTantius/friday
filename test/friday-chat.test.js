@@ -35,7 +35,11 @@ rl.on('line', line => {
  else if (req.type === 'get_available_thinking_levels') respond({ levels: ['off', 'low', 'high'] });
  else if (req.type === 'set_model') { model = { provider: req.provider, id: req.modelId, name: 'Alternate' }; respond({}); }
  else if (req.type === 'set_thinking_level') { thinkingLevel = req.level; respond({}); }
- else if (req.type === 'prompt') { messages.push({ role: 'user', content: req.message }); send({ type: 'agent_start' }); send({ type: 'message_start', message: { role: 'assistant' } }); const content = 'Friday: ' + req.message; messages.push({ role: 'assistant', content }); send({ type: 'message_end', message: { role: 'assistant', content } }); send({ type: 'agent_end' }); send({ type: 'agent_settled' }); respond({}); }
+ else if (req.type === 'prompt') {
+  messages.push({ role: 'user', content: req.message }); send({ type: 'agent_start' }); send({ type: 'message_start', message: { role: 'assistant' } });
+  const finish = () => { const content = 'Friday: ' + req.message; messages.push({ role: 'assistant', content }); send({ type: 'message_end', message: { role: 'assistant', content } }); send({ type: 'agent_end' }); send({ type: 'agent_settled' }); respond({}); };
+  if (req.message === 'long-running test') setTimeout(finish, 1200); else finish();
+ }
  else if (req.type === 'get_messages') respond({ messages });
  else respond({});
 });
@@ -177,6 +181,16 @@ rl.on('line', line => {
   await codingReader.cancel();
 
   const originalStatus = await (await request('/api/status')).json();
+  const activeChat = request('/api/chat', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'long-running test' }),
+  });
+  let busy = false;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    busy = (await (await request('/api/status')).json()).busy;
+    if (busy) break;
+    await delay(20);
+  }
+  assert.equal(busy, true, 'the original session should be working before reset');
   const reset = await request('/api/session/reset', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
   });
@@ -185,10 +199,12 @@ rl.on('line', line => {
   assert.notEqual(newRuntimeId, 'default', 'new session should get a separate runtime');
   const preservedStatus = await (await request('/api/status', { headers: { 'X-Friday-Session': 'default' } })).json();
   assert.equal(preservedStatus.piRunning, true, 'the previous runtime should stay running');
+  assert.equal(preservedStatus.busy, true, 'the previous task should continue running');
   assert.equal(preservedStatus.sessionPath, originalStatus.sessionPath, 'the previous runtime should keep its session');
   const newHistory = await request('/api/history', { headers: { 'X-Friday-Session': newRuntimeId } });
   assert.equal(newHistory.status, 200);
   assert.deepEqual((await newHistory.json()).messages, [], 'the new runtime should start with empty history');
+  assert.equal((await activeChat).status, 200, 'the original task should finish normally');
 });
 
 test('Friday chat reopens the latest persisted Pi session after server restart', { timeout: 30_000 }, async (t) => {
@@ -215,7 +231,7 @@ rl.on('line', line => { let req; try { req = JSON.parse(line); } catch { return;
 `, { mode: 0o755 });
   const log = join(dir, 'pi-args.jsonl');
   const base = `http://127.0.0.1:${port}`;
-  const start = () => spawn(process.execPath, [join(root, 'src/server.js')], { cwd: dir, env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: fakePi, PI_ARGS_LOG: log, PI_CODING_AGENT_DIR: join(dir, 'agent'), PI_CODING_AGENT_SESSION_DIR: join(dir, 'sessions'), FRIDAY_HOME: fridayDir }, stdio: 'ignore' });
+  const start = () => spawn(process.execPath, [join(root, 'src/server.js')], { cwd: dir, env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: fakePi, PI_ARGS_LOG: log, PI_CODING_AGENT_DIR: join(dir, 'agent'), PI_CODING_AGENT_SESSION_DIR: join(dir, 'sessions'), FRIDAY_HOME: fridayDir, FRIDAY_CHAT_DRIVER: 'rpc' }, stdio: 'ignore' });
   let child;
   const stop = async () => { if (!child || child.exitCode !== null) return; child.kill('SIGTERM'); await Promise.race([once(child, 'exit'), delay(2000)]); child = null; };
   t.after(async () => { await stop(); await rm(dir, { recursive: true, force: true }); });

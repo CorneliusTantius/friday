@@ -32,7 +32,13 @@ const featureViews = new Map([
   ['settings', $('#settings-feature')], ['friday-settings', $('#settings-feature')], ['pi-settings', $('#settings-feature')],
 ]);
 const savedFeature = sessionStorage.getItem('friday-active-feature');
-const initialFeature = featureViews.has(savedFeature) ? savedFeature : 'friday';
+const url = new URL(window.location.href);
+const requestedFeature = url.searchParams.get('feature');
+const initialFeature = featureViews.has(requestedFeature) ? requestedFeature : featureViews.has(savedFeature) ? savedFeature : 'friday';
+if (requestedFeature) {
+  url.searchParams.delete('feature');
+  history.replaceState(null, '', url);
+}
 
 const state = {
   activeFeature: initialFeature,
@@ -914,7 +920,8 @@ async function loadSessions(cwd = elements.workspace.value, { quiet = false } = 
 function attachRuntime(runtimeId) {
   closeEventStream();
   sessionStorage.setItem('friday-session-id', runtimeId);
-  window.location.reload();
+  sessionStorage.setItem('friday-active-feature', 'pi');
+  window.location.assign('/?feature=pi');
 }
 
 async function openSession(sessionPath) {
