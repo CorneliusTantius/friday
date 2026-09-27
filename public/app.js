@@ -1192,12 +1192,17 @@ async function loadPiRepos() {
 async function loadNotes() {
   const list = $('#note-list');
   const content = $('#note-content');
+  const title = $('#note-title');
+  const meta = $('#note-meta');
   list.replaceChildren();
-  content.textContent = 'Loading notes…';
+  title.textContent = 'Notes';
+  meta.textContent = 'Loading Markdown notes…';
+  content.textContent = 'Select a note to read it.';
   try {
     const data = await apiJson('/api/notes', {}, 'notes');
     if (state.activeFeature !== 'notes') return;
     const notes = Array.isArray(data.notes) ? data.notes : [];
+    meta.textContent = `${notes.length} note${notes.length === 1 ? '' : 's'}`;
     if (!notes.length) content.textContent = 'No notes found.';
     for (const note of notes) {
       const button = document.createElement('button');
@@ -1205,7 +1210,12 @@ async function loadNotes() {
       button.className = 'file-item';
       button.textContent = note.name || note.path || 'Untitled note';
       button.addEventListener('click', async () => {
+        list.querySelector('.file-item.selected')?.classList.remove('selected');
+        button.classList.add('selected');
+        title.textContent = note.name || note.path || 'Untitled note';
+        meta.textContent = note.path || 'Markdown note';
         content.textContent = 'Loading note…';
+        closeDrawer();
         try {
           const result = await apiJson(`/api/notes/content?path=${encodeURIComponent(note.path)}`, {}, 'note-content');
           if (state.activeFeature !== 'notes') return;
@@ -1220,6 +1230,8 @@ async function loadNotes() {
   } catch (error) {
     if (isAbort(error)) return;
     list.replaceChildren();
+    title.textContent = 'Notes';
+    meta.textContent = 'Unable to load Markdown notes';
     content.textContent = `Unable to load notes: ${error.message}`;
   }
 }

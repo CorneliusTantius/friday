@@ -87,8 +87,10 @@ svg { display: block; width: 1.15rem; height: 1.15rem; fill: none; stroke: curre
 .nav-group { display: grid; gap: .2rem; }
 .nav-group + .nav-group { border-top: 1px solid var(--border); padding-top: .7rem; }
 .nav-group-title { padding: 0 .72rem .25rem; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.notes-layout { display: grid; height: calc(100% - 8.2rem); grid-template-columns: minmax(180px, 280px) minmax(0,1fr); gap: 1rem; padding-top: 1rem; }
-.notes-layout .file-list { display: grid; align-content: start; }
+.notes-layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); }
+.notes-sidebar { gap: .8rem; }
+.note-content { min-width: 0; min-height: 0; flex: 1; overflow: auto; margin: .75rem 0 0; border: 1px solid var(--border); border-radius: var(--radius); background: rgba(8,8,10,.7); color: #d4d4d8; padding: 1.1rem; scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
+.note-content > :first-child { margin-top: 0; }
 .feature {
   position: relative;
   display: flex;
@@ -413,7 +415,7 @@ select:focus-visible { outline: none; }
   .feature.active::before { left: -.7rem; }
   .sidebar-footer { padding: .5rem 0; }
   .pi-layout { grid-template-columns: 230px minmax(0,1fr); }
-  .files-layout { grid-template-columns: 250px minmax(0,1fr); }
+  .files-layout, .notes-layout { grid-template-columns: 250px minmax(0,1fr); }
 }
 
 @media (max-width: 680px) {
@@ -433,7 +435,7 @@ select:focus-visible { outline: none; }
   .feature svg { width: 1rem; height: 1rem; }
   .feature.active::before { top: -.49rem; left: 50%; width: 1.25rem; height: 2px; transform: translateX(-50%); }
   .feature-shell { order: 1; height: calc(100dvh - 4rem - env(safe-area-inset-bottom)); flex: 1; }
-  .pi-layout, .files-layout { display: block; }
+  .pi-layout, .files-layout, .notes-layout { display: block; }
   .context-sidebar { position: fixed; z-index: 15; top: 0; bottom: 0; left: 0; width: min(84vw,310px); border-right: 1px solid var(--border-strong); background: rgba(15,15,19,.97); box-shadow: var(--shadow); transform: translateX(-105%); transition: transform .22s ease; }
   .context-sidebar.open { transform: translateX(0); }
   .icon-button.mobile-close, .icon-button.drawer-toggle { display: grid; }

@@ -186,7 +186,29 @@
 
         <section id="repos-feature" class="feature-page" hidden><header class="feature-header page-header"><div><h1>Friday repositories</h1><p>Cloned into ~/.friday/workspace/repos</p></div></header><form id="clone-repo-form" class="repo-form"><label for="clone-repo-url">Git URL</label><input id="clone-repo-url" type="url" required placeholder="https://github.com/owner/repo.git"><button type="submit">Clone</button></form><div id="friday-clone-progress" class="clone-progress" role="status" hidden><progress aria-label="Friday repository clone in progress"></progress><span>Cloning repository…</span></div><div id="repo-list" class="device-list"></div></section>
         <section id="pi-repos-feature" class="feature-page" hidden><header class="feature-header page-header"><div><h1>Pi repositories</h1><p>Cloned into ~/.pi/workspace/repos</p></div></header><form id="clone-pi-repo-form" class="repo-form"><label for="clone-pi-repo-url">Git URL</label><input id="clone-pi-repo-url" type="url" required placeholder="https://github.com/owner/repo.git"><button type="submit">Clone for Pi</button></form><div id="pi-clone-progress" class="clone-progress" role="status" hidden><progress aria-label="Pi repository clone in progress"></progress><span>Cloning repository…</span></div><div id="pi-repo-list" class="device-list"></div></section>
-        <section id="notes-feature" class="feature-page" hidden><header class="feature-header page-header"><div><h1>Notes</h1><p>Markdown notes</p></div></header><div class="notes-layout"><nav id="note-list" class="file-list" aria-label="Notes"></nav><article id="note-content" class="file-content">Select a note to read it.</article></div></section>
+        <section id="notes-feature" class="feature-layout notes-layout" hidden>
+          <aside class="context-sidebar notes-sidebar" id="notes-sidebar" aria-label="Notes">
+            <div class="context-heading">
+              <span>Markdown notes</span>
+              <button class="mobile-close icon-button" type="button" data-close-drawer aria-label="Close notes">×</button>
+            </div>
+            <nav id="note-list" class="file-list" aria-label="Notes"></nav>
+          </aside>
+          <section class="file-preview notes-preview" aria-label="Note preview">
+            <header class="feature-header">
+              <div class="header-title">
+                <button class="drawer-toggle icon-button" type="button" data-open-drawer="notes-sidebar" aria-label="Open notes list">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+                </button>
+                <div>
+                  <h1 id="note-title">Note preview</h1>
+                  <p id="note-meta">Select a note to read it.</p>
+                </div>
+              </div>
+            </header>
+            <article id="note-content" class="note-content message-content">Select a note to read it.</article>
+          </section>
+        </section>
         <section id="finances-feature" class="feature-page finance-page" hidden>
           <header class="feature-header page-header"><div><span class="eyebrow">Friday Agent</span><h1>Financial tracker</h1><p>Keep a simple record of income and spending.</p></div></header>
           <div class="finance-summary" aria-label="Financial summary"><article><span>Balance this month</span><strong id="finance-balance">Rp0</strong></article><article><span>Income this month</span><strong id="finance-income">Rp0</strong></article><article><span>Expenses this month</span><strong id="finance-expenses">Rp0</strong></article></div>
