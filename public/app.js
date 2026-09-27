@@ -14,6 +14,7 @@ const elements = {
   serverSettingsList: $('#server-settings-list'), extensionsList: $('#extensions-list'),
   connectionDot: $('#connection-dot'), connectionLabel: $('#connection-label'),
   toastRegion: $('#toast-region'), drawerBackdrop: $('#drawer-backdrop'), agentOrb: $('.header .agent-orb'),
+  logout: $('#logout'),
   financeForm: $('#finance-form'), financeList: $('#finance-list'), financeStatus: $('#finance-status'),
   financeBalance: $('#finance-balance'), financeIncome: $('#finance-income'), financeExpenses: $('#finance-expenses'),
   financeSubmit: $('#finance-submit'), financeCancel: $('#finance-cancel'),
@@ -1820,6 +1821,19 @@ function initializePi() {
   })();
   return piInitPromise;
 }
+
+elements.logout.addEventListener('click', async () => {
+  elements.logout.disabled = true;
+  try {
+    const response = await fetch('/api/logout', { method: 'POST' });
+    if (!response.ok) throw new Error('Could not sign out');
+    for (const key of ['friday-session-id', 'friday-client-id', 'friday-active-feature']) sessionStorage.removeItem(key);
+    window.location.replace('/login');
+  } catch (error) {
+    elements.logout.disabled = false;
+    toast(error.message, 'error');
+  }
+});
 
 setConnection(navigator.onLine);
 updateControls();

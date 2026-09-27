@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createAppClient } from '../test-support/app-client.js';
 
 const root = new URL('../', import.meta.url).pathname;
 
@@ -50,7 +51,8 @@ rl.on('line', line => {
       FRIDAY_CHAT_DIR: join(dir, 'friday'), FRIDAY_CHAT_DRIVER: 'rpc' }, stdio: 'ignore',
   });
   const base = `http://127.0.0.1:${port}`;
-  const request = async (path, options) => fetch(base + path, { ...options, signal: AbortSignal.timeout(5000) });
+  const client = createAppClient(base, 5000);
+  const request = client.request;
   let eventReader;
   t.after(async () => {
     eventReader?.cancel().catch(() => {});
@@ -65,6 +67,7 @@ rl.on('line', line => {
     await delay(100);
   }
   assert.equal(ready, true, 'server should start');
+  await client.login();
 
   const page = await request('/');
   assert.equal(page.status, 200);
@@ -231,20 +234,23 @@ rl.on('line', line => { let req; try { req = JSON.parse(line); } catch { return;
 `, { mode: 0o755 });
   const log = join(dir, 'pi-args.jsonl');
   const base = `http://127.0.0.1:${port}`;
+  const client = createAppClient(base);
   const start = () => spawn(process.execPath, [join(root, 'src/server.js')], { cwd: dir, env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: fakePi, PI_ARGS_LOG: log, PI_CODING_AGENT_DIR: join(dir, 'agent'), PI_CODING_AGENT_SESSION_DIR: join(dir, 'sessions'), FRIDAY_HOME: fridayDir, FRIDAY_CHAT_DRIVER: 'rpc' }, stdio: 'ignore' });
   let child;
   const stop = async () => { if (!child || child.exitCode !== null) return; child.kill('SIGTERM'); await Promise.race([once(child, 'exit'), delay(2000)]); child = null; };
   t.after(async () => { await stop(); await rm(dir, { recursive: true, force: true }); });
   const ready = async () => { for (let i = 0; i < 50; i++) { try { if ((await fetch(base + '/healthz')).ok) return; } catch {} await delay(100); } assert.fail('server should start'); };
   child = start(); await ready();
-  const history = await fetch(base + '/api/friday/history');
+  await client.login();
+  const history = await client.request('/api/friday/history');
   assert.equal(history.status, 200);
   assert.match(JSON.stringify(await history.json()), /saved Friday message/);
   const codingSessions = await (await import('node:fs/promises')).readdir(join(dir, 'sessions')).catch(() => []);
   assert.equal(codingSessions.length, 0, 'Friday sessions must not use coding session storage');
   await stop();
   child = start(); await ready();
-  const reopened = await fetch(base + '/api/friday/history');
+  await client.login();
+  const reopened = await client.request('/api/friday/history');
   assert.equal(reopened.status, 200);
   assert.match(JSON.stringify(await reopened.json()), /saved Friday message/);
   const launches = (await (await import('node:fs/promises')).readFile(log, 'utf8')).trim().split(/\n/).map(JSON.parse);
@@ -271,13 +277,15 @@ test('Friday chat runs from Friday workspace and stores sessions separately in d
     await rm(dir, { recursive: true, force: true });
   });
   const base = `http://127.0.0.1:${port}`;
+  const client = createAppClient(base);
   let ready = false;
   for (let i = 0; i < 50; i += 1) {
-    try { if ((await fetch(base + '/healthz', { signal: AbortSignal.timeout(1000) })).ok) { ready = true; break; } } catch {}
+    try { if ((await client.request('/healthz', { signal: AbortSignal.timeout(1000) })).ok) { ready = true; break; } } catch {}
     await delay(100);
   }
   assert.equal(ready, true, 'server should start');
-  const settings = await (await fetch(base + '/api/settings')).json();
+  await client.login();
+  const settings = await (await client.request('/api/settings')).json();
   assert.equal(settings.fridayChat.directory, join(dir, 'home', 'workspace'));
   assert.equal(settings.fridayChat.sessionsDirectory, join(dir, 'home', 'data'));
 });

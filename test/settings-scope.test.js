@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createAppClient } from '../test-support/app-client.js';
 
 const serverPath = new URL('../src/server.js', import.meta.url).pathname;
 
@@ -37,20 +38,22 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
     if (child.exitCode === null) await Promise.race([once(child, 'exit'), delay(2000)]);
     await rm(home, { recursive: true, force: true });
   });
-  const request = (path) => fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(3000) });
+  const client = createAppClient(`http://127.0.0.1:${port}`);
+  const request = client.request;
   let ready = false;
   for (let i = 0; i < 50; i += 1) {
     try { if ((await request('/healthz')).ok) { ready = true; break; } } catch {}
     await delay(100);
   }
   assert.ok(ready, 'server should start');
+  await client.login();
   assert.deepEqual((await (await request('/api/repos')).json()).repos.map(({ name }) => name), ['legacy-friday']);
   assert.deepEqual((await (await request('/api/pi/repos')).json()).repos.map(({ name }) => name), ['legacy-pi']);
 
   const authorized = await request('/api/friday/auth');
   assert.equal(authorized.status, 200);
   assert.deepEqual((await authorized.json()).providers.map((provider) => provider.providerId), ['openai-codex', 'openai']);
-  const login = await fetch(`http://127.0.0.1:${port}/api/friday/auth/login`, {
+  const login = await request('/api/friday/auth/login', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider: 'openai', type: 'api_key', key: 'friday-server-test-secret' }),
   });
@@ -69,30 +72,30 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   assert.equal(piFiles.directory, join(home, '.pi'));
   assert.equal((await request('/api/files/content?path=.friday/config/auth.json')).status, 404);
   await assert.rejects(readFile(join(home, '.pi', 'agent', 'auth.json')), { code: 'ENOENT' });
-  const oauth = await fetch(`http://127.0.0.1:${port}/api/friday/auth/login`, {
+  const oauth = await request('/api/friday/auth/login', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider: 'openai-codex', type: 'oauth' }),
   });
   assert.equal(oauth.status, 202);
   const { token } = await oauth.json();
-  const flow = await fetch(`http://127.0.0.1:${port}/api/friday/auth/flow?token=${token}`, {});
+  const flow = await request(`/api/friday/auth/flow?token=${token}`);
   const prompt = await flow.json();
   assert.equal(prompt.type, 'select');
   assert.equal(prompt.requiresResponse, true);
   assert.ok(prompt.options.some((option) => option.label.includes('Device code')));
   const browserMethod = prompt.options.find((option) => option.label.includes('Browser login'));
-  const choice = await fetch(`http://127.0.0.1:${port}/api/friday/auth/flow`, {
+  const choice = await request('/api/friday/auth/flow', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token, response: browserMethod.id }),
   });
   assert.deepEqual(await choice.json(), { ok: true });
-  const authUrl = await fetch(`http://127.0.0.1:${port}/api/friday/auth/flow?token=${token}`, {});
+  const authUrl = await request(`/api/friday/auth/flow?token=${token}`);
   const authorization = await authUrl.json();
   assert.equal(authorization.type, 'auth_url');
   assert.match(authorization.url, /^https:\/\//);
-  const manual = await fetch(`http://127.0.0.1:${port}/api/friday/auth/flow?token=${token}`, {});
+  const manual = await request(`/api/friday/auth/flow?token=${token}`);
   assert.equal((await manual.json()).type, 'manual_code');
-  const cancel = await fetch(`http://127.0.0.1:${port}/api/friday/auth/flow?token=${token}`, {
+  const cancel = await request(`/api/friday/auth/flow?token=${token}`, {
     method: 'DELETE',
   });
   assert.deepEqual(await cancel.json(), { cancelled: true });
@@ -100,7 +103,7 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   const github = await (await request('/api/system/github')).json();
   assert.equal(typeof github.available, 'boolean');
   assert.equal(typeof github.authenticated, 'boolean');
-  const saveSync = async (scope, owner, repo) => fetch(`http://127.0.0.1:${port}/api/${scope}/sync/settings`, {
+  const saveSync = async (scope, owner, repo) => request(`/api/${scope}/sync/settings`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ owner, repo }),
   });
   assert.equal((await saveSync('friday', 'owner', 'friday-private')).status, 200);

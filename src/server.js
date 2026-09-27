@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -57,6 +57,15 @@ const eventHeartbeatMs = 15_000;
 const runtimeViewerTtlMs = 60_000;
 const runtimeIdleTtlMs = 15 * 60_000;
 const runtimeCleanupIntervalMs = 60_000;
+// Change this before exposing Friday to an untrusted network.
+const appPassword = 'Cornel123';
+const appPasswordDigest = createHash('sha256').update(appPassword).digest();
+const appSessionCookie = '__Host-friday-session';
+const appSessions = new Map();
+const failedLogins = new Map();
+const appSessionIdleTtlMs = 12 * 60 * 60_000;
+const loginWindowMs = 15 * 60_000;
+const maxLoginFailures = 5;
 
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error('PORT must be an integer between 1 and 65535');
@@ -67,6 +76,60 @@ class RequestError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+function appSessionId(request) {
+  const cookie = request.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${appSessionCookie}=`));
+  return cookie?.slice(appSessionCookie.length + 1) || null;
+}
+
+function isAppAuthenticated(request) {
+  const id = appSessionId(request);
+  const session = id && appSessions.get(id);
+  if (!session) return false;
+  if (Date.now() - session.lastSeenAt > appSessionIdleTtlMs) {
+    appSessions.delete(id);
+    return false;
+  }
+  session.lastSeenAt = Date.now();
+  return true;
+}
+
+function passwordMatches(value) {
+  if (typeof value !== 'string' || value.length > 256) return false;
+  const digest = createHash('sha256').update(value).digest();
+  return timingSafeEqual(digest, appPasswordDigest);
+}
+
+function loginRateLimit(request) {
+  const address = request.socket.remoteAddress || 'unknown';
+  const failures = failedLogins.get(address);
+  const now = Date.now();
+  if (!failures) return { address, blocked: false };
+  if (now - failures.startedAt >= loginWindowMs) {
+    failedLogins.delete(address);
+    return { address, blocked: false };
+  }
+  return { address, blocked: failures.count >= maxLoginFailures, retryAfter: Math.ceil((loginWindowMs - (now - failures.startedAt)) / 1000) };
+}
+
+function recordFailedLogin(address) {
+  const now = Date.now();
+  for (const [key, value] of failedLogins) {
+    if (now - value.startedAt >= loginWindowMs) failedLogins.delete(key);
+  }
+  const previous = failedLogins.get(address);
+  if (!previous || now - previous.startedAt >= loginWindowMs) failedLogins.set(address, { startedAt: now, count: 1 });
+  else previous.count += 1;
+}
+
+function appSessionCookieHeader(value, maxAge = null) {
+  return `${appSessionCookie}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict${maxAge === null ? '' : `; Max-Age=${maxAge}`}`;
+}
+
+function redirect(response, location) {
+  response.writeHead(303, { Location: location, 'Cache-Control': 'no-store' });
+  response.end();
 }
 
 const contentTypes = {
@@ -714,6 +777,9 @@ async function serveStatic(pathname, response) {
   const filenames = {
     '/': 'index.html',
     '/index.html': 'index.html',
+    '/login': 'login.html',
+    '/login.html': 'login.html',
+    '/login.js': 'login.js',
     '/app.js': 'app.js',
     '/friday-chat.js': 'friday-chat.js',
     '/styles.css': 'styles.css',
@@ -837,6 +903,59 @@ async function githubStatus() {
 async function handleRequest(request, response) {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
   const { pathname } = url;
+
+  if (request.method === 'GET' && pathname === '/healthz') {
+    sendJson(response, 200, { status: 'ok' });
+    return;
+  }
+  if (request.method === 'GET' && ['/login', '/login.html'].includes(pathname)) {
+    if (isAppAuthenticated(request)) redirect(response, '/');
+    else await serveStatic(pathname, response);
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/login.js') {
+    await serveStatic(pathname, response);
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/api/login') {
+    const body = await readJson(request);
+    const attempt = loginRateLimit(request);
+    if (attempt.blocked) {
+      response.setHeader('Retry-After', String(attempt.retryAfter));
+      sendJson(response, 429, { error: 'Too many login attempts. Try again later.' });
+      return;
+    }
+    if (!passwordMatches(body.password)) {
+      recordFailedLogin(attempt.address);
+      sendJson(response, 401, { error: 'Incorrect password' });
+      return;
+    }
+    failedLogins.delete(attempt.address);
+    const previousId = appSessionId(request);
+    if (previousId) appSessions.delete(previousId);
+    const now = Date.now();
+    for (const [id, session] of appSessions) {
+      if (now - session.lastSeenAt > appSessionIdleTtlMs) appSessions.delete(id);
+    }
+    const sessionId = randomBytes(32).toString('base64url');
+    appSessions.set(sessionId, { lastSeenAt: now });
+    response.setHeader('Set-Cookie', appSessionCookieHeader(sessionId));
+    sendJson(response, 200, { ok: true });
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/api/logout') {
+    const sessionId = appSessionId(request);
+    if (sessionId) appSessions.delete(sessionId);
+    response.setHeader('Set-Cookie', appSessionCookieHeader('', 0));
+    response.writeHead(204, { 'Cache-Control': 'no-store' });
+    response.end();
+    return;
+  }
+  if (!isAppAuthenticated(request)) {
+    if (pathname.startsWith('/api/')) sendJson(response, 401, { error: 'Login required' });
+    else redirect(response, '/login');
+    return;
+  }
 
   if (request.method === 'GET' && pathname === '/pi-not-installed') {
     response.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -1057,17 +1176,6 @@ async function handleRequest(request, response) {
   if (request.method === 'GET' && await serveStatic(pathname, response)) return;
 
   const pi = piForRequest(request);
-
-  if (request.method === 'GET' && pathname === '/healthz') {
-    sendJson(response, 200, {
-      status: 'ok',
-      piRunning: pi.isRunning,
-      eventConnections: eventConnections.size,
-      workspace: pi.workspace,
-      sessionPath: pi.currentSessionPath,
-    });
-    return;
-  }
 
   if (request.method === 'GET' && pathname === '/api/status') {
     sendJson(response, 200, {

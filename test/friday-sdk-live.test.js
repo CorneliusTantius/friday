@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createAppClient } from '../test-support/app-client.js';
 
 test('opt-in Friday SDK starts without installed coding Pi and keeps its own data', { timeout: 15000 }, async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'friday-sdk-live-'));
@@ -21,14 +22,16 @@ test('opt-in Friday SDK starts without installed coding Pi and keeps its own dat
     await rm(home, { recursive: true, force: true });
   });
   const base = `http://127.0.0.1:${port}`;
+  const client = createAppClient(base);
   let ready = false;
   for (let i = 0; i < 70; i += 1) {
     try { if ((await fetch(`${base}/healthz`, { signal: AbortSignal.timeout(1000) })).ok) { ready = true; break; } } catch {}
     await delay(100);
   }
   assert.ok(ready);
-  const friday = await fetch(`${base}/api/friday/status`);
+  await client.login();
+  const friday = await client.request('/api/friday/status');
   assert.equal(friday.status, 200);
   assert.match((await friday.json()).sessionPath, /\.friday\/data\/.*\.jsonl$/);
-  assert.equal((await fetch(`${base}/api/pi/settings`)).status, 404);
+  assert.equal((await client.request('/api/pi/settings')).status, 404);
 });

@@ -30,8 +30,9 @@ npm run dev
 
 ## API
 
-- `GET /` — web harness
-- `GET /healthz` — server health
+- `GET /login`, `POST /api/login`, `POST /api/logout` — password login and session logout
+- `GET /` — authenticated web harness
+- `GET /healthz` — unauthenticated minimal health check
 - `GET /api/status` — active workspace, model, and Pi state
 - `GET /api/friday/status`, `GET /api/friday/history`, `POST /api/friday/chat` — independent general Friday conversation
 - `GET /api/friday/models`, `POST /api/friday/model` — list and select Friday's model
@@ -94,7 +95,7 @@ The `tailscale:serve` script targets the default port `3000`. If you change `POR
 tailscale serve --bg http://127.0.0.1:YOUR_PORT
 ```
 
-Tailscale ACLs are the current access-control boundary. Do not bind this agent to `0.0.0.0` on an untrusted network; the chat endpoint can execute Pi tools in the configured workspace and currently has no application login.
+Friday requires a password login. Its current password is hard-coded in `src/server.js`; change it before exposing the server beyond trusted devices. Login uses an HttpOnly, Secure, SameSite session cookie backed by server memory, so restarting Friday signs out all clients. This is an additional gate, not a substitute for HTTPS and network access controls: the chat endpoints can execute host-side tools. Tailscale ACLs are still recommended; do not expose the server directly to an untrusted network.
 
 For a temporary SSH alternative:
 
@@ -108,4 +109,4 @@ Friday stores app configuration at `~/.friday/config/config.json`; its SDK provi
 
 `GET /api/repos` lists Friday-managed repositories and `POST /api/repos` with `{ "url": "https://..." }` clones one under `~/.friday/workspace/repos/`. `GET /api/pi/repos` and `POST /api/pi/repos` manage separate coding-agent clones under `~/.pi/workspace/repos/` (or `<PI_CODING_AGENT_DIR parent>/workspace/repos/`). `POST /api/repos/pull` and `POST /api/pi/repos/pull` with `{ "name": "repo" }` run `git pull --all` only when the working tree is clean. Repository cards show the current branch, working-tree change counts, upstream ahead/behind counts when available, and latest commit. Clone forms show an indeterminate progress bar and disable repeated submissions while Git works; each agent's repository store accepts one clone at a time. Pi credentials and sessions remain in `~/.pi/agent/`. `GET /api/notes` lists Markdown notes; `GET /api/notes/content?path=...` reads one inside the notes directory.
 
-Friday Chat uses the Pi SDK by default, in a separate Friday runtime with `bash`, `edit`, `read`, and `write` tools, no extensions/skills/context files, and Friday-only auth/settings. Set `FRIDAY_CHAT_DRIVER=rpc` to use the installed Pi executable's RPC runtime instead. Friday and Pi Settings support separate OpenAI OAuth and API-key provider login through Pi's SDK. Provider credentials are kept in separate Friday/Pi auth files and are never returned to the browser. There is no app-level login: any device permitted by your Tailscale ACLs can manage both agents' provider credentials. For OpenAI subscription OAuth, choose **Browser login** or **Device code login** in Friday/Pi Settings. If signing in from another device, paste the redirect URL or authorization code into Friday’s sign-in form when requested; a callback to that device's `localhost` cannot reach the Friday host. Complete the provider authorization yourself. Automated tests cover the challenge flow but cannot authorize a real OpenAI account.
+Friday Chat uses the Pi SDK by default, in a separate Friday runtime with `bash`, `edit`, `read`, and `write` tools, no extensions/skills/context files, and Friday-only auth/settings. Set `FRIDAY_CHAT_DRIVER=rpc` to use the installed Pi executable's RPC runtime instead. Friday and Pi Settings support separate OpenAI OAuth and API-key provider login through Pi's SDK. Provider credentials are kept in separate Friday/Pi auth files and are never returned to the browser. The app password also gates provider credential management; any client with the password can manage both agents' provider credentials. For OpenAI subscription OAuth, choose **Browser login** or **Device code login** in Friday/Pi Settings. If signing in from another device, paste the redirect URL or authorization code into Friday’s sign-in form when requested; a callback to that device's `localhost` cannot reach the Friday host. Complete the provider authorization yourself. Automated tests cover the challenge flow but cannot authorize a real OpenAI account.

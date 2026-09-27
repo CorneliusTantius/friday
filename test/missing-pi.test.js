@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createAppClient } from '../test-support/app-client.js';
 
 const serverPath = new URL('../src/server.js', import.meta.url).pathname;
 
@@ -20,13 +21,15 @@ test('missing Pi gives actionable 404 without blocking notes', { timeout: 15000 
     if (child.exitCode === null) await Promise.race([once(child, 'exit'), delay(2000)]);
     await rm(home, { recursive: true, force: true });
   });
-  const request = (path) => fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(3000) });
+  const client = createAppClient(`http://127.0.0.1:${port}`);
+  const request = client.request;
   let ready = false;
   for (let i = 0; i < 50; i += 1) {
     try { if ((await request('/healthz')).ok) { ready = true; break; } } catch {}
     await delay(100);
   }
   assert.ok(ready);
+  await client.login();
   assert.deepEqual((await (await request('/api/notes')).json()).notes, []);
   assert.deepEqual((await (await request('/api/pi/repos')).json()).repos, []);
   assert.deepEqual((await (await request('/api/repos')).json()).repos, []);

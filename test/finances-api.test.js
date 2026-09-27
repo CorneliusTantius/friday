@@ -6,6 +6,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createAppClient } from '../test-support/app-client.js';
 
 const serverPath = new URL('../src/server.js', import.meta.url).pathname;
 
@@ -22,13 +23,15 @@ test('financial tracker API supports persistent transaction CRUD and serves its 
     if (child.exitCode === null) await Promise.race([once(child, 'exit'), delay(2000)]);
     await rm(home, { recursive: true, force: true });
   });
-  const request = (path, options) => fetch(`http://127.0.0.1:${port}${path}`, { ...options, signal: AbortSignal.timeout(3000) });
+  const client = createAppClient(`http://127.0.0.1:${port}`);
+  const request = client.request;
   let ready = false;
   for (let index = 0; index < 50; index += 1) {
     try { if ((await request('/healthz')).ok) { ready = true; break; } } catch {}
     await delay(100);
   }
   assert.ok(ready, 'server should start');
+  await client.login();
   const page = await (await request('/')).text();
   assert.match(page, /id="finances-feature"/);
   assert.match(page, /data-feature="finances"/);
