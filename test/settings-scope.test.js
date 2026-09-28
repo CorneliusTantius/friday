@@ -27,7 +27,6 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
       HOME: home,
       FRIDAY_HOME: join(home, 'friday'),
       PI_CODING_AGENT_DIR: join(home, '.pi', 'agent'),
-      PI_CODING_AGENT_SESSION_DIR: join(home, '.pi', 'agent', 'sessions'),
       PI_COMMAND: piCommand,
       PORT: String(port),
     },

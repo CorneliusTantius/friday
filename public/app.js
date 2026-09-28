@@ -46,6 +46,8 @@ const state = {
   activeModel: '',
   activeThinkingLevel: 'off',
   agentBusy: false,
+  canAbort: false,
+  stopping: false,
   initializing: true,
   locks: new Set(),
   contextVersion: 0,
@@ -140,7 +142,18 @@ function updateControls() {
   const mutating = state.initializing || state.locks.size > 0;
   const unavailable = state.initializing;
   elements.input.disabled = unavailable || state.agentBusy || state.locks.has('chat');
-  elements.send.disabled = unavailable || state.agentBusy || state.locks.has('chat') || !elements.input.value.trim();
+  const stopAvailable = state.canAbort && !state.stopping && !unavailable;
+  elements.send.disabled = stopAvailable ? false : unavailable || state.agentBusy || state.locks.has('chat') || !elements.input.value.trim();
+  const sendMode = stopAvailable ? 'stop' : 'send';
+  if (elements.send.dataset.mode !== sendMode) {
+    elements.send.dataset.mode = sendMode;
+    elements.send.innerHTML = stopAvailable
+      ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>'
+      : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-5 14-2.5-5.5L5 12Z"/></svg>';
+  }
+  elements.send.classList.toggle('stop', stopAvailable);
+  elements.send.setAttribute('aria-label', stopAvailable ? 'Stop response' : 'Send message');
+  elements.send.title = stopAvailable ? 'Stop response' : 'Send message';
   elements.reset.disabled = unavailable || state.locks.has('session');
   elements.workspace.disabled = unavailable || state.locks.has('workspace') || state.locks.has('session-management');
   elements.model.disabled = unavailable || state.agentBusy || state.locks.has('model') || !elements.model.options.length;
@@ -158,8 +171,9 @@ function updateControls() {
   else elements.status.textContent = 'Ready';
 }
 
-function setAgentBusy(busy) {
+function setAgentBusy(busy, canAbort = busy) {
   state.agentBusy = busy;
+  state.canAbort = busy && canAbort;
   updateControls();
 }
 
@@ -733,7 +747,7 @@ async function connectEventStream() {
         return;
       }
       if (data.sessionPath && state.currentSessionPath && data.sessionPath !== state.currentSessionPath) return;
-      setAgentBusy(data.busy === true);
+      setAgentBusy(data.busy === true, data.canAbort === true);
       updateSessionSubtitle();
       scheduleEventRefresh(data.kind !== 'activity' || data.busy !== true || data.activity === 'session_info_changed');
     });
@@ -770,7 +784,7 @@ async function pollHistory() {
       return;
     }
     setConnection(true);
-    setAgentBusy(data.busy);
+    setAgentBusy(data.busy, data.canAbort === true);
     updateSessionSubtitle();
 
     if (data.busy) {
@@ -983,7 +997,7 @@ async function loadWorkspace() {
   setWorkspaceSuggestions(data.workspaces);
   elements.workspace.value = current.preferredWorkspace || current.workspace;
   state.workspace = elements.workspace.value;
-  setAgentBusy(current.busy);
+  setAgentBusy(current.busy, current.canAbort === true);
   await loadSessions(elements.workspace.value);
 }
 
@@ -1755,8 +1769,35 @@ elements.thinkingLevel.addEventListener('change', async () => {
   } finally { lock('thinking', false); }
 });
 
+async function abortPiTurn() {
+  if (!state.canAbort || state.stopping) return;
+  state.stopping = true;
+  updateControls();
+  try {
+    await apiJson('/api/abort', { method: 'POST' });
+    setAgentBusy(true, false);
+    startPolling();
+  } catch (error) {
+    if (!isAbort(error)) toast(error.message, 'error');
+    try {
+      const current = await apiJson('/api/status', {}, 'abort-recovery');
+      setAgentBusy(current.busy, current.canAbort === true);
+    } catch { setConnection(false); }
+  } finally {
+    state.stopping = false;
+    updateControls();
+  }
+}
+
+elements.send.addEventListener('click', (event) => {
+  if (!state.canAbort) return;
+  event.preventDefault();
+  void abortPiTurn();
+});
+
 elements.form.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (state.canAbort) { await abortPiTurn(); return; }
   const message = elements.input.value.trim();
   if (!message || state.agentBusy || state.locks.has('chat')) return;
   const context = state.contextVersion;
@@ -1774,7 +1815,7 @@ elements.form.addEventListener('submit', async (event) => {
       toast(error.message, 'error');
       try {
         const current = await apiJson('/api/status', {}, 'chat-recovery');
-        setAgentBusy(current.busy);
+        setAgentBusy(current.busy, current.canAbort === true);
         if (current.busy) startPolling();
         else {
           await loadHistory();
@@ -1817,7 +1858,7 @@ function initializePi() {
       await loadWorkspace();
       await Promise.all([loadHistory(), loadModels(), loadThinkingLevels()]);
       const current = await apiJson('/api/status', {}, 'startup-status');
-      setAgentBusy(current.busy);
+      setAgentBusy(current.busy, current.canAbort === true);
       setConnection(true);
       piInitialized = true;
       if (current.busy) startPolling();

@@ -27,6 +27,7 @@ const rl = readline.createInterface({ input: process.stdin });
 let messages = [];
 let model = { provider: 'fake', id: 'default', name: 'Default' };
 let thinkingLevel = 'off';
+let activeAbort = null;
 const send = (x) => process.stdout.write(JSON.stringify(x) + '\\n');
 rl.on('line', line => {
  let req; try { req = JSON.parse(line); } catch { return; }
@@ -38,15 +39,16 @@ rl.on('line', line => {
  else if (req.type === 'set_thinking_level') { thinkingLevel = req.level; respond({}); }
  else if (req.type === 'prompt') {
   messages.push({ role: 'user', content: req.message }); send({ type: 'agent_start' }); send({ type: 'message_start', message: { role: 'assistant' } });
-  const finish = () => { const content = 'Friday: ' + req.message; messages.push({ role: 'assistant', content }); send({ type: 'message_end', message: { role: 'assistant', content } }); send({ type: 'agent_end' }); send({ type: 'agent_settled' }); respond({}); };
-  if (req.message === 'long-running test') setTimeout(finish, 1200); else finish();
+  const finish = () => { if (activeAbort) clearTimeout(activeAbort.timer); activeAbort = null; const content = 'Friday: ' + req.message; messages.push({ role: 'assistant', content }); send({ type: 'message_end', message: { role: 'assistant', content } }); send({ type: 'agent_end' }); send({ type: 'agent_settled' }); respond({}); };
+  if (req.message === 'long-running test') { const timer = setTimeout(finish, 2500); activeAbort = { timer, finish }; } else finish();
  }
+ else if (req.type === 'abort') { activeAbort?.finish(); respond({}); }
  else if (req.type === 'get_messages') respond({ messages });
  else respond({});
 });
 `, { mode: 0o755 });
   const child = spawn(process.execPath, [join(root, 'src/server.js')], {
-    cwd: dir, env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: fakePi, PI_ARGS_LOG: join(dir, 'pi-args.jsonl'), FRIDAY_HOME: join(dir, 'home'),
+    cwd: dir, env: { ...process.env, HOME: dir, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: fakePi, PI_ARGS_LOG: join(dir, 'pi-args.jsonl'), FRIDAY_HOME: join(dir, 'home'),
       PI_CODING_AGENT_DIR: join(dir, 'agent'), PI_CODING_AGENT_SESSION_DIR: join(dir, 'sessions'),
       FRIDAY_CHAT_DIR: join(dir, 'friday'), FRIDAY_CHAT_DRIVER: 'rpc' }, stdio: 'ignore',
   });
@@ -82,6 +84,18 @@ rl.on('line', line => {
 
   const status = await request('/api/friday/status');
   assert.equal(status.status, 200);
+  const piStatus = await (await request('/api/status')).json();
+  const safeWorkspace = piStatus.workspace.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-');
+  const scopedSessions = join(dir, 'agent', 'sessions', `--${safeWorkspace}--`);
+  await mkdir(scopedSessions, { recursive: true });
+  const sessionContents = (id, cwd) => [
+    JSON.stringify({ type: 'session', id, cwd, timestamp: new Date().toISOString() }),
+    JSON.stringify({ type: 'message', timestamp: new Date().toISOString(), message: { role: 'user', content: id } }),
+  ].join('\n') + '\n';
+  await writeFile(join(scopedSessions, 'selected-workspace.jsonl'), sessionContents('selected-workspace', piStatus.workspace));
+  await writeFile(join(dir, 'sessions', 'legacy-flat.jsonl'), sessionContents('legacy-flat', piStatus.workspace));
+  const listedSessions = await (await request('/api/sessions')).json();
+  assert.deepEqual(listedSessions.sessions.map(({ id }) => id), ['selected-workspace'], 'list sessions only from the selected workspace directory');
   const settings = await (await request('/api/settings')).json();
   assert.equal(settings.fridayChat.directory, join(dir, 'friday'));
   assert.equal(settings.fridayChat.sessionsDirectory, join(dir, 'friday', 'sessions'));
@@ -183,6 +197,48 @@ rl.on('line', line => {
   assert.equal(codingResult, 'quiet', 'coding SSE should not receive Friday activity or status');
   await codingReader.cancel();
 
+  const fridayLongChat = request('/api/friday/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'long-running test' }) });
+  let fridayBusy = false;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    fridayBusy = (await (await request('/api/friday/status')).json()).canAbort;
+    if (fridayBusy) break;
+    await delay(20);
+  }
+  assert.equal(fridayBusy, true, 'Friday should expose abort while responding');
+  const fridayAbort = await request('/api/friday/abort', { method: 'POST' });
+  assert.equal(fridayAbort.status, 200);
+  assert.equal((await fridayAbort.json()).aborted, true);
+  assert.equal((await fridayLongChat).status, 200);
+  assert.equal((await (await request('/api/friday/status')).json()).busy, false);
+
+  const codingLongChat = request('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'long-running test' }) });
+  let codingBusy = false;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    codingBusy = (await (await request('/api/status')).json()).canAbort;
+    if (codingBusy) break;
+    await delay(20);
+  }
+  assert.equal(codingBusy, true, 'Pi should expose abort while responding');
+  const codingAbort = await request('/api/abort', { method: 'POST' });
+  assert.equal(codingAbort.status, 200);
+  assert.equal((await codingAbort.json()).aborted, true);
+  assert.equal((await codingLongChat).status, 200);
+  assert.equal((await (await request('/api/status')).json()).busy, false);
+
+  const startupHeaders = { 'X-Friday-Session': 'abort-during-startup' };
+  const startupChat = request('/api/chat', { method: 'POST', headers: { ...startupHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ message: 'long-running test' }) });
+  let startupBusy = false;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    startupBusy = (await (await request('/api/status', { headers: startupHeaders })).json()).canAbort;
+    if (startupBusy) break;
+    await delay(20);
+  }
+  assert.equal(startupBusy, true, 'a newly starting Pi session should be abortable');
+  const startupAbort = await request('/api/abort', { method: 'POST', headers: startupHeaders });
+  assert.equal(startupAbort.status, 200);
+  assert.equal((await startupAbort.json()).aborted, true);
+  assert.equal((await startupChat).status, 200);
+
   const originalStatus = await (await request('/api/status')).json();
   const activeChat = request('/api/chat', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'long-running test' }),
@@ -235,7 +291,7 @@ rl.on('line', line => { let req; try { req = JSON.parse(line); } catch { return;
   const log = join(dir, 'pi-args.jsonl');
   const base = `http://127.0.0.1:${port}`;
   const client = createAppClient(base);
-  const start = () => spawn(process.execPath, [join(root, 'src/server.js')], { cwd: dir, env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: fakePi, PI_ARGS_LOG: log, PI_CODING_AGENT_DIR: join(dir, 'agent'), PI_CODING_AGENT_SESSION_DIR: join(dir, 'sessions'), FRIDAY_HOME: fridayDir, FRIDAY_CHAT_DRIVER: 'rpc' }, stdio: 'ignore' });
+  const start = () => spawn(process.execPath, [join(root, 'src/server.js')], { cwd: dir, env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: fakePi, PI_ARGS_LOG: log, PI_CODING_AGENT_DIR: join(dir, 'agent'), FRIDAY_HOME: fridayDir, FRIDAY_CHAT_DRIVER: 'rpc' }, stdio: 'ignore' });
   let child;
   const stop = async () => { if (!child || child.exitCode !== null) return; child.kill('SIGTERM'); await Promise.race([once(child, 'exit'), delay(2000)]); child = null; };
   t.after(async () => { await stop(); await rm(dir, { recursive: true, force: true }); });

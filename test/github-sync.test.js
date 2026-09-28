@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, lstat, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, lstat, rm, cp, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { syncGitHubSnapshot, validateGitHubSyncTarget } from '../src/github-sync.js';
@@ -43,7 +43,7 @@ test('sync includes settings, credentials, sessions and binary data, excluding o
         return { changed: true, pushed: false, copied };
       }
     } });
-    assert.deepEqual(result, { changed: true, pushed: false, copied: 8 });
+    assert.deepEqual(result, { changed: true, pushed: false, copied: 8, pulled: 0 });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -80,12 +80,102 @@ test('sync pushes a scoped snapshot without deleting unrelated private-repo file
   const fakeGh = join(root, 'gh');
   await writeFile(fakeGh, `#!/bin/sh\ncase "$1 $2" in\n  "auth status") exit 0 ;;\n  "repo view") printf '%s\\n' '{"nameWithOwner":"me/private","isPrivate":true}' ;;\n  "repo clone") exec git clone '${remote}' "$4" ;;\n  *) exit 2 ;;\nesac\n`, { mode: 0o755 });
   const options = { directory: source, owner: 'me', repo: 'private', gh: fakeGh };
-  assert.deepEqual(await syncGitHubSnapshot(options), { changed: true, pushed: true, copied: 1 });
+  assert.deepEqual(await syncGitHubSnapshot(options), { changed: true, pushed: true, copied: 1, pulled: 0 });
   const checkout = join(root, 'checkout');
   await git('git', ['clone', remote, checkout]);
   assert.equal(await readFile(join(checkout, 'README.md'), 'utf8'), 'keep me');
   assert.equal(await readFile(join(checkout, '.friday', 'note.md'), 'utf8'), 'safe note');
-  assert.deepEqual(await syncGitHubSnapshot(options), { changed: false, pushed: false, copied: 1 });
+  assert.deepEqual(await syncGitHubSnapshot(options), { changed: false, pushed: false, copied: 1, pulled: 0 });
+});
+
+test('sync pulls remote changes, pushes local changes, and merges distinct paths using its baseline', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'github-sync-merge-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source');
+  const remote = join(root, 'remote', '.friday');
+  const stateFile = join(root, 'state', 'baseline.json');
+  await mkdir(source, { recursive: true });
+  await mkdir(remote, { recursive: true });
+  await writeFile(join(source, 'shared.txt'), 'base');
+  await writeFile(join(remote, 'shared.txt'), 'base');
+  await writeFile(join(remote, 'remote-only.txt'), 'remote v1');
+  let pushed = 0;
+  const backend = {
+    validate: async () => true,
+    prepare: async ({ path }) => {
+      await mkdir(path, { recursive: true });
+      await cp(remote, join(path, '.friday'), { recursive: true });
+    },
+    commitAndPush: async ({ path }) => {
+      await rm(join(root, 'remote'), { recursive: true, force: true });
+      await cp(path, join(root, 'remote'), { recursive: true });
+      pushed += 1;
+      return { changed: true, pushed: true };
+    },
+  };
+  const options = { directory: source, snapshotName: '.friday', owner: 'me', repo: 'private', stateFile, backend };
+
+  const initial = await syncGitHubSnapshot(options);
+  assert.equal(initial.pulled, 1);
+  assert.equal(await readFile(join(source, 'remote-only.txt'), 'utf8'), 'remote v1');
+
+  await writeFile(join(source, 'local-only.txt'), 'local v1');
+  await writeFile(join(remote, 'remote-only.txt'), 'remote v2');
+  await syncGitHubSnapshot(options);
+  assert.equal(await readFile(join(remote, 'local-only.txt'), 'utf8'), 'local v1');
+  assert.equal(await readFile(join(source, 'remote-only.txt'), 'utf8'), 'remote v2');
+  assert.equal(await readFile(join(remote, 'remote-only.txt'), 'utf8'), 'remote v2');
+  assert.equal(pushed, 2);
+});
+
+test('sync propagates deletions and rejects same-file conflicts without overwriting either side', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'github-sync-conflict-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source');
+  const remote = join(root, 'remote', '.friday');
+  const stateFile = join(root, 'state', 'baseline.json');
+  await mkdir(source, { recursive: true });
+  await mkdir(join(root, 'remote'), { recursive: true });
+  await writeFile(join(source, 'shared.txt'), 'base');
+  await writeFile(join(source, 'delete-me.txt'), 'base delete');
+  await cp(source, remote, { recursive: true });
+  const backend = {
+    validate: async () => true,
+    prepare: async ({ path }) => { await mkdir(path, { recursive: true }); await cp(remote, join(path, '.friday'), { recursive: true }); },
+    commitAndPush: async ({ path }) => {
+      await rm(join(root, 'remote'), { recursive: true, force: true });
+      await cp(path, join(root, 'remote'), { recursive: true });
+      return { changed: true, pushed: true };
+    },
+  };
+  const options = { directory: source, snapshotName: '.friday', owner: 'me', repo: 'private', stateFile, backend };
+  await syncGitHubSnapshot(options);
+
+  await unlink(join(source, 'delete-me.txt'));
+  await syncGitHubSnapshot(options);
+  await assert.rejects(readFile(join(remote, 'delete-me.txt')));
+
+  await writeFile(join(source, 'shared.txt'), 'local edit');
+  await writeFile(join(remote, 'shared.txt'), 'remote edit');
+  await assert.rejects(syncGitHubSnapshot(options), /Sync conflicts require manual resolution: shared.txt/);
+  assert.equal(await readFile(join(source, 'shared.txt'), 'utf8'), 'local edit');
+  assert.equal(await readFile(join(remote, 'shared.txt'), 'utf8'), 'remote edit');
+});
+
+test('sync does not advance its baseline when pushing fails', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'github-sync-failed-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source');
+  await mkdir(source);
+  await writeFile(join(source, 'local.txt'), 'local');
+  const stateFile = join(root, 'state', 'baseline.json');
+  const backend = {
+    validate: async () => true,
+    prepare: async ({ path }) => mkdir(path, { recursive: true }),
+    commitAndPush: async () => { throw new Error('push failed'); },
+  };
+  await assert.rejects(syncGitHubSnapshot({ directory: source, owner: 'me', repo: 'private', stateFile, backend }), /push failed/);
+  await assert.rejects(readFile(stateFile));
 });
 
 test('sync creates a missing target as private before pushing the snapshot', async (t) => {
@@ -114,7 +204,7 @@ case "$1 $2" in
 esac
 `, { mode: 0o755 });
   const result = await syncGitHubSnapshot({ directory: source, owner: 'me', repo: 'new-private', snapshotName: '.pi', gh: fakeGh });
-  assert.deepEqual(result, { changed: true, pushed: true, copied: 1 });
+  assert.deepEqual(result, { changed: true, pushed: true, copied: 1, pulled: 0 });
   assert.equal((await lstat(marker)).isFile(), true);
   const checkout = join(root, 'checkout');
   await git('git', ['clone', remote, checkout]);

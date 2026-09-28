@@ -11,6 +11,8 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
   let history = [];
   let optimistic = null;
   let busy = false;
+  let canAbort = false;
+  let stopping = false;
   let loading = false;
   let configuring = false;
   let currentModel = '';
@@ -28,7 +30,18 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
 
   function updateControls() {
     input.disabled = loading || busy || configuring;
-    send.disabled = input.disabled || !input.value.trim();
+    const stopAvailable = canAbort && !stopping && !loading && !configuring;
+    send.disabled = stopAvailable ? false : input.disabled || !input.value.trim();
+    const sendMode = stopAvailable ? 'stop' : 'send';
+    if (send.dataset.mode !== sendMode) {
+      send.dataset.mode = sendMode;
+      send.innerHTML = stopAvailable
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>'
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-5 14-2.5-5.5L5 12Z"/></svg>';
+    }
+    send.classList.toggle('stop', stopAvailable);
+    send.setAttribute('aria-label', stopAvailable ? 'Stop Friday response' : 'Send message to Friday');
+    send.title = stopAvailable ? 'Stop response' : 'Send message';
     model.disabled = loading || busy || configuring || !model.options.length;
     thinking.disabled = loading || busy || configuring || !thinking.options.length;
     status.textContent = loading ? 'Connecting…' : busy ? 'Friday is thinking…' : configuring ? 'Updating settings…' : reachable ? 'Ready' : 'Reconnecting…';
@@ -215,6 +228,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
       }
       if (runtime) {
         busy = runtime.busy;
+        canAbort = runtime.canAbort === true;
         applyState(runtime);
       }
       render();
@@ -274,6 +288,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
         try {
           const data = JSON.parse(event.data);
           busy = data.busy === true;
+          canAbort = data.canAbort === true;
           updateControls();
           if (data.kind !== 'ready') queueRefresh();
           if (data.kind === 'status' && ['model change', 'thinking level change'].includes(data.operation)) {
@@ -374,6 +389,29 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
     }
   });
 
+  async function abortTurn() {
+    if (!canAbort || stopping) return;
+    stopping = true;
+    updateControls();
+    try {
+      await apiJson('/api/friday/abort', { method: 'POST' });
+      canAbort = false;
+    } catch (error) {
+      if (!isAbort(error)) toast(error.message, 'error');
+    } finally {
+      try { await sync({ withStatus: true }); }
+      catch { reachable = false; scheduleFallback(); }
+      stopping = false;
+      updateControls();
+    }
+  }
+
+  send.addEventListener('click', (event) => {
+    if (!canAbort) return;
+    event.preventDefault();
+    void abortTurn();
+  });
+
   input.addEventListener('input', resizeInput);
   input.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
@@ -382,6 +420,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
   });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (canAbort) { await abortTurn(); return; }
     const message = input.value.trim();
     if (!message || busy || loading) return;
     optimistic = { content: message, after: history.filter((item) => item.role === 'user').length };
@@ -390,6 +429,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
     render();
     messages.scrollTop = messages.scrollHeight;
     busy = true;
+    canAbort = true;
     updateControls();
     try {
       await apiJson('/api/friday/chat', {

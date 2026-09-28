@@ -287,6 +287,7 @@ textarea::placeholder { color: #62626c; }
 .status { max-width: 12rem; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .send-button { display: grid; width: 2.25rem; height: 2.25rem; place-items: center; border-radius: 10px; background: linear-gradient(145deg, #8b5cf6, #6366f1); box-shadow: 0 5px 16px rgba(99,102,241,.22); color: white; cursor: pointer; padding: 0; transition: transform .18s ease, filter .18s ease; }
 .send-button:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-1px); }
+.send-button.stop { background: linear-gradient(145deg, #ef4444, #dc2626); box-shadow: 0 5px 16px rgba(220,38,38,.22); }
 .send-button:disabled { box-shadow: none; }
 
 button.secondary { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; border: 1px solid var(--border); border-radius: 9px; background: rgba(255,255,255,.045); color: var(--text-2); cursor: pointer; font-size: 12px; font-weight: 600; padding: .52rem .72rem; transition: background .18s ease, color .18s ease, transform .18s ease; }

@@ -67,6 +67,10 @@ export class PiSession extends EventEmitter {
     return this.operation === 'chat';
   }
 
+  get canAbort() {
+    return this.operation === 'chat';
+  }
+
   get hasActiveWork() {
     return Boolean(this.operation || this.startPromise || this.pending.size);
   }
@@ -206,6 +210,14 @@ export class PiSession extends EventEmitter {
       this.#applyState(state.data);
       return state.data.model;
     });
+  }
+
+  async abort() {
+    if (!this.isBusy) return false;
+    await this.start();
+    if (!this.isBusy) return false;
+    await this.#send({ type: 'abort' });
+    return true;
   }
 
   async chat(message) {

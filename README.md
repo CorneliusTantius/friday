@@ -34,7 +34,7 @@ npm run dev
 - `GET /` — authenticated web harness
 - `GET /healthz` — unauthenticated minimal health check
 - `GET /api/status` — active workspace, model, and Pi state
-- `GET /api/friday/status`, `GET /api/friday/history`, `POST /api/friday/chat` — independent general Friday conversation
+- `GET /api/friday/status`, `GET /api/friday/history`, `POST /api/friday/chat`, `POST /api/friday/abort` — independent general Friday conversation and interrupt control
 - `GET /api/friday/models`, `POST /api/friday/model` — list and select Friday's model
 - `GET /api/friday/thinking-levels`, `POST /api/friday/thinking-level` — list and select Friday's thinking level
 - `POST /api/friday/events/token` — scoped SSE token for Friday Chat
@@ -54,7 +54,7 @@ npm run dev
 - `GET /api/workspaces` — allowed workspace directories
 - `GET /api/sessions?cwd=...` — saved sessions with running/working runtime indicators for a workspace
 - `GET /api/history` — full current-session messages and tool calls; add `?limit=20` for a tail
-- `POST /api/chat` with `{ "message": "..." }` — send a message
+- `POST /api/chat` with `{ "message": "..." }` and `POST /api/abort` — send a message or stop the current Pi response
 - `POST /api/session/reset` with `{ "cwd": "..." }` — start a new session
 - `POST /api/session/select` with `{ "cwd": "...", "path": "..." }` — open a saved session
 - `POST /api/session/rename` with `{ "cwd": "...", "path": "...", "name": "..." }` — rename a saved session
@@ -63,7 +63,7 @@ npm run dev
 
 ## GitHub snapshots
 
-Sign in with `gh auth login`, then enter an owner and repository name in Friday Settings or Pi Settings and choose **Sync now**. If the repository is missing, sync creates it as **private**; the authenticated GitHub account must have permission to create repositories under that owner. `gh` must be installed and authenticated on the Friday host. Sync verifies that each target is private before cloning and again before pushing; it never uses a token in a Git URL. Friday and Pi have separate targets, saved under `~/.friday/config/github-sync.json` and `~/.pi/agent/friday-sync.json`. Sync is manual, not scheduled, and updates only the `.friday/` or `.pi/` snapshot folder in the target repository.
+Sign in with `gh auth login`, then enter an owner and repository name in Friday Settings or Pi Settings and choose **Sync now**. If the repository is missing, sync creates it as **private**; the authenticated GitHub account must have permission to create repositories under that owner. `gh` must be installed and authenticated on the Friday host. Sync verifies that each target is private before cloning and before pushing; it never uses a token in a Git URL. Friday and Pi have separate targets, saved under `~/.friday/config/github-sync.json` and `~/.pi/agent/friday-sync.json`. Configured targets are checked automatically every hour (the first check is one hour after startup), as well as on manual **Sync now**. Sync updates only the `.friday/` or `.pi/` snapshot folder in the target repository. Local-only changes are pushed, remote-only changes are pulled, and changes to different files on both sides are merged. Conflicting edits to the same file stop that sync without overwriting either version; the error is shown in Settings. A first sync adopts non-conflicting files from both sides and reports differing same-path files as conflicts.
 
 Snapshots include settings, provider credentials, sessions, memory, hidden files, binaries, and other regular files. They exclude managed repositories, directories named `repos/` or `node_modules/`, `.git` metadata, and symlinks. This can push API keys, OAuth tokens, and sensitive conversation history: anyone with access to the private repository can read them. Use a private repository and review its access controls.
 

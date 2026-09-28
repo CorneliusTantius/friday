@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { FridaySdkSession, fridayHistory } from '../src/friday-sdk-session.js';
 
 test('Friday history projects SDK messages and limits the tail', () => {
@@ -18,6 +21,34 @@ test('Friday history projects SDK messages and limits the tail', () => {
     { role: 'tool', content: 'file contents', toolCallId: 'call-2', toolName: 'read' },
     { role: 'assistant', content: 'answer' },
   ]);
+});
+
+test('SDK session aborts an active chat turn', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'friday-sdk-abort-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let finishPrompt;
+  const session = {
+    messages: [],
+    prompt: () => new Promise((resolve) => { finishPrompt = () => { session.messages.push({ role: 'assistant', content: 'partial' }); resolve(); }; }),
+    abort: async () => finishPrompt?.(),
+    modelRuntime: { getAvailableSnapshot: () => [] },
+    dispose() {},
+  };
+  const adapter = new FridaySdkSession({
+    cwd: root,
+    agentDir: join(root, 'config'),
+    dataDir: join(root, 'data'),
+    createModelRuntime: async () => ({}),
+    createSession: async () => ({ session }),
+  });
+  const turn = adapter.chat('long-running');
+  for (let attempt = 0; attempt < 20 && !adapter.canAbort; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(adapter.canAbort, true);
+  await assert.rejects(adapter.chat('concurrent'), /Cannot start chat while chat is in progress/);
+  assert.equal(await adapter.abort(), true);
+  await turn;
+  assert.equal(adapter.isBusy, false);
+  assert.equal(await adapter.abort(), false);
 });
 
 test('SDK session initializes once, disables tools, and disposes', async () => {

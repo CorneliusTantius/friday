@@ -52,7 +52,6 @@ WorkingDirectory=$APP_DIR
 Environment=HOME=$SERVICE_HOME
 Environment=FRIDAY_HOME=$SERVICE_HOME/.friday
 Environment=PI_CODING_AGENT_DIR=$SERVICE_HOME/.pi/agent
-Environment=PI_CODING_AGENT_SESSION_DIR=$SERVICE_HOME/.pi/agent/sessions
 Environment=HOST=127.0.0.1
 Environment=PORT=3000
 Environment="PATH=$PATH"

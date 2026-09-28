@@ -49,6 +49,8 @@ export class FridaySdkSession extends EventEmitter {
     this.sessionPath = null;
     this.initializing = null;
     this.unsubscribe = null;
+    this.activePrompt = null;
+    this.promptStarted = null;
   }
 
   async start() {
@@ -83,11 +85,17 @@ export class FridaySdkSession extends EventEmitter {
 
   get isRunning() { return this.session !== null; }
   get isBusy() { return Boolean(this.operation); }
+  get canAbort() { return this.operation === 'chat'; }
   get currentSessionPath() { return this.session?.sessionFile || this.sessionPath; }
   get currentModel() { return this.session?.model || this.model || null; }
   get currentThinkingLevel() { return this.session?.thinkingLevel || this.thinkingLevel; }
 
   async #operate(name, callback) {
+    if (this.operation) {
+      const error = new Error(`Cannot start ${name} while ${this.operation} is in progress`);
+      error.status = 409;
+      throw error;
+    }
     this.operation = name;
     this.emit('status', { operation: name, busy: this.isBusy, sessionPath: this.currentSessionPath });
     try { return await callback(); }
@@ -101,13 +109,31 @@ export class FridaySdkSession extends EventEmitter {
     this.thinkingLevel = this.session.thinkingLevel || this.thinkingLevel;
   }
 
+  async abort() {
+    if (!this.canAbort) return false;
+    if (!this.activePrompt && this.promptStarted) await this.promptStarted;
+    if (!this.canAbort || !this.session) return false;
+    await this.session.abort();
+    return true;
+  }
+
   async chat(message) {
     return this.#operate('chat', async () => {
-      await this.start();
-      await this.session.prompt(message);
-      this.#applyState();
-      const assistants = this.session.messages.filter((item) => item.role === 'assistant');
-      return textFromContent(assistants.at(-1)?.content).trim();
+      let signalPromptStarted;
+      this.promptStarted = new Promise((resolve) => { signalPromptStarted = resolve; });
+      try {
+        await this.start();
+        this.activePrompt = this.session.prompt(message);
+        signalPromptStarted();
+        await this.activePrompt;
+        this.#applyState();
+        const assistants = this.session.messages.filter((item) => item.role === 'assistant');
+        return textFromContent(assistants.at(-1)?.content).trim();
+      } finally {
+        signalPromptStarted();
+        this.activePrompt = null;
+        this.promptStarted = null;
+      }
     });
   }
 
