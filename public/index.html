@@ -3,59 +3,62 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#09090b">
+    <meta name="theme-color" content="#0b0e11">
     <meta name="color-scheme" content="dark">
     <title>Friday</title>
     <link rel="icon" type="image/png" href="/friday-logo.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <div class="ambient" aria-hidden="true"></div>
-    <div class="shell">
-      <aside class="sidebar" aria-label="Primary navigation">
-        <div class="brand" aria-label="Friday home">
-          <span class="brand-mark" aria-hidden="true"><img src="/friday-logo.png" alt=""></span>
-          <span class="brand-copy"><strong>Friday</strong><small>AI workspace</small></span>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <div class="shell workspace-shell">
+      <aside id="workspace-sidebar" class="sidebar workspace-sidebar" aria-label="Primary navigation">
+        <button class="icon-button shell-sidebar-close" type="button" data-shell-close aria-label="Close navigation">×</button>
+        <div class="brand" aria-label="Friday">
+          <span class="brand-mark" aria-hidden="true">Fr</span>
+          <span class="brand-copy"><strong>FRIDAY</strong><small>Personal operating system</small></span>
         </div>
 
         <nav class="feature-nav" aria-label="Features">
-          <div class="nav-group">
-          <button class="feature" type="button" data-feature="dashboard" aria-label="Dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3h8v6h-8zM3 17h8v4H3z"/></svg><span>Dashboard</span></button>
+          <div class="nav-group workspace-nav-group">
+            <span class="nav-group-title workspace-nav-heading">Command</span>
+            <button class="feature active" type="button" data-feature="dashboard" aria-current="page" aria-label="Dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3h8v6h-8zM3 17h8v4H3z"/></svg><span>Dashboard</span></button>
           </div>
-          <div class="nav-group"><span class="nav-group-title">Friday Agent</span>
-          <button class="feature active" type="button" data-feature="friday" aria-current="page" aria-label="Friday">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H8l-4 3V6Z"/><path d="M8 10h8M8 14h5"/></svg>
-            <span>Friday</span>
-          </button>
-          <button class="feature" type="button" data-feature="repos" aria-label="Friday repositories"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-10Z"/><path d="M3.5 10h17"/></svg><span>Repos</span></button>
-          <button class="feature" type="button" data-feature="notes" aria-label="Friday notes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l4 4V20a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5.5a2 2 0 0 1 2-2Z"/><path d="M14 4v5h5M8 13h8M8 17h8"/></svg><span>Notes</span></button>
-          <button class="feature" type="button" data-feature="files" aria-label="Friday files">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6A2.5 2.5 0 0 1 20.5 9.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z"/></svg>
-            <span>Files</span>
-          </button>
-          <button class="feature" type="button" data-feature="finances" aria-label="Financial tracker"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 5-7"/></svg><span>Finances</span></button>
+          <div class="nav-group workspace-nav-group">
+            <span class="nav-group-title workspace-nav-heading">Agents</span>
+            <button class="feature" type="button" data-feature="friday" aria-label="Friday Agent"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H8l-4 3V6Z"/><path d="M8 10h8M8 14h5"/></svg><span>Friday Agent</span></button>
+            <button class="feature" type="button" data-feature="pi" aria-label="Pi Agent"><span class="feature-pi-icon" aria-hidden="true">π</span><span>Pi Agent</span></button>
           </div>
-          <div class="nav-group"><span class="nav-group-title">Pi Agent</span>
-          <button class="feature" type="button" data-feature="pi" aria-label="Pi"><span class="feature-pi-icon" aria-hidden="true">π</span><span>Pi</span></button>
-          <button class="feature" type="button" data-feature="pi-repos" aria-label="Pi repositories"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-10Z"/><path d="M3.5 10h17"/></svg><span>Repos</span></button>
-          <button class="feature" type="button" data-feature="pi-files" aria-label="Pi files"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6A2.5 2.5 0 0 1 20.5 9.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z"/></svg><span>Files</span></button>
+          <div class="nav-group workspace-nav-group">
+            <span class="nav-group-title workspace-nav-heading">Your space</span>
+            <button class="feature" type="button" data-feature="files" aria-label="Files"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6A2.5 2.5 0 0 1 20.5 9.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z"/></svg><span>Files</span></button>
+            <button class="feature" type="button" data-feature="repos" aria-label="Repositories"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-10Z"/><path d="M3.5 10h17"/></svg><span>Repositories</span></button>
+            <button class="feature" type="button" data-feature="notes" aria-label="Friday notes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l4 4V20a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5.5a2 2 0 0 1 2-2Z"/><path d="M14 4v5h5M8 13h8M8 17h8"/></svg><span>Notes</span></button>
+            <button class="feature" type="button" data-feature="finances" aria-label="Financial tracker"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 5-7"/></svg><span>Finances</span></button>
           </div>
-          <div class="nav-group"><span class="nav-group-title">System</span>
-          <button class="feature" type="button" data-feature="settings" aria-label="System settings">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.25A3.25 3.25 0 1 0 12 8.75a3.25 3.25 0 0 0 0 6.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.96 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 10 3.01V3h4v.08a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06L19.8 7l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.96 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/></svg>
-            <span>System</span>
-          </button>
+          <div class="nav-group workspace-nav-group workspace-system-group">
+            <span class="nav-group-title workspace-nav-heading">System</span>
+            <button class="feature" type="button" data-feature="settings" aria-label="System settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.25A3.25 3.25 0 1 0 12 8.75a3.25 3.25 0 0 0 0 6.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.96 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 10 3.01V3h4v.08a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06L19.8 7l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.96 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/></svg><span>System</span></button>
           </div>
         </nav>
 
         <div class="sidebar-footer">
-          <span class="connection-dot" id="connection-dot"></span>
-          <span id="connection-label">Connecting</span>
           <button id="logout" class="logout-button" type="button" aria-label="Sign out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H5v16h5M14 8l4 4-4 4M8 12h10"/></svg><span>Sign out</span></button>
         </div>
       </aside>
 
-      <main class="feature-shell">
+      <header class="app-topbar workspace-topbar">
+        <button class="icon-button shell-menu-toggle" type="button" data-shell-drawer="sidebar" aria-label="Open navigation" aria-controls="workspace-sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+        <div class="topbar-breadcrumb"><svg class="topbar-home" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10H3zM9 20v-7h6v7"/></svg><span class="topbar-root">Workspace</span><span class="topbar-slash">/</span><span id="topbar-page">Dashboard</span></div>
+        <button id="shell-command-trigger" class="shell-search-trigger" type="button" aria-label="Search or run a command"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search or run a command</span><kbd>⌘ K</kbd></button>
+        <button class="secondary shell-assistant-toggle" type="button" data-shell-drawer="assistant" aria-label="Open Friday assistant" aria-controls="assistant-rail" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3z"/></svg>Friday</button>
+        <div class="topbar-status"><span class="connection-dot" id="connection-dot"></span><span id="connection-label">Connecting</span></div>
+      </header>
+
+      <main id="main-content" class="feature-shell" tabindex="-1">
         <section id="friday-feature" class="feature-layout friday-layout">
           <aside class="context-sidebar friday-sidebar" id="friday-sidebar" aria-label="Friday conversations">
             <div class="context-heading"><span>Conversations</span><button class="mobile-close icon-button" type="button" data-close-drawer aria-label="Close conversations">×</button></div>
@@ -69,9 +72,10 @@
               <div class="header-title">
                 <button class="drawer-toggle icon-button" type="button" data-open-drawer="friday-sidebar" aria-label="Open conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
                 <div><h1>Friday</h1>
-                <p>Your general chat, separate from Pi workspaces</p></div>
+                <p>Your second mind.</p></div>
               </div>
               <div class="friday-header-actions">
+                <div class="assistant-rail-tools"><button class="icon-button" type="button" data-navigate="friday" title="Open conversations" aria-label="Open Friday conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H8l-4 3z"/></svg></button><button class="icon-button assistant-close" type="button" data-shell-close aria-label="Close assistant">×</button></div>
                 <span id="friday-status" class="status" role="status" aria-live="polite">Connecting…</span>
                 <button id="friday-pi-sessions-toggle" class="drawer-toggle icon-button" type="button" data-open-drawer="friday-pi-sidebar" aria-label="Open Pi conversations" title="Pi conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/><path d="M15 4v16"/></svg></button>
               </div>
@@ -148,8 +152,8 @@
             <button id="jump-latest" class="jump-latest" type="button" hidden>Jump to latest ↓</button>
 
             <form id="chat-form" class="composer">
-              <label class="sr-only" for="message">Message Friday</label>
-              <textarea id="message" rows="1" maxlength="20000" placeholder="Message Friday…" required></textarea>
+              <label class="sr-only" for="message">Message Pi</label>
+              <textarea id="message" rows="1" maxlength="20000" placeholder="Message Pi…" required></textarea>
               <div class="composer-footer">
                 <div class="agent-control-stack">
                   <div class="agent-controls">
@@ -195,15 +199,20 @@
             <div id="file-list" class="file-list" aria-label="Workspace files"></div>
           </aside>
           <section class="file-preview" aria-label="File preview">
-            <header class="feature-header">
+            <header class="feature-header files-header">
               <div class="header-title">
                 <button class="drawer-toggle icon-button" type="button" data-open-drawer="files-sidebar" aria-label="Open file browser">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
                 </button>
                 <div>
+                  <span class="eyebrow">Your space / files</span>
                   <h1 id="file-title">File preview</h1>
                   <p id="file-meta">Select a text file to preview it.</p>
                 </div>
+              </div>
+              <div class="segmented scope-selector" role="group" aria-label="File root">
+                <button type="button" data-file-scope="files" aria-pressed="true" title="Browse Friday files under ~/.friday">Friday</button>
+                <button type="button" data-file-scope="pi-files" aria-pressed="false" title="Browse Pi files under ~/.pi">Pi</button>
               </div>
             </header>
             <pre id="file-content" class="file-content"><span class="empty-placeholder">Select a file from the workspace.</span></pre>
@@ -219,8 +228,18 @@
           <header class="feature-header page-header"><div><span class="eyebrow">Overview</span><h1>Dashboard</h1><p>Friday, Pi, and host health at a glance.</p></div><button id="refresh-dashboard" class="secondary compact" type="button">Refresh</button></header>
           <div id="dashboard-cards" class="dashboard-cards" aria-live="polite"></div>
         </section>
-        <section id="repos-feature" class="feature-page" hidden><header class="feature-header page-header"><div><h1>Friday repositories</h1><p>Cloned into ~/.friday/workspace/repos</p></div></header><form id="clone-repo-form" class="repo-form"><label for="clone-repo-url">Git URL</label><input id="clone-repo-url" type="url" required placeholder="https://github.com/owner/repo.git"><button type="submit">Clone</button></form><div id="friday-clone-progress" class="clone-progress" role="status" hidden><progress aria-label="Friday repository clone in progress"></progress><span>Cloning repository…</span></div><div id="repo-list" class="device-list"></div></section>
-        <section id="pi-repos-feature" class="feature-page" hidden><header class="feature-header page-header"><div><h1>Pi repositories</h1><p>Cloned into ~/.pi/workspace/repos</p></div></header><form id="clone-pi-repo-form" class="repo-form"><label for="clone-pi-repo-url">Git URL</label><input id="clone-pi-repo-url" type="url" required placeholder="https://github.com/owner/repo.git"><button type="submit">Clone for Pi</button></form><div id="pi-clone-progress" class="clone-progress" role="status" hidden><progress aria-label="Pi repository clone in progress"></progress><span>Cloning repository…</span></div><div id="pi-repo-list" class="device-list"></div></section>
+        <section id="repos-feature" class="feature-page repositories-page" hidden>
+          <header class="feature-header page-header">
+            <div><span class="eyebrow">Your space / source control</span><h1 id="repo-page-title">Repositories</h1><p id="repo-page-description">Friday-managed projects.</p></div>
+            <div class="segmented scope-selector" role="group" aria-label="Repository scope">
+              <button type="button" data-repo-scope="friday" aria-pressed="true">Friday</button>
+              <button type="button" data-repo-scope="pi" aria-pressed="false">Pi</button>
+            </div>
+          </header>
+          <form id="clone-repo-form" class="repo-form"><label for="clone-repo-url">Git URL</label><input id="clone-repo-url" type="url" required placeholder="https://github.com/owner/repo.git"><button type="submit">Clone repository</button></form>
+          <div id="repo-clone-progress" class="clone-progress" role="status" hidden><progress aria-label="Repository clone in progress"></progress><span>Cloning repository…</span></div>
+          <div id="repo-list" class="device-list"></div>
+        </section>
         <section id="notes-feature" class="feature-layout notes-layout" hidden>
           <aside class="context-sidebar notes-sidebar" id="notes-sidebar" aria-label="Notes">
             <div class="context-heading">
@@ -269,7 +288,7 @@
               <div class="settings-group-content">
                 <div id="friday-settings-list" class="settings-list"></div>
                 <section class="auth-panel" data-auth-provider="friday" aria-label="Friday provider authentication"></section>
-                <section class="github-sync" data-sync="friday"><h3>GitHub sync</h3><form><label>Owner <input name="owner" required autocomplete="off"></label><label>Repository <input name="repo" required autocomplete="off"></label><button class="secondary" type="submit">Save</button><button class="secondary" type="button" data-sync-run>Sync now</button></form><p class="sync-status" role="status" aria-live="polite"></p><p class="sync-help">Syncs ~/.friday/ including settings, credentials, sessions and memory to a private GitHub repository (created if missing). Repositories, node_modules, .git metadata and symlinks are excluded. Secrets and conversation history are included—anyone with repo access can read them.</p></section>
+                <section class="github-sync" data-sync="friday"><h3>GitHub sync</h3><form><label>Owner <input name="owner" required autocomplete="off"></label><label>Repository <input name="repo" required autocomplete="off"></label><button class="secondary" type="submit">Save</button><button class="secondary" type="button" data-sync-run>Sync now</button></form><p class="sync-status" role="status" aria-live="polite"></p><p class="sync-help">Syncs ~/.friday/ to a private GitHub repository (created if missing), including settings, credentials, and sessions. Repositories, memory/, node_modules, .git metadata, and symlinks are excluded. Secrets and conversation history are included—anyone with repo access can read them.</p></section>
               </div>
             </details>
             <details open class="settings-group pi-settings-group">
@@ -297,9 +316,25 @@
           </div>
         </section>
       </main>
+      <aside id="assistant-rail" class="assistant-rail" aria-label="Friday assistant"></aside>
     </div>
 
     <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+    <div id="shell-backdrop" class="drawer-backdrop shell-backdrop" hidden></div>
+    <nav class="shell-mobile-shortcuts" aria-label="Mobile shortcuts">
+      <button type="button" data-navigate="dashboard" data-shell-shortcut><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg>Home</button>
+      <button type="button" data-navigate="pi" data-shell-shortcut><span class="shortcut-pi" aria-hidden="true">π</span>Agents</button>
+      <button type="button" class="chat-tab" data-shell-drawer="assistant" aria-controls="assistant-rail" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3z"/></svg>Friday</button>
+      <button type="button" data-navigate="notes" data-shell-shortcut><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6l2 2 2-2h6v16h-6l-2 2-2-2H4zM12 6v16"/></svg>Knowledge</button>
+      <button type="button" data-shell-drawer="sidebar" aria-controls="workspace-sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>More</button>
+    </nav>
+    <dialog id="shell-command-dialog" aria-label="Search pages and commands">
+      <label class="sr-only" for="shell-command-input">Search pages and commands</label>
+      <input id="shell-command-input" type="search" placeholder="Where would you like to go?" autocomplete="off">
+      <div class="command-results"></div>
+      <p id="command-empty" hidden>No pages found. Try “files” or “agents”.</p>
+      <footer class="command-footer">↑ ↓ navigate &nbsp; ↵ open &nbsp; esc close<button class="text-button" type="button" id="command-close">Close</button></footer>
+    </dialog>
     <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
     <div id="announcement" class="sr-only" aria-live="polite" aria-atomic="true"></div>
     <script src="/app.js" type="module"></script>

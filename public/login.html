@@ -4,39 +4,95 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
-    <title>Sign in — Friday</title>
+    <meta name="theme-color" content="#0b0e11">
+    <title>Workspace locked — Friday</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
-      :root { color-scheme: dark; font: 16px system-ui, sans-serif; background: #09090b; color: #f4f4f5; }
+      :root {
+        color-scheme: dark;
+        font-family: "DM Sans", sans-serif;
+        background: #0b0e11;
+        color: #e8edf0;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+      }
       * { box-sizing: border-box; }
-      body { display: grid; min-height: 100vh; margin: 0; place-items: center; padding: 1rem; }
-      main { width: min(100%, 24rem); border: 1px solid #27272a; border-radius: 16px; background: #111114; padding: 2rem; box-shadow: 0 24px 80px #0008; }
-      .brand { margin: 0 0 .35rem; color: #c4b5fd; font-size: .8rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-      h1 { margin: 0; font-size: 1.6rem; }
-      p { color: #a1a1aa; line-height: 1.5; }
-      form { display: grid; gap: .75rem; margin-top: 1.5rem; }
-      label { font-size: .85rem; font-weight: 600; }
-      input, button { width: 100%; min-height: 2.8rem; border-radius: 9px; font: inherit; }
-      input { border: 1px solid #3f3f46; background: #18181b; color: #f4f4f5; padding: .65rem .75rem; }
-      input:focus { outline: 2px solid #8b5cf6; outline-offset: 1px; }
-      button { border: 0; background: #7c3aed; color: white; cursor: pointer; font-weight: 700; }
+      body {
+        display: grid;
+        min-height: 100vh;
+        min-height: 100svh;
+        margin: 0;
+        place-items: center;
+        padding: 1.5rem 1rem;
+        background: radial-gradient(ellipse at 50% 0%, #172027 0%, #0b0e11 65%);
+      }
+      main {
+        width: min(100%, 26rem);
+        border: 1px solid #252d35;
+        border-radius: 14px;
+        background: #11161b;
+        padding: clamp(1.5rem, 6vw, 2.25rem);
+        box-shadow: 0 24px 80px #0008;
+      }
+      .brand-row { display: flex; align-items: center; gap: .75rem; margin-bottom: 2.25rem; }
+      .logo {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        flex: none;
+        place-items: center;
+        border: 1px solid #426c73;
+        border-radius: 6px;
+        background: #152629;
+        color: #72d9e5;
+        font: 600 20px "Space Grotesk", sans-serif;
+        letter-spacing: -1px;
+      }
+      .brand { margin: 0; color: #e8edf0; font: 600 18px "Space Grotesk", sans-serif; letter-spacing: 2px; }
+      .eyebrow { margin: 0 0 .55rem; color: #72d9e5; font: 500 .7rem "IBM Plex Mono", monospace; letter-spacing: .12em; text-transform: uppercase; }
+      h1 { margin: 0; font: 600 clamp(1.65rem, 6vw, 1.9rem)/1.2 "Space Grotesk", sans-serif; letter-spacing: -.035em; }
+      .description { margin: .65rem 0 0; color: #a6b1b9; line-height: 1.55; }
+      form { display: grid; gap: .7rem; margin-top: 1.75rem; }
+      label { color: #d7dfe4; font-size: .85rem; font-weight: 600; }
+      input, button { width: 100%; min-height: 2.9rem; border-radius: 7px; font: inherit; }
+      input { border: 1px solid #35414a; background: #0b0e11; color: #e8edf0; padding: .7rem .8rem; }
+      input::placeholder { color: #71808a; }
+      input:focus-visible, button:focus-visible { outline: 2px solid #72d9e5; outline-offset: 3px; }
+      button { margin-top: .35rem; border: 1px solid #72d9e5; background: #72d9e5; color: #0b0e11; cursor: pointer; font-weight: 700; transition: background-color .15s ease, border-color .15s ease; }
+      button:hover:not(:disabled) { border-color: #a0edf4; background: #a0edf4; }
       button:disabled { cursor: wait; opacity: .65; }
-      #login-toast { position: fixed; z-index: 2; top: 1rem; left: 50%; transform: translateX(-50%); border: 1px solid #6b5ca5; border-radius: 10px; background: #201b32; box-shadow: 0 8px 24px #0008; color: #ddd6fe; padding: .7rem 1rem; font-size: .9rem; }
+      #login-toast { position: fixed; z-index: 2; top: 1rem; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 2rem); border: 1px solid #72d9e5; border-radius: 8px; background: #11161b; box-shadow: 0 8px 24px #0008; color: #baf3f7; padding: .7rem 1rem; font-size: .9rem; }
       #login-toast[hidden] { display: none; }
-      #error { min-height: 1.3rem; margin: 0; color: #fda4af; font-size: .85rem; }
+      #error { min-height: 1.3rem; margin: 0; color: #ff9c9c; font-size: .85rem; }
+      @media (max-height: 480px) and (orientation: landscape) {
+        body { place-items: start center; padding-block: 1rem; }
+        main { padding: 1.25rem 1.5rem; }
+        .brand-row { margin-bottom: 1.25rem; }
+        form { margin-top: 1rem; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+      }
     </style>
     <script src="/login.js" defer></script>
   </head>
   <body>
     <div id="login-toast" role="status" aria-live="polite" hidden>Login required</div>
     <main>
-      <p class="brand">Friday</p>
-      <h1>Sign in</h1>
-      <p>Enter your password to continue.</p>
+      <header class="brand-row">
+        <span class="logo" aria-hidden="true">Fr</span>
+        <p class="brand">FRIDAY</p>
+      </header>
+      <p class="eyebrow">Private workspace</p>
+      <h1>Workspace locked</h1>
+      <p class="description">Enter your password to unlock your Friday workspace.</p>
       <form id="login-form">
         <label for="password">Password</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+        <input id="password" name="password" type="password" autocomplete="current-password" aria-describedby="error" required autofocus>
         <p id="error" role="alert" aria-live="polite"></p>
-        <button type="submit">Sign in</button>
+        <button type="submit">Unlock workspace</button>
       </form>
     </main>
   </body>

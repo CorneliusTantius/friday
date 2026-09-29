@@ -34,7 +34,7 @@ const featureViews = new Map([
   ['friday', $('#friday-feature')],
   ['pi', $('#pi-feature')],
   ['files', $('#files-feature')], ['pi-files', $('#files-feature')],
-  ['repos', $('#repos-feature')], ['pi-repos', $('#pi-repos-feature')], ['notes', $('#notes-feature')],
+  ['repos', $('#repos-feature')], ['pi-repos', $('#repos-feature')], ['notes', $('#notes-feature')],
   ['finances', $('#finances-feature')],
   ['dashboard', $('#dashboard-feature')], ['settings', $('#settings-feature')], ['friday-settings', $('#settings-feature')], ['pi-settings', $('#settings-feature')],
 ]);
@@ -49,6 +49,8 @@ if (requestedFeature) {
 
 const state = {
   activeFeature: initialFeature,
+  fileFeature: initialFeatureName === 'pi-files' ? 'pi-files' : initialFeatureName === 'files' ? 'files' : sessionStorage.getItem('friday-files-scope') === 'pi' ? 'pi-files' : 'files',
+  repoFeature: initialFeatureName === 'pi-repos' ? 'pi-repos' : initialFeatureName === 'repos' ? 'repos' : sessionStorage.getItem('friday-repos-scope') === 'pi' ? 'pi-repos' : 'repos',
   activeModel: '',
   activeThinkingLevel: 'off',
   agentBusy: false,
@@ -1278,7 +1280,7 @@ function renderRepos(list, repos, scope) {
       } catch (error) {
         if (!isAbort(error)) toast(error.message, 'error');
       } finally {
-        try { if (scope === 'pi') await loadPiRepos(); else await loadRepos(); }
+        try { await loadRepos(scope); }
         catch (error) { if (!isAbort(error)) toast(error.message, 'error'); }
       }
     });
@@ -1287,14 +1289,11 @@ function renderRepos(list, repos, scope) {
   }
 }
 
-async function loadRepos() {
-  const data = await apiJson('/api/repos', {}, 'repos');
-  renderRepos($('#repo-list'), data.repos || [], 'friday');
-}
-
-async function loadPiRepos() {
-  const data = await apiJson('/api/pi/repos', {}, 'pi-repos');
-  renderRepos($('#pi-repo-list'), data.repos || [], 'pi');
+async function loadRepos(scope = state.repoFeature === 'pi-repos' ? 'pi' : 'friday') {
+  const key = scope === 'pi' ? 'pi-repos' : 'repos';
+  const data = await apiJson(scope === 'pi' ? '/api/pi/repos' : '/api/repos', {}, key);
+  if ((state.repoFeature === 'pi-repos') !== (scope === 'pi')) return;
+  renderRepos($('#repo-list'), data.repos || [], scope);
 }
 
 async function loadNotes() {
@@ -1503,70 +1502,133 @@ for (const panel of document.querySelectorAll('[data-sync]')) {
 }
 
 function renderDashboardCard(label, value, detail = '') {
-  const card = document.createElement('article'); card.className = 'setting-card dashboard-card';
-  const title = document.createElement('span'); title.className = 'setting-label'; title.textContent = label;
-  const main = document.createElement('strong'); main.className = 'dashboard-value'; main.textContent = value;
+  const card = document.createElement('article'); card.className = 'dashboard-metric';
+  const title = document.createElement('span'); title.className = 'dashboard-metric-label'; title.textContent = label;
+  const main = document.createElement('strong'); main.className = 'dashboard-metric-value'; main.textContent = value;
   card.append(title, main);
-  if (detail) { const note = document.createElement('span'); note.className = 'setting-value'; note.textContent = detail; card.append(note); }
-  $('#dashboard-cards').append(card);
+  if (detail) { const note = document.createElement('span'); note.className = 'dashboard-metric-detail'; note.textContent = detail; card.append(note); }
   return card;
 }
 
 function renderMemoryGraphCard(graph) {
   const nodes = graph?.nodes || [];
   const edges = graph?.edges || [];
-  const card = renderDashboardCard('Memory graph', graph ? `${nodes.length} notes` : 'Unavailable', graph ? `${graph.totalDailyNotes || 0} daily · ${edges.length} links${graph.truncated ? ' · recent 40 shown' : ''}` : 'Could not load memory graph');
-  card.classList.add('dashboard-memory-card');
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 320 150'); svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', `Memory graph with ${nodes.length} notes and ${edges.length} links`);
-  const title = document.createElementNS(svg.namespaceURI, 'title'); title.textContent = 'Memory graph'; svg.append(title);
-  const byId = new Map(nodes.map((node, index) => {
-    const angle = -Math.PI / 2 + (2 * Math.PI * index / Math.max(nodes.length, 1));
-    const radius = nodes.length < 2 ? 0 : Math.min(57, 16 + nodes.length * 1.1);
-    return [node.id, { ...node, x: 160 + Math.cos(angle) * radius, y: 73 + Math.sin(angle) * radius }];
-  }));
-  for (const edge of edges) {
-    const from = byId.get(edge.source); const to = byId.get(edge.target);
-    if (!from || !to) continue;
-    const line = document.createElementNS(svg.namespaceURI, 'line');
-    line.setAttribute('x1', from.x); line.setAttribute('y1', from.y); line.setAttribute('x2', to.x); line.setAttribute('y2', to.y); line.classList.add('memory-graph-edge'); svg.append(line);
-  }
-  for (const node of byId.values()) {
-    const group = document.createElementNS(svg.namespaceURI, 'g'); group.classList.add('memory-graph-node');
-    const circle = document.createElementNS(svg.namespaceURI, 'circle'); circle.setAttribute('cx', node.x); circle.setAttribute('cy', node.y); circle.setAttribute('r', node.type === 'curated' ? 7 : 4.5); circle.classList.add(node.type === 'curated' ? 'curated' : 'daily');
-    const label = document.createElementNS(svg.namespaceURI, 'title'); label.textContent = node.label; circle.append(label); group.append(circle);
-    if (nodes.length <= 8 || node.type === 'curated') {
-      const text = document.createElementNS(svg.namespaceURI, 'text'); text.setAttribute('x', node.x); text.setAttribute('y', node.y + 15); text.textContent = node.type === 'curated' ? 'Memory' : node.label.slice(5); group.append(text);
+  const card = document.createElement('section'); card.className = 'dashboard-panel dashboard-memory-card';
+  const heading = document.createElement('h2'); heading.className = 'dashboard-panel-heading'; heading.textContent = 'Memory graph';
+  const summary = document.createElement('p'); summary.textContent = graph ? `${nodes.length} notes · ${graph.totalDailyNotes || 0} daily · ${edges.length} links${graph.truncated ? ' · recent 40 shown' : ''}` : 'Unavailable';
+  card.append(heading, summary);
+  if (graph) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 320 150'); svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', `Memory graph with ${nodes.length} notes and ${edges.length} links`);
+    const byId = new Map(nodes.map((node, index) => {
+      const angle = -Math.PI / 2 + 2 * Math.PI * index / Math.max(nodes.length, 1);
+      const radius = nodes.length < 2 ? 0 : Math.min(57, 16 + nodes.length * 1.1);
+      return [node.id, { ...node, x: 160 + Math.cos(angle) * radius, y: 73 + Math.sin(angle) * radius }];
+    }));
+    for (const edge of edges) {
+      const from = byId.get(edge.source); const to = byId.get(edge.target);
+      if (!from || !to) continue;
+      const line = document.createElementNS(svg.namespaceURI, 'line');
+      line.setAttribute('x1', from.x); line.setAttribute('y1', from.y); line.setAttribute('x2', to.x); line.setAttribute('y2', to.y); line.classList.add('memory-graph-edge'); svg.append(line);
     }
-    svg.append(group);
+    for (const node of byId.values()) {
+      const circle = document.createElementNS(svg.namespaceURI, 'circle'); circle.setAttribute('cx', node.x); circle.setAttribute('cy', node.y); circle.setAttribute('r', node.type === 'curated' ? 7 : 4.5); circle.classList.add('memory-graph-node', node.type === 'curated' ? 'curated' : 'daily');
+      const title = document.createElementNS(svg.namespaceURI, 'title'); title.textContent = node.label; circle.append(title); svg.append(circle);
+    }
+    if (!nodes.length) { const empty = document.createElementNS(svg.namespaceURI, 'text'); empty.setAttribute('x', '160'); empty.setAttribute('y', '78'); empty.setAttribute('text-anchor', 'middle'); empty.textContent = 'No memory notes yet'; svg.append(empty); }
+    card.append(svg);
   }
-  if (!nodes.length) {
-    const empty = document.createElementNS(svg.namespaceURI, 'text'); empty.setAttribute('x', '160'); empty.setAttribute('y', '78'); empty.setAttribute('text-anchor', 'middle'); empty.textContent = 'No memory notes yet'; svg.append(empty);
-  }
-  card.append(svg);
   const review = document.createElement('button'); review.type = 'button'; review.className = 'memory-graph-review'; review.textContent = 'Browse memory';
-  review.addEventListener('click', () => { state.files.files.path = 'memory'; void setFeature('files'); });
+  review.addEventListener('click', () => { state.fileFeature = 'files'; state.files.files.path = 'memory'; void setFeature('files'); });
   card.append(review);
+  return card;
 }
 
+let dashboardLoadSequence = 0;
 async function loadDashboard() {
-  const cards = $('#dashboard-cards'); cards.replaceChildren();
+  const sequence = ++dashboardLoadSequence;
+  const cards = $('#dashboard-cards');
   const results = await Promise.allSettled([
-    apiJson('/api/friday/status'), apiJson('/api/status'), apiJson('/api/system/settings'), apiJson('/api/devices'), apiJson('/api/friday/memory/graph'),
+    apiJson('/api/friday/status'), apiJson('/api/status'), apiJson('/api/system/settings'), apiJson('/api/devices'), apiJson('/api/friday/memory/graph'), apiJson('/api/finances'),
   ]);
-  const [friday, pi, system, devices, memoryGraph] = results.map((result) => result.status === 'fulfilled' ? result.value : null);
-  renderDashboardCard('Friday Agent', friday ? (friday.busy ? 'Working' : friday.running ? 'Ready' : 'Standby') : 'Unavailable', friday?.model?.name || 'General chat');
-  renderDashboardCard('Pi Agent', pi ? (pi.busy ? 'Working' : pi.piRunning ? 'Ready' : 'Standby') : 'Unavailable', pi?.workspace || 'Workspace unavailable');
-  const usage = pi?.contextUsage;
-  renderDashboardCard('Pi context', usage ? `${Math.round(usage.percent ?? usage.percentage ?? 0)}% used` : 'Unavailable');
-  if (friday) {
-    const fUsage = friday.contextUsage;
-    renderDashboardCard('Friday context', fUsage ? `${Math.round(fUsage.percent ?? fUsage.percentage ?? 0)}% used` : 'Unavailable');
+  if (sequence !== dashboardLoadSequence) return;
+  const [friday, pi, system, devices, memoryGraph, finances] = results.map((result) => result.status === 'fulfilled' ? result.value : null);
+  const page = document.createElement('div'); page.className = 'dashboard-content';
+  const header = $('#dashboard-feature .page-header');
+  const dateText = new Date().toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  header.querySelector('.eyebrow').textContent = dateText;
+  header.querySelector('h1').textContent = `${new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 18 ? 'Good afternoon' : 'Good evening'}.`;
+  header.querySelector('p').textContent = 'Your connected workspace, at a glance.';
+  const hero = document.createElement('section'); hero.className = 'dashboard-hero';
+  const copy = document.createElement('div'); copy.className = 'dashboard-hero-copy';
+  const eyebrow = document.createElement('span'); eyebrow.className = 'eyebrow'; eyebrow.textContent = 'YOUR WORLD, CONNECTED';
+  const title = document.createElement('h2'); title.innerHTML = 'A clear mind.<br><span>A connected workspace.</span>';
+  const description = document.createElement('p'); description.textContent = 'Your agents, ideas, and everyday work. One place to find your focus and make room for what comes next.';
+  const actions = document.createElement('div'); actions.className = 'dashboard-actions';
+  for (const [label, feature] of [['Open workspace', 'pi'], ['Ask Friday', 'friday']]) {
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.addEventListener('click', () => { if (feature === 'friday') workspaceShell.openAssistant(); else void setFeature(feature); }); actions.append(button);
   }
-  renderDashboardCard('Host resources', system ? formatUsage(system.systemUsage) : 'Unavailable', system ? `${system.host}:${system.port}` : '');
-  renderDashboardCard('Devices', devices ? `${devices.devices?.filter((device) => device.online).length || 0} online` : 'Unavailable', devices ? `${devices.devices?.length || 0} visible` : '');
-  renderMemoryGraphCard(memoryGraph);
+  copy.append(eyebrow, title, description, actions);
+  const orbit = document.createElement('div'); orbit.className = 'dashboard-orbit'; orbit.setAttribute('aria-hidden', 'true'); orbit.innerHTML = '<svg viewBox="0 0 240 240"><defs><radialGradient id="dashboard-orb"><stop stop-color="#72d9e5" stop-opacity=".15"/><stop offset="1" stop-color="#72d9e5" stop-opacity="0"/></radialGradient></defs><circle cx="120" cy="120" r="104" fill="url(#dashboard-orb)"/><g fill="none" stroke="currentColor"><circle cx="120" cy="120" r="94" stroke-opacity=".1"/><g class="orbit-rotate"><circle cx="120" cy="120" r="85" stroke-opacity=".3" stroke-dasharray="1 8"/><path d="M120 25a95 95 0 0 1 95 95M120 215a95 95 0 0 1-95-95" stroke-opacity=".55"/><circle cx="120" cy="25" r="3" fill="currentColor" stroke="none"/></g><g class="orbit-rotate orbit-reverse"><circle cx="120" cy="120" r="66" stroke-opacity=".35" stroke-dasharray="70 14 5 14"/><path d="m120 51 60 34v70l-60 34-60-34V85Z" stroke-opacity=".13"/></g><circle cx="120" cy="120" r="49" stroke-opacity=".2"/><path d="M120 65v15m0 80v15M65 120h15m80 0h15" stroke-opacity=".55"/></g><g class="orbit-breathe" fill="none" stroke="currentColor"><path d="m120 92 7.5 20.5L148 120l-20.5 7.5L120 148l-7.5-20.5L92 120l20.5-7.5Z" stroke-width="1.4"/><circle cx="120" cy="120" r="5" fill="currentColor" opacity=".4"/></g><text x="120" y="228" fill="currentColor" opacity=".6" text-anchor="middle" font-size="6" font-family="monospace" letter-spacing="3">FRIDAY NEURAL CORE</text></svg>';
+  hero.append(copy, orbit);
+  const metrics = document.createElement('section'); metrics.className = 'dashboard-metrics';
+  const metricItems = [
+    ['Active agents', friday && pi ? `${Number(friday.busy === true) + Number(pi.busy === true)} / 2` : 'Unavailable', 'Friday + Pi runtimes'],
+    ['Host CPU', Number.isFinite(system?.systemUsage?.cpuPercent) ? `${system.systemUsage.cpuPercent.toFixed(1)}%` : 'Unavailable', system?.host || 'CPU usage'],
+    ['Monthly expenses', finances && Array.isArray(finances.entries) ? money(finances.entries.filter((entry) => entry.type === 'expense' && entry.date >= financeSummaryRange(1).start && entry.date <= financeSummaryRange(1).end).reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0)) : 'Unavailable', 'Past month · IDR'],
+    ['Memory notes', memoryGraph ? String(memoryGraph.nodes?.length || 0) : 'Unavailable', 'Friday memory'],
+  ];
+  for (const item of metricItems) metrics.append(renderDashboardCard(...item));
+  const columns = document.createElement('div'); columns.className = 'dashboard-columns';
+  const agents = document.createElement('section'); agents.className = 'dashboard-panel';
+  const agentsHeading = document.createElement('h2'); agentsHeading.className = 'dashboard-panel-heading'; agentsHeading.textContent = 'Your agents'; agents.append(agentsHeading);
+  for (const [label, data, model, usage, feature] of [['Friday', friday, friday?.model?.name || friday?.model?.id || 'Model unavailable', friday?.contextUsage, 'friday'], ['Pi', pi, pi?.workspace || 'Workspace unavailable', pi?.contextUsage, 'pi']]) {
+    const row = document.createElement('div'); row.className = 'dashboard-agent-row';
+    const avatar = document.createElement('span'); avatar.className = 'dashboard-agent-avatar'; avatar.textContent = label === 'Friday' ? 'F' : 'π';
+    const name = document.createElement('strong'); name.textContent = label;
+    const stateText = document.createElement('span'); stateText.className = 'dashboard-status'; stateText.textContent = !data ? 'Unavailable' : data.busy ? 'Working' : (label === 'Friday' ? data.running : data.piRunning) === false ? 'Standby' : 'Ready';
+    const info = document.createElement('small'); info.textContent = model;
+    const pct = Number.isFinite(usage?.percent) ? usage.percent : Number.isFinite(usage?.tokens) && usage.contextWindow ? usage.tokens / usage.contextWindow * 100 : null;
+    const progress = document.createElement('progress'); progress.max = 100; progress.value = pct === null ? 0 : Math.max(0, Math.min(100, pct)); progress.setAttribute('aria-label', `${label} context usage`); progress.setAttribute('aria-valuetext', pct === null ? 'Unavailable' : `${pct.toFixed(1)} percent`);
+    const context = document.createElement('small'); context.textContent = pct === null ? 'Context unavailable' : `${pct.toFixed(1)}% context used`;
+    const open = document.createElement('button'); open.type = 'button'; open.textContent = 'Open chat'; open.setAttribute('aria-label', `Open ${label} chat`); open.addEventListener('click', () => void setFeature(feature));
+    row.append(avatar, name, stateText, info, progress, context, open); agents.append(row);
+  }
+  const resources = document.createElement('section'); resources.className = 'dashboard-panel';
+  const resourceHeading = document.createElement('h2'); resourceHeading.className = 'dashboard-panel-heading'; resourceHeading.textContent = 'Host resources'; resources.append(resourceHeading);
+  const resourceDetail = document.createElement('p'); resourceDetail.textContent = `${devices ? `${(devices.devices || []).length} visible devices` : 'Device count unavailable'} · ${system?.host ? `Host: ${system.host}` : 'Host unavailable'}`; resources.append(resourceDetail);
+  for (const [label, value] of [['CPU', system?.systemUsage?.cpuPercent], ['RAM', system?.systemUsage?.memoryPercent]]) {
+    const wrap = document.createElement('div'); wrap.className = 'dashboard-resource-gauge'; const text = document.createElement('label'); text.textContent = `${label}: ${Number.isFinite(value) ? `${value}%` : 'Unavailable'}`; const gauge = document.createElement('progress'); gauge.max = 100; gauge.value = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0; gauge.setAttribute('aria-label', `${label} usage`); gauge.setAttribute('aria-valuetext', Number.isFinite(value) ? `${value}%` : 'Unavailable'); wrap.append(text, gauge); resources.append(wrap);
+  }
+  const memory = renderMemoryGraphCard(memoryGraph);
+  const finance = document.createElement('section'); finance.className = 'dashboard-panel dashboard-finance';
+  const financeHeading = document.createElement('h2'); financeHeading.className = 'dashboard-panel-heading'; financeHeading.textContent = 'Financial snapshot'; finance.append(financeHeading);
+  if (finances && Array.isArray(finances.entries)) {
+    const range = financeSummaryRange(1); const entries = finances.entries.filter((entry) => entry.date >= range.start && entry.date <= range.end);
+    const totals = entries.reduce((sum, entry) => { if (entry.type === 'expense') sum.expense += Number(entry.amount) || 0; else sum.income += Number(entry.amount) || 0; return sum; }, { income: 0, expense: 0 });
+    const amount = document.createElement('strong'); amount.textContent = money(totals.income - totals.expense); finance.append(amount);
+    const detail = document.createElement('p'); detail.textContent = `${range.start} – ${range.end} · Income ${money(totals.income)} · Expenses ${money(totals.expense)}`; finance.append(detail);
+    if (entries.length) {
+      const daily = new Map();
+      for (const entry of entries) daily.set(entry.date, (daily.get(entry.date) || 0) + (entry.type === 'income' ? entry.amount : -entry.amount));
+      let balance = 0;
+      const points = [0, ...[...daily].sort(([a], [b]) => a.localeCompare(b)).map(([, change]) => balance += change)];
+      const min = Math.min(...points), max = Math.max(...points);
+      const chart = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      chart.classList.add('dashboard-finance-chart'); chart.setAttribute('viewBox', '0 0 300 95'); chart.setAttribute('preserveAspectRatio', 'none'); chart.setAttribute('role', 'img'); chart.setAttribute('aria-label', 'Cumulative net income and expenses for the past month');
+      const line = document.createElementNS(chart.namespaceURI, 'polyline');
+      line.setAttribute('points', points.map((value, i) => `${i / (points.length - 1) * 300},${80 - (value - min) / (max - min || 1) * 65}`).join(' '));
+      line.setAttribute('fill', 'none'); line.setAttribute('stroke', 'var(--accent)'); line.setAttribute('stroke-width', '1.8'); line.setAttribute('vector-effect', 'non-scaling-stroke'); chart.append(line); finance.append(chart);
+    }
+    const openFinance = document.createElement('button'); openFinance.type = 'button'; openFinance.className = 'memory-graph-review'; openFinance.textContent = 'View transactions →'; openFinance.addEventListener('click', () => void setFeature('finances')); finance.append(openFinance);
+  } else { const unavailable = document.createElement('p'); unavailable.textContent = 'Financial data unavailable'; finance.append(unavailable); }
+  const left = document.createElement('div'); left.className = 'dashboard-stack'; left.append(agents, memory);
+  const right = document.createElement('div'); right.className = 'dashboard-stack'; right.append(finance, resources);
+  columns.append(left, right);
+  const footer = document.createElement('footer'); footer.className = 'dashboard-footer'; footer.innerHTML = '<span>FRIDAY OS / A SPACE FOR YOUR MIND.</span><span>LOCAL-FIRST · HUMAN-CENTERED</span>';
+  page.append(hero, metrics, columns, footer);
+  cards.replaceChildren(page);
 }
 
 async function loadSettings() {
@@ -1751,26 +1813,219 @@ async function addFinance(event) {
   } catch (error) { toast(error.message, 'error'); }
 }
 
+function initializeWorkspaceShell({ navigate, getFeature }) {
+  const shell = $('.workspace-shell');
+  const sidebar = $('#workspace-sidebar');
+  const assistant = $('#assistant-rail');
+  const chat = $('.friday-app');
+  const chatHome = document.createComment('Friday chat mount');
+  chat.before(chatHome);
+  const backdrop = $('#shell-backdrop');
+  const dialog = $('#shell-command-dialog');
+  const commandInput = $('#shell-command-input');
+  const commandResults = dialog.querySelector('.command-results');
+  let drawer = null;
+  let returnFocus = null;
+  const narrowSidebar = matchMedia('(max-width: 600px)');
+  const narrowAssistant = matchMedia('(max-width: 1170px)');
+  const isDrawer = (element) => element === sidebar ? narrowSidebar.matches : narrowAssistant.matches;
+  const focusable = (element) => [...element.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),textarea:not(:disabled),select:not(:disabled),[tabindex="0"]')]
+    .filter((item) => item.getClientRects().length && !item.closest('[inert]'));
+  function sync() {
+    const fullChat = getFeature() === 'friday';
+    assistant.hidden = fullChat;
+    for (const element of [sidebar, assistant]) {
+      const closed = isDrawer(element) && drawer !== element;
+      element.inert = closed || (element === assistant && fullChat);
+      if (element.inert) element.setAttribute('aria-hidden', 'true');
+      else element.removeAttribute('aria-hidden');
+    }
+    // Off-canvas surfaces are modal; background controls must not receive focus.
+    $('#main-content').inert = !!drawer;
+    $('.workspace-topbar').inert = !!drawer;
+    $('.shell-mobile-shortcuts').inert = !!drawer;
+    if (drawer && drawer !== sidebar) sidebar.inert = true;
+    if (drawer && drawer !== assistant) assistant.inert = true;
+    for (const button of document.querySelectorAll('[data-shell-drawer]')) {
+      const target = button.dataset.shellDrawer === 'sidebar' ? sidebar : assistant;
+      button.setAttribute('aria-expanded', String(drawer === target));
+    }
+  }
+  function close(restore = true) {
+    if (!drawer) return;
+    drawer.classList.remove('shell-drawer-open');
+    drawer.removeAttribute('role');
+    drawer.removeAttribute('aria-modal');
+    drawer = null;
+    backdrop.hidden = true;
+    sync();
+    if (restore && returnFocus?.isConnected && !returnFocus.closest('[inert]')) returnFocus.focus();
+    returnFocus = null;
+  }
+  function open(element, trigger = document.activeElement) {
+    if (element === assistant && getFeature() === 'friday') {
+      $('#friday-message').focus();
+      return;
+    }
+    if (!isDrawer(element)) {
+      (element === assistant ? $('#friday-message') : focusable(sidebar)[0])?.focus();
+      return;
+    }
+    close(false);
+    closeDrawer();
+    returnFocus = trigger;
+    drawer = element;
+    element.classList.add('shell-drawer-open');
+    element.setAttribute('role', 'dialog');
+    element.setAttribute('aria-modal', 'true');
+    backdrop.hidden = false;
+    sync();
+    (element === assistant ? $('#friday-message') : focusable(element)[0])?.focus();
+  }
+  for (const button of document.querySelectorAll('[data-navigate]')) {
+    button.addEventListener('click', () => { close(false); void navigate(button.dataset.navigate); });
+  }
+  for (const button of document.querySelectorAll('[data-shell-drawer]')) {
+    button.addEventListener('click', () => open(button.dataset.shellDrawer === 'sidebar' ? sidebar : assistant, button));
+  }
+  for (const button of document.querySelectorAll('[data-shell-close]')) button.addEventListener('click', () => close());
+  backdrop.addEventListener('click', () => close());
+  document.addEventListener('friday:drawer-open', () => close(false));
+  const commands = featureButtons.map((button) => ({ feature: button.dataset.feature, label: button.textContent.trim(), icon: button.querySelector('svg')?.cloneNode(true) }));
+  function renderCommands() {
+    commandResults.replaceChildren();
+    for (const command of commands.filter((item) => `${item.label} ${item.feature}`.toLowerCase().includes(commandInput.value.trim().toLowerCase()))) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.dataset.commandFeature = command.feature;
+      if (command.icon) button.append(command.icon.cloneNode(true));
+      const label = document.createElement('span'); label.textContent = command.label;
+      const hint = document.createElement('small'); hint.textContent = 'GO TO ↗';
+      button.append(label, hint);
+      button.addEventListener('click', () => { dialog.close(); void navigate(command.feature); });
+      commandResults.append(button);
+    }
+    $('#command-empty').hidden = commandResults.children.length > 0;
+  }
+  function openCommands() {
+    close(); closeDrawer();
+    commandInput.value = ''; renderCommands();
+    if (!dialog.open) dialog.showModal();
+    commandInput.focus();
+  }
+  $('#shell-command-trigger').addEventListener('click', openCommands);
+  $('#command-close').addEventListener('click', () => dialog.close());
+  commandInput.addEventListener('input', renderCommands);
+  dialog.addEventListener('click', (event) => {
+    if (event.target !== dialog) return;
+    const bounds = dialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close();
+  });
+  document.addEventListener('keydown', (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      if (dialog.open) dialog.close(); else openCommands();
+    } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'j' && !dialog.open) {
+      event.preventDefault();
+      if (drawer === assistant) close(); else open(assistant);
+    } else if (event.key === 'Escape' && !dialog.open) close();
+    if (dialog.open) {
+      const buttons = [...commandResults.children];
+      const current = buttons.indexOf(document.activeElement);
+      if (buttons.length && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
+        event.preventDefault();
+        const next = event.key === 'ArrowDown' ? (current + 1) % buttons.length : current <= 0 ? buttons.length - 1 : current - 1;
+        buttons[next].focus();
+      } else if (event.key === 'Enter' && document.activeElement === commandInput) {
+        event.preventDefault(); buttons[0]?.click();
+      }
+    } else if (drawer && event.key === 'Tab') {
+      const items = focusable(drawer);
+      if (!items.length) return;
+      if (event.shiftKey && document.activeElement === items[0]) { event.preventDefault(); items.at(-1).focus(); }
+      else if (!event.shiftKey && document.activeElement === items.at(-1)) { event.preventDefault(); items[0].focus(); }
+    }
+  });
+  for (const query of [narrowSidebar, narrowAssistant]) query.addEventListener('change', () => { close(false); sync(); });
+  return {
+    openAssistant() { open(assistant); },
+    updateFeature(name) {
+      close(false);
+      shell.dataset.feature = name;
+      const focusedChat = chat.contains(document.activeElement) ? document.activeElement : null;
+      const scroll = $('#friday-messages').scrollTop;
+      if (name === 'friday' && chat.parentElement !== chatHome.parentElement) chatHome.after(chat);
+      else if (name !== 'friday' && chat.parentElement !== assistant) assistant.append(chat);
+      sync();
+      $('#friday-messages').scrollTop = scroll;
+      if (focusedChat && !focusedChat.closest('[inert]')) focusedChat.focus({ preventScroll: true });
+      for (const button of document.querySelectorAll('[data-shell-shortcut]')) {
+        const active = button.dataset.navigate === name;
+        button.classList.toggle('active', active);
+        if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
+      }
+    },
+  };
+}
+
+function updateTopbar(name = state.activeFeature) {
+  const labels = { dashboard: 'Dashboard', friday: 'Friday Agent', pi: 'Pi Agent', notes: 'Notes', finances: 'Finances', settings: 'System' };
+  const label = name === 'files' || name === 'pi-files' ? `Files · ${name === 'files' ? 'Friday' : 'Pi'}`
+    : name === 'repos' || name === 'pi-repos' ? `Repositories · ${name === 'repos' ? 'Friday' : 'Pi'}` : labels[name] || 'Workspace';
+  $('#topbar-page').textContent = label;
+}
+
+function selectFileScope(scope) {
+  if (scope === state.fileFeature) return;
+  if (['files', 'pi-files'].includes(state.activeFeature) && !confirmDiscardFileChanges()) return;
+  state.fileFeature = scope;
+  void setFeature(scope);
+}
+
+function syncScopeSelectors() {
+  for (const button of document.querySelectorAll('[data-file-scope]')) {
+    const selected = button.dataset.fileScope === state.fileFeature;
+    button.classList.toggle('selected', selected); button.setAttribute('aria-pressed', String(selected));
+  }
+  for (const button of document.querySelectorAll('[data-repo-scope]')) {
+    const selected = button.dataset.repoScope === (state.repoFeature === 'pi-repos' ? 'pi' : 'friday');
+    button.classList.toggle('selected', selected); button.setAttribute('aria-pressed', String(selected));
+  }
+  const piRepos = state.repoFeature === 'pi-repos';
+  $('#repo-page-title').textContent = piRepos ? 'Pi repositories' : 'Friday repositories';
+  $('#repo-page-description').textContent = `${piRepos ? 'Pi' : 'Friday'} workspace repositories.`;
+  $('#clone-repo-url').setAttribute('aria-label', `${piRepos ? 'Pi' : 'Friday'} repository Git URL`);
+}
+
 async function setFeature(name) {
   if (name === 'friday-settings' || name === 'pi-settings') name = 'settings';
+  if (name === 'files') name = state.fileFeature;
+  else if (name === 'pi-files') state.fileFeature = 'pi-files';
+  if (name === 'repos') name = state.repoFeature;
+  else if (name === 'pi-repos') state.repoFeature = 'pi-repos';
+  if (name === state.activeFeature && ['files', 'pi-files'].includes(name) && !elements.fileEditorLayout.hidden) return;
+  if (['files', 'pi-files'].includes(state.activeFeature) && !['files', 'pi-files'].includes(name) && !confirmDiscardFileChanges()) return;
   if (!featureViews.has(name)) return;
   state.activeFeature = name;
+  sessionStorage.setItem('friday-files-scope', state.fileFeature === 'pi-files' ? 'pi' : 'friday');
+  sessionStorage.setItem('friday-repos-scope', state.repoFeature === 'pi-repos' ? 'pi' : 'friday');
+  syncScopeSelectors(); updateTopbar(name);
   closeDrawer();
+  const primaryName = name === 'pi-files' ? 'files' : name === 'pi-repos' ? 'repos' : name;
   for (const button of featureButtons) {
-    const active = button.dataset.feature === name; button.classList.toggle('active', active);
+    const active = button.dataset.feature === primaryName; button.classList.toggle('active', active);
     if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
   for (const view of new Set(featureViews.values())) {
     const visible = view === $('#dashboard-feature') ? name === 'dashboard'
       : view === $('#settings-feature') ? name === 'settings'
       : view === $('#files-feature') ? ['files', 'pi-files'].includes(name)
-        : view === $('#repos-feature') ? name === 'repos'
-          : view === $('#pi-repos-feature') ? name === 'pi-repos'
-            : view === $('#pi-feature') ? name === 'pi'
-              : view === $('#notes-feature') ? name === 'notes'
-                : view === $('#finances-feature') ? name === 'finances' : name === 'friday';
+        : view === $('#repos-feature') ? ['repos', 'pi-repos'].includes(name)
+          : view === $('#pi-feature') ? name === 'pi'
+            : view === $('#notes-feature') ? name === 'notes'
+              : view === $('#finances-feature') ? name === 'finances' : name === 'friday';
     view.hidden = !visible;
   }
+  workspaceShell.updateFeature(name);
   $('#system-devices-view').hidden = false;
   try {
     if (name === 'friday') await Promise.all([fridayChat.start(), loadFridayPiConversations()]);
@@ -1779,23 +2034,26 @@ async function setFeature(name) {
       elements.fileTitle.textContent = 'File preview';
       elements.fileMeta.textContent = 'Select a text file to preview it.';
       elements.fileContent.textContent = '';
+      elements.fileContent.hidden = false;
+      elements.fileEditorLayout.hidden = true;
+      elements.fileEditActions.hidden = true;
       await loadFiles(state.files[name].path);
     }
     if (name === 'settings') await loadSettings(name);
     if (name === 'dashboard') await loadDashboard();
-    if (name === 'repos') await loadRepos();
-    if (name === 'pi-repos') await loadPiRepos();
+    if (name === 'repos' || name === 'pi-repos') await loadRepos(name === 'pi-repos' ? 'pi' : 'friday');
     if (name === 'notes') await loadNotes();
     if (name === 'finances') await loadFinances();
   } catch (error) {
     if (!isAbort(error)) {
-      if (error.message.startsWith('Pi is not installed') && name.startsWith('pi')) location.assign('/pi-not-installed');
+      if (error.message.startsWith('Pi is not installed') && name === 'pi') location.assign('/pi-not-installed');
       else toast(error.message, 'error');
     }
   }
 }
 
 function openDrawer(id) {
+  document.dispatchEvent(new Event('friday:drawer-open'));
   closeDrawer();
   document.getElementById(id)?.classList.add('open');
   elements.drawerBackdrop.hidden = false;
@@ -1911,6 +2169,8 @@ $('#friday-refresh-sessions').addEventListener('click', () => void refreshFriday
 elements.fridayPiSessionsRefresh.addEventListener('click', () => void loadFridayPiConversations().catch((error) => toast(error.message, 'error')));
 elements.fridayPiSessionsToggle.addEventListener('click', () => void loadFridayPiConversations().catch((error) => toast(error.message, 'error')));
 elements.fridayReviewMemory.addEventListener('click', async () => {
+  if (['files', 'pi-files'].includes(state.activeFeature) && !confirmDiscardFileChanges()) return;
+  state.fileFeature = 'files';
   state.files.files.path = 'memory/daily';
   await setFeature('files');
 });
@@ -1921,6 +2181,12 @@ $('#friday-new-conversation').addEventListener('click', async () => {
 void refreshFridaySessions().catch((error) => toast(error.message, 'error'));
 
 for (const button of featureButtons) button.addEventListener('click', () => void setFeature(button.dataset.feature));
+for (const button of document.querySelectorAll('[data-file-scope]')) button.addEventListener('click', () => selectFileScope(button.dataset.fileScope));
+for (const button of document.querySelectorAll('[data-repo-scope]')) button.addEventListener('click', () => {
+  if ($('#clone-repo-form').dataset.busy) return;
+  state.repoFeature = button.dataset.repoScope === 'pi' ? 'pi-repos' : 'repos';
+  void setFeature(state.repoFeature);
+});
 for (const button of document.querySelectorAll('[data-open-drawer]')) button.addEventListener('click', () => openDrawer(button.dataset.openDrawer));
 for (const button of document.querySelectorAll('[data-close-drawer]')) button.addEventListener('click', closeDrawer);
 elements.drawerBackdrop.addEventListener('click', closeDrawer);
@@ -2206,13 +2472,15 @@ elements.logout.addEventListener('click', async () => {
   }
 });
 
+const workspaceShell = initializeWorkspaceShell({ navigate: setFeature, getFeature: () => state.activeFeature });
+syncScopeSelectors();
+updateTopbar();
 setConnection(navigator.onLine);
 updateControls();
 void fridayChat.start();
-if (state.activeFeature === 'friday') void loadFridayPiConversations().catch((error) => toast(error.message, 'error'));
-else void setFeature(state.activeFeature);
+void setFeature(state.activeFeature);
 
-function attachCloneForm(formId, progressId, endpoint, reload) {
+function attachCloneForm(formId, progressId) {
   const form = $(formId);
   const input = form.querySelector('input');
   const submit = form.querySelector('button[type="submit"]');
@@ -2220,26 +2488,28 @@ function attachCloneForm(formId, progressId, endpoint, reload) {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (submit.disabled) return;
+    const scope = state.repoFeature === 'pi-repos' ? 'pi' : 'friday';
     const url = input.value;
-    input.disabled = true;
-    submit.disabled = true;
+    form.dataset.busy = 'true';
+    input.disabled = submit.disabled = true;
+    document.querySelectorAll('[data-repo-scope]').forEach((button) => { button.disabled = true; });
     progress.hidden = false;
     try {
-      await apiJson(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
+      await apiJson(scope === 'pi' ? '/api/pi/repos' : '/api/repos', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
       input.value = '';
-      await reload();
+      await loadRepos(scope);
       toast('Repository cloned');
     } catch (error) {
       toast(error.message, 'error');
     } finally {
-      input.disabled = false;
-      submit.disabled = false;
+      delete form.dataset.busy;
+      input.disabled = submit.disabled = false;
+      document.querySelectorAll('[data-repo-scope]').forEach((button) => { button.disabled = false; });
       progress.hidden = true;
     }
   });
 }
-attachCloneForm('#clone-repo-form', '#friday-clone-progress', '/api/repos', loadRepos);
-attachCloneForm('#clone-pi-repo-form', '#pi-clone-progress', '/api/pi/repos', loadPiRepos);
+attachCloneForm('#clone-repo-form', '#repo-clone-progress');
 resetFinanceForm();
 elements.financeMonth.value = currentFinanceMonth();
 elements.financeSummaryPeriod.addEventListener('change', updateFinanceSummary);

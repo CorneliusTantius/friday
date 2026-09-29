@@ -62,7 +62,12 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   }
   await client.login();
   const appHtml = await (await request('/')).text();
-  assert.doesNotMatch(appHtml, /data-feature="(?:friday-settings|pi-settings)"/);
+  assert.doesNotMatch(appHtml, /data-feature="(?:friday-settings|pi-settings|pi-files|pi-repos)"/);
+  assert.equal((appHtml.match(/data-feature="files"/g) || []).length, 1, 'Files has one navigation entry');
+  assert.equal((appHtml.match(/data-feature="repos"/g) || []).length, 1, 'Repositories has one navigation entry');
+  assert.match(appHtml, /data-file-scope="files"[\s\S]*data-file-scope="pi-files"/);
+  assert.match(appHtml, /data-repo-scope="friday"[\s\S]*data-repo-scope="pi"/);
+  assert.doesNotMatch(appHtml, /id="pi-repos-feature"|id="pi-repo-list"|id="clone-pi-repo-form"/);
   assert.match(appHtml, /<details open class="settings-group friday-settings-group">/);
   assert.ok(appHtml.indexOf('data-feature="dashboard"') < appHtml.indexOf('Friday Agent'));
   assert.match(appHtml, /<h2 id="server-settings-heading">Server<\/h2>[\s\S]*<h3 id="connected-devices-heading">Connected devices<\/h3>/);
