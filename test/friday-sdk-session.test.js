@@ -141,12 +141,13 @@ test('Friday SDK adds curated memory context and conversation-scoped Pi tools', 
     },
     createSession: async (value) => {
       options = value;
+      assert.match(value.resourceLoader.getSystemPrompt(), /Your identity is Friday: the user's multipurpose personal AI assistant/);
+      assert.match(value.resourceLoader.getSystemPrompt(), /pi_read_conversation to review Pi's latest reply/);
       return { session: { sessionFile: value.sessionManager.getSessionFile(), messages: [], modelRuntime: value.modelRuntime, dispose() {} } };
     },
   });
   await adapter.start();
   assert.equal(memoryRead, true);
-  await options.resourceLoader.reload();
   assert.match(options.resourceLoader.getSystemPrompt(), /Your identity is Friday: the user's multipurpose personal AI assistant/);
   assert.match(options.resourceLoader.getSystemPrompt(), /pi_read_conversation to review Pi's latest reply/);
   assert.deepEqual(options.customTools.map((tool) => tool.name), ['pi_list_conversations', 'pi_send_prompt', 'pi_run_status', 'pi_read_conversation', 'pi_stop_run']);

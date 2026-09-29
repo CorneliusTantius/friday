@@ -90,11 +90,13 @@ export class FridaySdkSession extends EventEmitter {
           ...this.piControl,
           getConversationId: () => this.sessionManager.getSessionId(),
         }) : [];
+        const resourceLoader = new DefaultResourceLoader({ cwd: this.cwd, agentDir: this.agentDir, settingsManager,
+          systemPrompt,
+          noSkills: true, noExtensions: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
+        await resourceLoader.reload();
         return this.createSession({
           cwd: this.cwd, agentDir: this.agentDir, tools: ['bash', 'edit', 'read', 'write'], customTools, modelRuntime, settingsManager,
-          resourceLoader: new DefaultResourceLoader({ cwd: this.cwd, agentDir: this.agentDir, settingsManager,
-            systemPrompt,
-            noSkills: true, noExtensions: true, noPromptTemplates: true, noThemes: true, noContextFiles: true }),
+          resourceLoader,
           sessionManager: manager, model: this.model, thinkingLevel: this.thinkingLevel,
         });
       })()
