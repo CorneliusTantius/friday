@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import { lstat, mkdir, unlink, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 const COMMAND_TIMEOUT_MS = 30_000;
 
@@ -57,6 +59,8 @@ export class PiSession extends EventEmitter {
     this.sessionPath = null;
     this.model = null;
     this.thinkingLevel = 'off';
+    this.promptQueue = [];
+    this.processingPromptQueue = false;
   }
 
   get isRunning() {
@@ -162,6 +166,16 @@ export class PiSession extends EventEmitter {
     return response.data;
   }
 
+  async getContextUsage() {
+    const version = this.operationVersion;
+    this.#assertReadable(true);
+    await this.start();
+    this.#assertReadVersion(version);
+    const response = await this.#send({ type: 'get_session_stats' });
+    this.#assertReadVersion(version);
+    return response.data.contextUsage || null;
+  }
+
   async availableModels() {
     const version = this.operationVersion;
     this.#assertReadable(true);
@@ -220,6 +234,52 @@ export class PiSession extends EventEmitter {
     return true;
   }
 
+  enqueuePrompt(message) {
+    if (typeof message !== 'string' || !message.trim() || message.length > 20_000) throw new TypeError('prompt must be between 1 and 20000 characters');
+    const item = { id: randomUUID(), message: message.trim() };
+    this.promptQueue.push(item);
+    const position = this.promptQueue.length + (this.processingPromptQueue ? 1 : 0);
+    this.#emitQueueStatus();
+    void this.#processPromptQueue();
+    return { queued: true, id: item.id, position };
+  }
+
+  clearPromptQueue() {
+    const cleared = this.promptQueue.splice(0);
+    for (const item of cleared) this.emit('prompt_queue_result', { id: item.id, cancelled: true, error: 'Prompt queue cleared' });
+    this.#emitQueueStatus();
+    return cleared.length;
+  }
+
+  async #processPromptQueue() {
+    if (this.processingPromptQueue) return;
+    this.processingPromptQueue = true;
+    try {
+      while (this.promptQueue.length) {
+        if (this.operation) {
+          await new Promise((resolve) => this.once('status', resolve));
+          continue;
+        }
+        const item = this.promptQueue.shift();
+        this.#emitQueueStatus();
+        try {
+          const result = await this.chat(item.message);
+          this.emit('prompt_queue_result', { id: item.id, result });
+        } catch (error) {
+          this.emit('prompt_queue_result', { id: item.id, error: error.message });
+        }
+      }
+    } finally {
+      this.processingPromptQueue = false;
+      this.#emitQueueStatus();
+    }
+  }
+
+  #emitQueueStatus() {
+    const status = { queued: this.promptQueue.length, processing: this.processingPromptQueue };
+    this.emit('prompt_queue_status', status);
+  }
+
   async chat(message) {
     return this.#runOperation('chat', async () => {
       await this.start();
@@ -275,6 +335,40 @@ export class PiSession extends EventEmitter {
     return Number.isInteger(limit) && limit > 0 ? messages.slice(-limit) : messages;
   }
 
+  async persistCurrentSession() {
+    return this.#runOperation('session persistence', async () => {
+      await this.start();
+      return this.#persistCurrentSessionFile();
+    });
+  }
+
+  async #persistCurrentSessionFile() {
+    const sessionPath = this.sessionPath;
+    if (!sessionPath) throw new Error('Pi did not report a session file');
+    await mkdir(dirname(sessionPath), { recursive: true, mode: 0o700 });
+
+    let info;
+    try { info = await lstat(sessionPath); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (info && (info.isSymbolicLink() || !info.isFile())) throw new Error('Pi session path is not a regular file');
+    if (info?.size > 0) return sessionPath;
+    if (!info) await writeFile(sessionPath, '', { flag: 'wx', mode: 0o600 });
+
+    try {
+      const switched = await this.#send({ type: 'switch_session', sessionPath });
+      if (switched.data?.cancelled) throw new Error('Pi cancelled saving the new session');
+      const state = await this.#send({ type: 'get_state' });
+      this.#applyState(state.data);
+      return this.sessionPath;
+    } catch (error) {
+      try {
+        const current = await lstat(sessionPath);
+        if (current.isFile() && current.size === 0) await unlink(sessionPath);
+      } catch {}
+      throw error;
+    }
+  }
+
   async reset(cwd = this.cwd) {
     return this.#runOperation('session reset', async () => {
       if (cwd !== this.cwd) {
@@ -283,6 +377,8 @@ export class PiSession extends EventEmitter {
         this.sessionPath = null;
         this.model = null;
         this.thinkingLevel = 'off';
+        await this.start();
+        await this.#persistCurrentSessionFile();
         return;
       }
 
@@ -290,6 +386,7 @@ export class PiSession extends EventEmitter {
       await this.#send({ type: 'new_session' });
       const state = await this.#send({ type: 'get_state' });
       this.#applyState(state.data);
+      await this.#persistCurrentSessionFile();
     });
   }
 
@@ -374,6 +471,7 @@ export class PiSession extends EventEmitter {
         workspace: this.workspace,
         sessionPath: this.currentSessionPath,
       });
+      if (this.promptQueue.length) void this.#processPromptQueue();
     }
   }
 

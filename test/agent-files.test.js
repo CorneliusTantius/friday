@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listAgentFiles, readAgentFile } from '../src/agent-files.js';
+import { listAgentFiles, readAgentFile, writeAgentFile } from '../src/agent-files.js';
 
-test('scoped agent roots list and preview safe files only', async (t) => {
+test('scoped agent roots browse and edit hidden credential, JSON, Markdown, and text files', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'agent-files-'));
   t.after(() => rm(home, { recursive: true, force: true }));
   const friday = join(home, '.friday');
+  const fridayOptions = { root: 'friday', home, env: { ...process.env, FRIDAY_HOME: '' } };
   await mkdir(join(friday, 'nested'), { recursive: true });
   await writeFile(join(friday, 'nested', 'notes.md'), 'hello');
   await writeFile(join(friday, 'auth.json'), '{"token":"secret"}');
@@ -18,20 +19,34 @@ test('scoped agent roots list and preview safe files only', async (t) => {
   await writeFile(join(friday, '.hidden'), 'hidden');
   await writeFile(join(friday, 'binary'), Buffer.from([0, 1]));
   await symlink(home, join(friday, 'escape'));
-  const listing = await listAgentFiles({ root: 'friday', home });
-  assert.deepEqual(listing.entries.map((entry) => entry.name), ['config', 'nested', 'binary']);
-  const configFiles = await listAgentFiles({ root: 'friday', path: 'config', home });
-  assert.deepEqual(configFiles.entries, []);
+  const listing = await listAgentFiles(fridayOptions);
+  assert.deepEqual(new Set(listing.entries.map((entry) => entry.name)), new Set(['.hidden', 'auth.json', 'binary', 'config', 'nested']));
+  assert.equal(listing.entries.find((entry) => entry.name === 'auth.json').previewable, true);
+  assert.equal(listing.entries.find((entry) => entry.name === 'auth.json').editable, true);
+  const configFiles = await listAgentFiles({ ...fridayOptions, path: 'config' });
+  assert.deepEqual(new Set(configFiles.entries.map((entry) => entry.name)), new Set(['auth.json', 'settings.json']));
+  assert.ok(configFiles.entries.every((entry) => entry.editable));
   assert.deepEqual(Object.keys(listing), ['root', 'directory', 'path', 'entries']);
   assert.equal(listing.directory, friday);
   assert.equal(listing.entries[0].workspacePath, null);
-  assert.equal((await readAgentFile({ root: 'friday', path: 'nested/notes.md', home })).content, 'hello');
-  await assert.rejects(readAgentFile({ root: 'friday', path: 'auth.json', home }));
-  await assert.rejects(readAgentFile({ root: 'friday', path: 'config/auth.json', home }));
-  await assert.rejects(readAgentFile({ root: 'friday', path: 'config/settings.json', home }));
-  await assert.rejects(readAgentFile({ root: 'friday', path: 'binary', home }), /binary/);
-  await assert.rejects(listAgentFiles({ root: 'friday', path: '../', home }));
-  await assert.rejects(listAgentFiles({ root: 'friday', path: 'escape', home }));
+  assert.equal((await readAgentFile({ ...fridayOptions, path: 'nested/notes.md' })).editorType, 'markdown');
+  assert.equal((await readAgentFile({ ...fridayOptions, path: '.hidden' })).content, 'hidden');
+  const settings = await readAgentFile({ ...fridayOptions, path: 'config/settings.json' });
+  assert.equal(settings.content, '{"model":"safe"}');
+  assert.equal(settings.editorType, 'json');
+  assert.equal((await readAgentFile({ ...fridayOptions, path: 'config/auth.json' })).content, '{"key":"secret"}');
+  await assert.rejects(readAgentFile({ ...fridayOptions, path: 'binary' }), /binary/);
+  await assert.rejects(writeAgentFile({ ...fridayOptions, path: 'config/settings.json', content: '{bad json' }), /valid JSON/);
+  await writeAgentFile({ ...fridayOptions, path: 'config/auth.json', content: '{"apiKey":"secret"}' });
+  await writeAgentFile({ ...fridayOptions, path: 'config/settings.json', content: '{"model":"updated"}' });
+  await writeAgentFile({ ...fridayOptions, path: 'nested/notes.md', content: '# Updated\n\n**Markdown**' });
+  await writeAgentFile({ ...fridayOptions, path: '.hidden', content: 'updated text' });
+  assert.equal((await readAgentFile({ ...fridayOptions, path: 'config/auth.json' })).content, '{"apiKey":"secret"}');
+  assert.equal((await readAgentFile({ ...fridayOptions, path: 'config/settings.json' })).content, '{"model":"updated"}');
+  assert.equal((await readAgentFile({ ...fridayOptions, path: 'nested/notes.md' })).content, '# Updated\n\n**Markdown**');
+  assert.equal((await readAgentFile({ ...fridayOptions, path: '.hidden' })).content, 'updated text');
+  await assert.rejects(listAgentFiles({ ...fridayOptions, path: '../' }));
+  await assert.rejects(listAgentFiles({ ...fridayOptions, path: 'escape' }));
 });
 
 test('Pi root honors PI_CODING_AGENT_DIR parent', async (t) => {

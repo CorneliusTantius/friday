@@ -10,13 +10,14 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { PiSession } from './pi-session.js';
 import { FridaySdkSession } from './friday-sdk-session.js';
-import { fridaySystemPrompt } from './friday-system-prompt.js';
+import { createFridayMemory } from './friday-memory.js';
+import { createPiRunRegistry } from './pi-run-registry.js';
 import { createProviderAuth } from './provider-auth.js';
 import { fridayPaths, loadConfig, migrateDirectory, migrateStorage } from './config.js';
 import { createRepositoryStore } from './repos.js';
 import { browseNotes, readNote } from './notes.js';
-import { listAgentFiles, readAgentFile } from './agent-files.js';
-import { syncGitHubSnapshot, validateGitHubSyncTarget } from './github-sync.js';
+import { listAgentFiles, readAgentFile, writeAgentFile } from './agent-files.js';
+import { millisecondsUntilNextQuarterHour, syncGitHubSnapshot, validateGitHubSyncTarget } from './github-sync.js';
 import { createFinanceStore } from './finances.js';
 
 const host = process.env.HOST || '127.0.0.1';
@@ -33,8 +34,9 @@ const piAuth = createProviderAuth({ agentDir });
 const syncConfigs = { friday: join(paths.configDir, 'github-sync.json'), pi: join(agentDir, 'friday-sync.json') };
 const syncStateRoot = join(process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'friday');
 const syncStateFiles = { friday: join(syncStateRoot, 'github-friday.json'), pi: join(syncStateRoot, 'github-pi.json') };
+const fridayMemory = createFridayMemory({ directory: join(paths.root, 'memory') });
+const piRunRegistry = createPiRunRegistry({ file: join(syncStateRoot, 'pi-runs.json') });
 const syncState = { friday: { busy: false, error: null, promise: null }, pi: { busy: false, error: null, promise: null } };
-const githubSyncIntervalMs = 60 * 60 * 1000;
 const workspaceRoots = [resolve(homedir()), repositories.directory, piRepositories.directory];
 let initialWorkspace = piWorkspaceDir;
 let preferredWorkspace = initialWorkspace;
@@ -45,6 +47,7 @@ const fridayChatDir = process.env.FRIDAY_CHAT_DIR ? resolve(process.env.FRIDAY_C
 const fridaySessionDir = process.env.FRIDAY_CHAT_DIR ? join(fridayChatDir, 'sessions') : paths.dataDir;
 const publicRoot = join(projectRoot, 'public');
 const piSessions = new Map();
+const piRunOpenings = new Map();
 let fridayPi;
 let fridayInit;
 const fridayRuntimeId = '$friday'; // Not a valid X-Friday-Session value.
@@ -258,7 +261,7 @@ function piForRequest(request) {
 }
 
 async function resetFridayAfterAuth() {
-  if (process.env.FRIDAY_CHAT_DRIVER === 'rpc' || !fridayPi) return;
+  if (!fridayPi) return;
   if (fridayPi.isBusy) throw new RequestError('Friday is busy; retry after the current reply', 409);
   const previous = fridayPi;
   fridayPi = null;
@@ -268,29 +271,21 @@ async function resetFridayAfterAuth() {
   await previous.stop();
 }
 
+const piControl = {
+  listConversations: listPiConversations,
+  sendPrompt: enqueuePiPrompt,
+  getRunStatus: getPiRunStatus,
+  stopRun: stopPiRun,
+};
+
 async function getFridayPi() {
   if (fridayPi) return fridayPi;
   if (!fridayInit) {
     fridayInit = (async () => {
       await mkdir(fridaySessionDir, { recursive: true, mode: 0o700 });
-      const useSdk = process.env.FRIDAY_CHAT_DRIVER !== 'rpc';
-      const pi = useSdk ? new FridaySdkSession({ cwd: fridayChatDir, dataDir: fridaySessionDir, agentDir: paths.configDir }) : new PiSession({
-        cwd: fridayChatDir,
-        command: piCommand,
-        args: [
-          '--tools', 'bash,edit,read,write', '--no-extensions', '--no-skills', '--no-context-files',
-          '--session-dir', fridaySessionDir,
-          '--system-prompt', fridaySystemPrompt,
-        ],
-      });
+      const pi = new FridaySdkSession({ cwd: fridayChatDir, dataDir: fridaySessionDir, agentDir: paths.configDir, memory: fridayMemory, piControl });
       try {
-        if (useSdk) await pi.start();
-        else {
-          const legacyWorkspaces = process.env.FRIDAY_CHAT_DIR ? [] : [paths.dataDir];
-          const [latest] = await listSessions(fridayChatDir, fridaySessionDir, legacyWorkspaces);
-          if (latest) await pi.switchSession(latest.path, fridayChatDir);
-          else await pi.start();
-        }
+        await pi.start();
         fridayPi = pi;
         return pi;
       } catch (error) {
@@ -454,11 +449,11 @@ function modelForClient(model) {
   };
 }
 
-async function readJson(request) {
+async function readJson(request, maxBytes = 64 * 1024) {
   let body = '';
   for await (const chunk of request) {
     body += chunk;
-    if (Buffer.byteLength(body) > 64 * 1024) {
+    if (Buffer.byteLength(body) > maxBytes) {
       throw new RequestError('Request body is too large');
     }
   }
@@ -657,9 +652,14 @@ async function listWorkspaceSuggestions(prefix = '') {
     .map((path) => ({ path, label: basename(path) || path }));
 }
 
-function sessionDirectoryFor(cwd) {
+function sessionDirectoriesFor(cwd) {
   const safePath = resolve(cwd).replace(/^[/\\]/, '').replace(/[/\\:]/g, '-');
-  return join(sessionStorage, `--${safePath}--`);
+  const directories = [join(sessionStorage, `--${safePath}--`)];
+  if (process.env.PI_CODING_AGENT_SESSION_DIR) {
+    const configured = resolve(process.env.PI_CODING_AGENT_SESSION_DIR);
+    if (!directories.includes(configured)) directories.unshift(configured);
+  }
+  return directories;
 }
 
 function textFromMessage(message) {
@@ -732,21 +732,17 @@ async function readSessionMetadata(path, workspace, legacyWorkspaces = []) {
   };
 }
 
-async function listSessions(workspace, directory = sessionDirectoryFor(workspace), legacyWorkspaces = []) {
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const sessions = await Promise.all(
-    entries
+async function listSessions(workspace, legacyWorkspaces = []) {
+  const sessions = await Promise.all(sessionDirectoriesFor(workspace).map(async (directory) => {
+    let entries;
+    try { entries = await readdir(directory, { withFileTypes: true }); }
+    catch { return []; }
+    return Promise.all(entries
       .filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl'))
-      .map((entry) => readSessionMetadata(join(directory, entry.name), workspace, legacyWorkspaces)),
-  );
+      .map((entry) => readSessionMetadata(join(directory, entry.name), workspace, legacyWorkspaces)));
+  }));
 
-  return sessions
+  return sessions.flat()
     .filter(Boolean)
     .sort((a, b) => new Date(b.modified) - new Date(a.modified));
 }
@@ -758,6 +754,118 @@ async function findSession(workspace, path) {
   const session = (await listSessions(workspace)).find((item) => item.path === path);
   if (!session) throw new RequestError('session was not found in the selected workspace', 404);
   return session;
+}
+
+async function sessionsWithRunIds(workspace) {
+  const sessions = await listSessions(workspace);
+  const runIds = await piRunRegistry.ensureRuns(sessions.map(({ path, id, name }) => ({ workspace, sessionPath: path, sessionId: id, name })));
+  const runtimeByPath = new Map([...piSessions.entries()]
+    .filter(([, entry]) => entry.pi.workspace === workspace && entry.pi.currentSessionPath)
+    .map(([runtimeId, entry]) => [entry.pi.currentSessionPath, { runtimeId, pi: entry.pi }]));
+  return sessions.map((session, index) => {
+    const runtime = runtimeByPath.get(session.path);
+    return {
+      ...session,
+      runId: runIds[index],
+      runtimeId: runtime?.runtimeId || null,
+      running: runtime?.pi.isRunning || false,
+      busy: runtime?.pi.isBusy || false,
+      queuedPrompts: runtime?.pi.promptQueue?.length || 0,
+    };
+  });
+}
+
+async function findRunRuntime(run) {
+  const session = await findSession(run.workspace, run.sessionPath);
+  const active = () => [...piSessions.entries()].find(([, entry]) => entry.pi.currentSessionPath === session.path);
+  let match = active();
+  if (match) {
+    match[1].lastUsed = Date.now();
+    return { entry: match[1], runtimeId: match[0] };
+  }
+  if (piRunOpenings.has(run.id)) return piRunOpenings.get(run.id);
+
+  const opening = (async () => {
+    const runtimeId = randomUUID();
+    const pi = createPiRuntime(runtimeId, run.workspace);
+    try { await pi.switchSession(session.path, run.workspace); }
+    catch (error) {
+      const entry = piSessions.get(runtimeId);
+      if (entry) await retireRuntime(runtimeId, entry);
+      throw error;
+    }
+    const entry = piSessions.get(runtimeId);
+    entry.lastUsed = Date.now();
+    return { entry, runtimeId };
+  })();
+  piRunOpenings.set(run.id, opening);
+  try { return await opening; }
+  finally { if (piRunOpenings.get(run.id) === opening) piRunOpenings.delete(run.id); }
+}
+
+async function listPiConversations() {
+  return sessionsWithRunIds(preferredWorkspace);
+}
+
+async function getPiRunStatus(runId) {
+  const run = await piRunRegistry.getRun(runId);
+  if (!run) return null;
+  const runtime = [...piSessions.values()].find((entry) => entry.pi.currentSessionPath === run.sessionPath);
+  const exists = (await listSessions(run.workspace)).some((session) => session.path === run.sessionPath);
+  return {
+    runId: run.id,
+    name: run.name || 'Pi conversation',
+    workspace: run.workspace,
+    exists,
+    running: runtime?.pi.isRunning || false,
+    busy: runtime?.pi.isBusy || false,
+    queuedPrompts: runtime?.pi.promptQueue?.length || 0,
+  };
+}
+
+async function stopPiRun(runId) {
+  const run = await piRunRegistry.getRun(runId);
+  if (!run) return null;
+  const runtime = [...piSessions.values()].find((entry) => entry.pi.currentSessionPath === run.sessionPath);
+  if (!runtime) return { runId, stopped: false, running: false, queuedPrompts: 0 };
+  const cleared = runtime.pi.clearPromptQueue();
+  const aborted = await runtime.pi.abort();
+  runtime.lastUsed = Date.now();
+  return { runId, stopped: Boolean(cleared || aborted), aborted, clearedPrompts: cleared, queuedPrompts: runtime.pi.promptQueue.length };
+}
+
+async function enqueuePiPrompt({ conversationId, runId, prompt }) {
+  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 20_000) throw new RequestError('prompt must be between 1 and 20000 characters');
+  let run = runId ? await piRunRegistry.getRun(runId) : await piRunRegistry.getLinkedRun(conversationId);
+  if (runId && !run) throw new RequestError('Pi run was not found', 404);
+  if (run) {
+    try { await findSession(run.workspace, run.sessionPath); }
+    catch { throw new RequestError('The linked Pi conversation no longer exists; choose another conversation', 404); }
+  } else {
+    try {
+      const runtimeId = randomUUID();
+      const pi = createPiRuntime(runtimeId, preferredWorkspace);
+      await pi.persistCurrentSession();
+      const sessionPath = pi.currentSessionPath;
+      const session = await findSession(pi.workspace, sessionPath);
+      const id = await piRunRegistry.ensureRun({ workspace: pi.workspace, sessionPath, sessionId: session.id, name: session.name });
+      run = await piRunRegistry.getRun(id);
+    } catch (error) {
+      console.error(`Could not create a Pi run: ${error.message}`);
+      throw new RequestError('Could not create a Pi conversation; check Pi Agent status', 503);
+    }
+  }
+
+  await piRunRegistry.linkConversation(conversationId, run.id);
+  let runtime;
+  try { runtime = await findRunRuntime(run); }
+  catch (error) {
+    console.error(`Could not open Pi run ${run.id}: ${error.message}`);
+    throw new RequestError(`Could not open Pi run ${run.id}; check Pi Agent status`, 503);
+  }
+  const queued = runtime.entry.pi.enqueuePrompt(prompt.trim());
+  runtime.entry.lastUsed = Date.now();
+  return { queued: true, runId: run.id, queueId: queued.id, position: queued.position };
 }
 
 async function mutateSession(session, operation) {
@@ -799,7 +907,16 @@ async function serveStatic(pathname, response) {
   return true;
 }
 
+async function currentContextUsage(pi) {
+  try { return await pi.getContextUsage(); }
+  catch (error) { if (error.status === 409) return null; throw error; }
+}
+
 async function handleFridayRequest(request, response, pathname) {
+  if (request.method === 'GET' && pathname === '/api/friday/memory/graph') {
+    sendJson(response, 200, await fridayMemory.graph());
+    return;
+  }
   const pi = await getFridayPi();
   if (request.method === 'GET' && pathname === '/api/friday/status') {
     sendJson(response, 200, {
@@ -808,6 +925,7 @@ async function handleFridayRequest(request, response, pathname) {
       sessionPath: pi.currentSessionPath,
       model: modelForClient(pi.currentModel),
       thinkingLevel: pi.currentThinkingLevel,
+      contextUsage: await currentContextUsage(pi),
     });
     return;
   }
@@ -847,6 +965,37 @@ async function handleFridayRequest(request, response, pathname) {
     sendJson(response, 200, { level: pi.currentThinkingLevel });
     return;
   }
+  if (request.method === 'GET' && pathname === '/api/friday/sessions') {
+    sendJson(response, 200, await pi.listSessions());
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/friday/pi-conversations') {
+    sendJson(response, 200, { workspace: preferredWorkspace, sessions: await listPiConversations() });
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/api/friday/sessions') {
+    const id = await pi.newSession();
+    sendJson(response, 200, { id });
+    return;
+  }
+  const fridaySessionMatch = pathname.match(/^\/api\/friday\/sessions\/([A-Za-z0-9-]{1,100})(\/open)?$/);
+  if (fridaySessionMatch && fridaySessionMatch[2] && request.method === 'POST') {
+    const id = await pi.openSession(fridaySessionMatch[1]);
+    sendJson(response, 200, { id });
+    return;
+  }
+  if (fridaySessionMatch && !fridaySessionMatch[2] && request.method === 'PATCH') {
+    const body = await readJson(request);
+    if (typeof body.name !== 'string' || !body.name.trim() || body.name.trim().length > 100) throw new RequestError('name must be between 1 and 100 characters');
+    sendJson(response, 200, await pi.renameSession(fridaySessionMatch[1], body.name));
+    return;
+  }
+  if (fridaySessionMatch && !fridaySessionMatch[2] && request.method === 'DELETE') {
+    const result = await pi.deleteSession(fridaySessionMatch[1]);
+    await piRunRegistry.unlinkConversation(fridaySessionMatch[1]);
+    sendJson(response, 200, result);
+    return;
+  }
   if (request.method === 'GET' && pathname === '/api/friday/history') {
     sendJson(response, 200, { messages: await pi.history() });
     return;
@@ -859,7 +1008,20 @@ async function handleFridayRequest(request, response, pathname) {
     if (body.message.length > 20_000) {
       throw new RequestError('message is too long');
     }
-    const reply = await pi.chat(body.message.trim());
+    const userMessage = body.message.trim();
+    const reply = await pi.chat(userMessage);
+    const now = new Date();
+    try {
+      await fridayMemory.appendDailyLog({
+        date: now.toISOString().slice(0, 10),
+        timestamp: now.toISOString(),
+        conversationId: pi.currentSessionId,
+        userMessage,
+        fridayReply: reply,
+      });
+    } catch (error) {
+      console.error(`Friday daily log write failed: ${error.message}`);
+    }
     sendJson(response, 200, { role: 'assistant', content: reply });
     return;
   }
@@ -908,6 +1070,11 @@ async function performSync(scope) {
       directory: scope === 'friday' ? paths.root : dirname(agentDir),
       snapshotName: scope === 'friday' ? '.friday' : '.pi',
       managedRepos: [scope === 'friday' ? repositories.directory : piRepositories.directory],
+      excludedPaths: [
+        relative(scope === 'friday' ? paths.root : dirname(agentDir), syncConfigs[scope]).split(sep).join('/'),
+        ...(scope === 'pi' ? [relative(dirname(agentDir), join(agentDir, 'models-store.json')).split(sep).join('/')] : []),
+        ...(scope === 'friday' ? ['memory'] : []),
+      ],
       stateFile: syncStateFiles[scope],
       owner: config.owner,
       repo: config.repo,
@@ -938,6 +1105,15 @@ async function runScheduledSyncs() {
       console.error(`${scope} scheduled GitHub sync failed: ${error.message}`);
     }
   }
+}
+
+function scheduleGitHubSyncs() {
+  githubSyncTimer = setTimeout(() => {
+    void runScheduledSyncs()
+      .catch((error) => console.error(`scheduled GitHub sync failed: ${error.message}`))
+      .finally(() => { if (!shuttingDown) scheduleGitHubSyncs(); });
+  }, millisecondsUntilNextQuarterHour());
+  githubSyncTimer.unref();
 }
 
 async function githubStatus() {
@@ -1026,15 +1202,16 @@ async function handleRequest(request, response) {
       return;
     }
     if (action === 'settings' && request.method === 'POST') {
-      if (state.busy) throw new RequestError('GitHub sync is already running', 409);
       const body = await readJson(request);
       try { validateGitHubSyncTarget(body.owner, body.repo); }
       catch { throw new RequestError('Enter a valid GitHub owner and repository'); }
+      if (state.busy) throw new RequestError('GitHub sync is already running', 409);
       const previous = await readSyncConfig(scope);
       const config = { owner: body.owner, repo: body.repo, lastSync: previous.owner === body.owner && previous.repo === body.repo ? previous.lastSync : null };
       await writeSyncConfig(scope, config);
       state.error = null;
-      sendJson(response, 200, { ...config, status: 'Ready', error: null });
+      void performSync(scope).catch((error) => console.error(`${scope} automatic GitHub sync failed: ${error.message}`));
+      sendJson(response, 200, { ...config, status: 'Syncing…', error: null });
       return;
     }
     if (action === 'run' && request.method === 'POST') {
@@ -1129,6 +1306,12 @@ async function handleRequest(request, response) {
     }
     return;
   }
+  if (scopedFiles?.[2] && request.method === 'PUT') {
+    const body = await readJson(request, 2 * 1024 * 1024);
+    try { sendJson(response, 200, await writeAgentFile({ root: scopedFiles[1], path: url.searchParams.get('path'), content: body.content })); }
+    catch (error) { throw new RequestError(error.message, 400); }
+    return;
+  }
   if (request.method === 'GET' && pathname === '/api/notes') {
     sendJson(response, 200, { notes: (await browseNotes({ root: paths.notesDir })).map((path) => ({ name: path, path })) });
     return;
@@ -1199,6 +1382,16 @@ async function handleRequest(request, response) {
     sendJson(response, 200, { host, port, piCommand, systemUsage: await getSystemUsage() });
     return;
   }
+  if (request.method === 'POST' && pathname === '/api/system/restart') {
+    if (!process.env.INVOCATION_ID) throw new RequestError('Friday must be managed by systemd with automatic restart enabled', 409);
+    if (restartScheduled) throw new RequestError('A Friday restart is already scheduled', 409);
+    restartScheduled = true;
+    sendJson(response, 202, { scheduled: true });
+    setTimeout(() => {
+      void shutdown('UI restart request', true).finally(() => process.exit(0));
+    }, 1500);
+    return;
+  }
   if (request.method === 'GET' && pathname === '/api/devices') {
     sendJson(response, 200, await listDevices());
     return;
@@ -1226,6 +1419,7 @@ async function handleRequest(request, response) {
       piRunning: pi.isRunning,
       busy: pi.isBusy,
       canAbort: pi.canAbort,
+      contextUsage: await currentContextUsage(pi),
     });
     return;
   }
@@ -1351,16 +1545,7 @@ async function handleRequest(request, response) {
       ? await resolveWorkspace(url.searchParams.get('cwd'))
       : pi.workspace;
     const runtimes = runningPiSessions(workspace);
-    const runtimeByPath = new Map(runtimes.map((runtime) => [runtime.sessionPath, runtime]));
-    const sessions = (await listSessions(workspace)).map((session) => {
-      const runtime = runtimeByPath.get(session.path);
-      return {
-        ...session,
-        runtimeId: runtime?.runtimeId || null,
-        running: runtime?.running || false,
-        busy: runtime?.busy || false,
-      };
-    });
+    const sessions = await sessionsWithRunIds(workspace);
     sendJson(response, 200, {
       workspace,
       currentSession: workspace === pi.workspace ? pi.currentSessionPath : null,
@@ -1475,10 +1660,14 @@ async function handleRequest(request, response) {
     const workspace = body.cwd === undefined ? pi.workspace : await resolveWorkspace(body.cwd);
     const runtimeId = randomUUID();
     const resetPi = createPiRuntime(runtimeId, workspace);
+    await resetPi.persistCurrentSession();
+    const session = await findSession(workspace, resetPi.currentSessionPath);
+    const runId = await piRunRegistry.ensureRun({ workspace, sessionPath: session.path, sessionId: session.id, name: session.name });
     await persistWorkspace(workspace);
     sendJson(response, 200, {
       ok: true,
       runtimeId,
+      runId,
       workspace: resetPi.workspace,
       sessionPath: resetPi.currentSessionPath,
     });
@@ -1493,6 +1682,7 @@ async function handleRequest(request, response) {
     if (!selected) {
       throw new RequestError('session was not found in the selected workspace');
     }
+    const runId = await piRunRegistry.ensureRun({ workspace, sessionPath: selected.path, sessionId: selected.id, name: selected.name });
 
     let selectedPi = pi;
     let runtimeId = clientIdFor(request);
@@ -1510,6 +1700,7 @@ async function handleRequest(request, response) {
     sendJson(response, 200, {
       ok: true,
       runtimeId,
+      runId,
       workspace: selectedPi.workspace,
       sessionPath: selectedPi.currentSessionPath,
     });
@@ -1581,6 +1772,7 @@ async function logSystemUsage() {
 
 let usageTimer;
 let githubSyncTimer;
+let restartScheduled = false;
 
 const startServer = async () => {
   await migrateStorage();
@@ -1596,21 +1788,21 @@ const startServer = async () => {
     console.log(`workspace roots: ${workspaceRoots.join(', ')}`);
   });
   usageTimer = setInterval(() => void logSystemUsage(), 60_000);
-  githubSyncTimer = setInterval(() => void runScheduledSyncs(), githubSyncIntervalMs);
-  githubSyncTimer.unref();
+  scheduleGitHubSyncs();
+  void runScheduledSyncs().catch((error) => console.error(`startup GitHub sync failed: ${error.message}`));
 };
 
 void startServer();
 
 let shuttingDown = false;
-const shutdown = async (signal) => {
+const shutdown = async (signal, forceConnections = false) => {
   if (shuttingDown) {
     return;
   }
   shuttingDown = true;
   console.log(`${signal} received; shutting down`);
   if (usageTimer) clearInterval(usageTimer);
-  if (githubSyncTimer) clearInterval(githubSyncTimer);
+  if (githubSyncTimer) clearTimeout(githubSyncTimer);
   clearInterval(eventHeartbeat);
   clearInterval(runtimeCleanupTimer);
   eventTokens.clear();
@@ -1619,7 +1811,9 @@ const shutdown = async (signal) => {
     connection.response.end();
   }
 
-  await new Promise((resolve) => server.close(resolve));
+  const serverClosed = new Promise((resolve) => server.close(resolve));
+  if (forceConnections) server.closeAllConnections?.();
+  await serverClosed;
   await Promise.allSettled(Object.values(syncState).map(({ promise }) => promise).filter(Boolean));
   if (fridayInit) await fridayInit.catch(() => {});
   await Promise.all([

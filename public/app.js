@@ -5,10 +5,13 @@ const $ = (selector) => document.querySelector(selector);
 const elements = {
   messages: $('#messages'), form: $('#chat-form'), input: $('#message'), send: $('#send'), reset: $('#reset'),
   refreshSessions: $('#refresh-sessions'), sessionList: $('#session-list'), status: $('#status'),
+  contextUsage: $('#pi-context-usage'), contextProgress: $('#pi-context-progress'), contextLabel: $('#pi-context-label'),
   workspace: $('#workspace'), workspaceOptions: $('#workspace-options'), model: $('#model'),
   thinkingLevel: $('#thinking-level'), sessionSubtitle: $('#session-subtitle'), jumpLatest: $('#jump-latest'),
   fileList: $('#file-list'), filesPathLabel: $('#files-path'), filesUp: $('#files-up'), filesRootLabel: $('#files-root'),
   fileTitle: $('#file-title'), fileMeta: $('#file-meta'), fileContent: $('#file-content'),
+  fileEditorLayout: $('#file-editor-layout'), fileEditor: $('#file-editor'), fileMarkdownPreview: $('#file-markdown-preview'),
+  fileEditActions: $('#file-edit-actions'), fileEditStatus: $('#file-edit-status'), fileSave: $('#file-save'), fileCancel: $('#file-cancel'),
   deviceList: $('#device-list'), deviceStatus: $('#device-status'),
   fridaySettingsList: $('#friday-settings-list'), settingsList: $('#settings-list'),
   serverSettingsList: $('#server-settings-list'), extensionsList: $('#extensions-list'),
@@ -18,8 +21,11 @@ const elements = {
   financeForm: $('#finance-form'), financeList: $('#finance-list'), financeStatus: $('#finance-status'),
   financeBalance: $('#finance-balance'), financeIncome: $('#finance-income'), financeExpenses: $('#finance-expenses'),
   financeSubmit: $('#finance-submit'), financeCancel: $('#finance-cancel'),
-  financeMonth: $('#finance-month'), financeTypeFilter: $('#finance-type-filter'),
-  financeCategoryFilter: $('#finance-category-filter'), financeExport: $('#finance-export'),
+  fridayPiSessionList: $('#friday-pi-session-list'), fridayPiSessionsRefresh: $('#friday-pi-sessions-refresh'),
+  fridayPiSessionsToggle: $('#friday-pi-sessions-toggle'), fridayReviewMemory: $('#friday-review-memory'),
+  financeSummaryPeriod: $('#finance-summary-period'), financeMonth: $('#finance-month'),
+  financeTypeFilter: $('#finance-type-filter'), financeCategoryFilter: $('#finance-category-filter'),
+  financeExport: $('#finance-export'),
   announcement: $('#announcement'),
 };
 
@@ -30,12 +36,12 @@ const featureViews = new Map([
   ['files', $('#files-feature')], ['pi-files', $('#files-feature')],
   ['repos', $('#repos-feature')], ['pi-repos', $('#pi-repos-feature')], ['notes', $('#notes-feature')],
   ['finances', $('#finances-feature')],
-  ['settings', $('#settings-feature')], ['friday-settings', $('#settings-feature')], ['pi-settings', $('#settings-feature')],
+  ['dashboard', $('#dashboard-feature')], ['settings', $('#settings-feature')], ['friday-settings', $('#settings-feature')], ['pi-settings', $('#settings-feature')],
 ]);
-const savedFeature = sessionStorage.getItem('friday-active-feature');
 const url = new URL(window.location.href);
 const requestedFeature = url.searchParams.get('feature');
-const initialFeature = featureViews.has(requestedFeature) ? requestedFeature : featureViews.has(savedFeature) ? savedFeature : 'friday';
+const initialFeatureName = featureViews.has(requestedFeature) ? requestedFeature : 'dashboard';
+const initialFeature = ['friday-settings', 'pi-settings'].includes(initialFeatureName) ? 'settings' : initialFeatureName;
 if (requestedFeature) {
   url.searchParams.delete('feature');
   history.replaceState(null, '', url);
@@ -93,6 +99,14 @@ function apiFetch(resource, options = {}) {
   return fetch(resource, { ...options, headers });
 }
 
+let authRedirecting = false;
+
+function redirectToLogin() {
+  if (authRedirecting) return;
+  authRedirecting = true;
+  window.location.replace('/login?notice=login-required');
+}
+
 async function apiJson(resource, options = {}, requestKey = null) {
   let controller;
   if (requestKey) {
@@ -103,6 +117,7 @@ async function apiJson(resource, options = {}, requestKey = null) {
   try {
     const response = await apiFetch(resource, { ...options, signal: controller?.signal ?? options.signal });
     const data = await response.json().catch(() => ({}));
+    if (response.status === 401 && data.error === 'Login required') redirectToLogin();
     if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
     return data;
   } finally {
@@ -687,7 +702,10 @@ function scheduleEventRefresh(full = false) {
     eventNeedsFullRefresh = false;
     try {
       await loadHistory({ limit: fullRefresh ? null : 10 });
-      if (fullRefresh) await loadSessions(elements.workspace.value, { quiet: true });
+      if (fullRefresh) {
+        await loadSessions(elements.workspace.value, { quiet: true });
+        renderPiContextUsage((await apiJson('/api/status', {}, 'poll-status')).contextUsage);
+      }
     } catch (error) {
       if (!isAbort(error)) {
         closeEventStream();
@@ -785,6 +803,7 @@ async function pollHistory() {
     }
     setConnection(true);
     setAgentBusy(data.busy, data.canAbort === true);
+    renderPiContextUsage(data.contextUsage);
     updateSessionSubtitle();
 
     if (data.busy) {
@@ -842,6 +861,11 @@ function formatDate(value) {
   const today = new Date();
   if (date.toDateString() === today.toDateString()) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function formatLocalTimestamp(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function renderSessions(items, currentPath) {
@@ -935,7 +959,6 @@ async function loadSessions(cwd = elements.workspace.value, { quiet = false } = 
 function attachRuntime(runtimeId) {
   closeEventStream();
   sessionStorage.setItem('friday-session-id', runtimeId);
-  sessionStorage.setItem('friday-active-feature', 'pi');
   window.location.assign('/?feature=pi');
 }
 
@@ -957,6 +980,7 @@ async function openSession(sessionPath) {
     state.history = [];
     state.historyTotal = 0;
     await Promise.all([loadHistory({ forceScroll: true }), loadModels(), loadThinkingLevels(), loadSessions(data.workspace)]);
+    renderPiContextUsage((await apiJson('/api/status', {}, 'poll-status')).contextUsage);
     closeDrawer();
   } catch (error) {
     if (!isAbort(error)) toast(error.message, 'error');
@@ -998,7 +1022,40 @@ async function loadWorkspace() {
   elements.workspace.value = current.preferredWorkspace || current.workspace;
   state.workspace = elements.workspace.value;
   setAgentBusy(current.busy, current.canAbort === true);
+  renderPiContextUsage(current.contextUsage);
   await loadSessions(elements.workspace.value);
+}
+
+function formatContextTokens(value) {
+  if (!Number.isFinite(value) || value < 0) return null;
+  if (value < 1_000) return String(Math.round(value));
+  if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`;
+  return `${(value / 1_000_000).toFixed(1)}m`;
+}
+
+function renderPiContextUsage(usage) {
+  if (!elements.contextUsage) return;
+  const tokens = formatContextTokens(usage?.tokens);
+  const windowSize = formatContextTokens(usage?.contextWindow);
+  const rawPercent = Number.isFinite(usage?.percent)
+    ? usage.percent
+    : Number.isFinite(usage?.tokens) && Number.isFinite(usage?.contextWindow) && usage.contextWindow > 0
+      ? usage.tokens / usage.contextWindow * 100
+      : null;
+  const percent = rawPercent === null ? null : Math.max(0, Math.min(100, rawPercent));
+  elements.contextProgress.value = percent ?? 0;
+  elements.contextUsage.classList.toggle('warning', percent >= 80 && percent < 95);
+  elements.contextUsage.classList.toggle('critical', percent >= 95);
+  const percentLabel = percent === null ? '' : percent > 0 && percent < 0.1 ? '<0.1%' : `${percent.toFixed(1)}%`;
+  elements.contextLabel.textContent = percent === null
+    ? 'Unavailable'
+    : tokens && windowSize ? `${tokens} / ${windowSize} (${percentLabel})` : percentLabel;
+  elements.contextUsage.title = percent === null
+    ? 'Context usage is not available yet'
+    : tokens && windowSize
+      ? `${Math.round(usage.tokens).toLocaleString()} of ${Math.round(usage.contextWindow).toLocaleString()} context tokens (${percent.toFixed(1)}%)`
+      : `${percent.toFixed(1)}% of the context window used`;
+  elements.contextProgress.setAttribute('aria-valuetext', percent === null ? 'Unavailable' : `${percent.toFixed(1)} percent`);
 }
 
 function formatBytes(bytes) {
@@ -1034,7 +1091,16 @@ function renderFiles(data, feature) {
   }
 }
 
+function fileHasUnsavedChanges() {
+  return !elements.fileEditorLayout.hidden && elements.fileEditor.value !== elements.fileEditor.dataset.original;
+}
+
+function confirmDiscardFileChanges() {
+  return !fileHasUnsavedChanges() || window.confirm('Discard unsaved file changes?');
+}
+
 async function loadFiles(path = state.files[state.activeFeature]?.path || '') {
+  if (!confirmDiscardFileChanges()) return;
   const context = state.contextVersion;
   const feature = state.activeFeature;
   const files = state.files[feature];
@@ -1051,23 +1117,41 @@ async function loadFiles(path = state.files[state.activeFeature]?.path || '') {
 }
 
 async function loadFile(path) {
+  if (!confirmDiscardFileChanges()) return;
   const context = state.contextVersion;
   const feature = state.activeFeature;
   const files = state.files[feature];
   elements.fileTitle.textContent = path.split('/').pop() || path;
-  elements.fileMeta.textContent = 'Loading preview…';
+  elements.fileMeta.textContent = 'Loading file…';
+  elements.fileContent.hidden = false;
+  elements.fileEditorLayout.hidden = true;
+  elements.fileEditActions.hidden = true;
   try {
     const scope = feature === 'files' ? 'friday' : 'pi';
     const data = await apiJson(`/api/${scope}/files/content?path=${encodeURIComponent(path)}`, {}, `file-preview-${feature}`);
     if (context !== state.contextVersion || state.activeFeature !== feature) return;
     files.selectedFilePath = data.path;
     elements.fileTitle.textContent = data.path.split('/').pop() || data.path;
-    elements.fileMeta.textContent = `${data.path} · ${formatBytes(data.size)} · ${new Date(data.modified).toLocaleString()} · read only`;
-    elements.fileContent.textContent = data.content;
+    const typeLabel = data.editorType === 'markdown' ? 'Markdown' : data.editorType === 'json' ? 'JSON' : 'text';
+    elements.fileMeta.textContent = `${data.path} · ${formatBytes(data.size)} · ${new Date(data.modified).toLocaleString()} · ${typeLabel} editor`;
+    elements.fileContent.hidden = true;
+    elements.fileEditorLayout.hidden = false;
+    elements.fileEditorLayout.dataset.editorType = data.editorType;
+    elements.fileEditor.setAttribute('aria-label', `Edit ${typeLabel} file`);
+    elements.fileEditor.value = data.content;
+    elements.fileEditor.dataset.original = data.content;
+    elements.fileMarkdownPreview.hidden = data.editorType !== 'markdown';
+    elements.fileMarkdownPreview.replaceChildren();
+    if (data.editorType === 'markdown') renderMarkdown(elements.fileMarkdownPreview, data.content);
+    elements.fileEditActions.hidden = false;
+    elements.fileEditStatus.textContent = '';
+    elements.fileSave.disabled = true;
     for (const item of elements.fileList.querySelectorAll('.file-item')) item.classList.toggle('selected', item.title === data.path);
   } catch (error) {
     if (isAbort(error)) return;
-    files.selectedFilePath = ''; elements.fileTitle.textContent = 'Preview unavailable'; elements.fileMeta.textContent = error.message; elements.fileContent.textContent = '';
+    files.selectedFilePath = ''; elements.fileTitle.textContent = 'File unavailable'; elements.fileMeta.textContent = error.message;
+    elements.fileContent.hidden = false; elements.fileContent.textContent = error.message;
+    elements.fileEditorLayout.hidden = true; elements.fileEditActions.hidden = true;
   }
 }
 
@@ -1089,7 +1173,7 @@ function renderDevices(data) {
 
 async function loadDevices() {
   const data = await apiJson('/api/devices', {}, 'devices');
-  if (state.activeFeature === 'settings') renderDevices(data);
+  if (state.activeFeature === 'settings' || state.activeFeature === 'dashboard') renderDevices(data);
 }
 
 function renderSettingCards(container, values) {
@@ -1106,22 +1190,16 @@ function renderSettings(data) {
   const friday = data.fridayChat;
   renderSettingCards(elements.fridaySettingsList, friday ? [
     ['Status', friday.busy ? 'Working' : friday.running ? 'Ready' : 'Standby'],
-    ['Model', friday.model ? `${friday.model.name} · ${friday.model.provider}` : 'Default'],
     ['Conversation directory', friday.directory],
     ['Saved sessions', friday.sessionsDirectory],
-    ['Current session', friday.sessionPath || 'No active session'],
   ] : [['Status', 'Restart Friday server to view chat settings']]);
   renderSettingCards(elements.settingsList, [
     ['Pi status', data.busy ? 'Working' : data.piRunning ? 'Ready' : 'Standby'],
-    ['Model', data.model ? `${data.model.name} · ${data.model.provider}` : 'None'],
-    ['Thinking', data.thinkingLevel],
     ['Workspace', data.workspace],
-    ['Current session', data.sessionPath || 'No active session'],
   ]);
   renderSettingCards(elements.serverSettingsList, [
     ['System usage', formatUsage(data.systemUsage)],
     ['Server', `${data.host}:${data.port}`],
-    ['Pi command', data.piCommand],
   ]);
 
   elements.extensionsList.replaceChildren();
@@ -1384,7 +1462,7 @@ async function loadSyncSettings(scope) {
     form.elements.owner.value = data.owner || '';
     form.elements.repo.value = data.repo || '';
     const status = panel.querySelector('.sync-status');
-    status.textContent = [data.status, data.lastSync ? `Last sync: ${data.lastSync}` : '', data.error ? `Error: ${data.error}` : ''].filter(Boolean).join(' · ') || 'Not synced yet';
+    status.textContent = [data.status, data.lastSync ? `Last sync: ${formatLocalTimestamp(data.lastSync)}` : '', data.error ? `Error: ${data.error}` : ''].filter(Boolean).join(' · ') || 'Not synced yet';
   } catch (error) { panel.querySelector('.sync-status').textContent = `Unavailable: ${error.message}`; }
 }
 
@@ -1400,7 +1478,7 @@ for (const panel of document.querySelectorAll('[data-sync]')) {
       const data = await apiJson(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
       await loadSyncSettings(scope);
       if (data.error) throw new Error(data.error);
-      if (endpoint.endsWith('/run')) panel.querySelector('.sync-status').textContent = `${data.pushed ? `Pushed ${data.copied} files` : 'Already up to date'} · Last sync: ${data.lastSync}`;
+      if (endpoint.endsWith('/run')) panel.querySelector('.sync-status').textContent = `${data.pushed ? `Pushed ${data.copied} files` : 'Already up to date'} · Last sync: ${formatLocalTimestamp(data.lastSync)}`;
     } catch (error) { panel.querySelector('.sync-status').textContent = `Error: ${error.message}`; }
     finally { delete panel.dataset.busy; save.disabled = run.disabled = false; }
   };
@@ -1408,55 +1486,112 @@ for (const panel of document.querySelectorAll('[data-sync]')) {
   run.addEventListener('click', () => void submit(`/api/${scope}/sync/run`));
 }
 
-async function loadSettings(feature = state.activeFeature) {
-  const endpoint = { 'friday-settings': '/api/friday/settings', 'pi-settings': '/api/pi/settings', settings: '/api/system/settings' }[feature] || '/api/settings';
-  const settings = await apiJson(endpoint, {}, `settings-${feature}`);
-  if (state.activeFeature !== feature) return;
-  if (feature === 'friday-settings' || feature === 'pi-settings') {
-    const scope = feature === 'friday-settings' ? 'friday' : 'pi';
-    await Promise.all([loadProviderAuth(scope), loadSyncSettings(scope)]);
+function renderDashboardCard(label, value, detail = '') {
+  const card = document.createElement('article'); card.className = 'setting-card dashboard-card';
+  const title = document.createElement('span'); title.className = 'setting-label'; title.textContent = label;
+  const main = document.createElement('strong'); main.className = 'dashboard-value'; main.textContent = value;
+  card.append(title, main);
+  if (detail) { const note = document.createElement('span'); note.className = 'setting-value'; note.textContent = detail; card.append(note); }
+  $('#dashboard-cards').append(card);
+  return card;
+}
+
+function renderMemoryGraphCard(graph) {
+  const nodes = graph?.nodes || [];
+  const edges = graph?.edges || [];
+  const card = renderDashboardCard('Memory graph', graph ? `${nodes.length} notes` : 'Unavailable', graph ? `${graph.totalDailyNotes || 0} daily · ${edges.length} links${graph.truncated ? ' · recent 40 shown' : ''}` : 'Could not load memory graph');
+  card.classList.add('dashboard-memory-card');
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 320 150'); svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `Memory graph with ${nodes.length} notes and ${edges.length} links`);
+  const title = document.createElementNS(svg.namespaceURI, 'title'); title.textContent = 'Memory graph'; svg.append(title);
+  const byId = new Map(nodes.map((node, index) => {
+    const angle = -Math.PI / 2 + (2 * Math.PI * index / Math.max(nodes.length, 1));
+    const radius = nodes.length < 2 ? 0 : Math.min(57, 16 + nodes.length * 1.1);
+    return [node.id, { ...node, x: 160 + Math.cos(angle) * radius, y: 73 + Math.sin(angle) * radius }];
+  }));
+  for (const edge of edges) {
+    const from = byId.get(edge.source); const to = byId.get(edge.target);
+    if (!from || !to) continue;
+    const line = document.createElementNS(svg.namespaceURI, 'line');
+    line.setAttribute('x1', from.x); line.setAttribute('y1', from.y); line.setAttribute('x2', to.x); line.setAttribute('y2', to.y); line.classList.add('memory-graph-edge'); svg.append(line);
   }
-  if (feature === 'friday-settings') {
-    const friday = settings.fridayChat || settings;
-    renderSettingCards(elements.fridaySettingsList, [
-      ['Status', friday.busy ? 'Working' : friday.running ? 'Ready' : 'Standby'],
-      ['Model', friday.model ? `${friday.model.name} · ${friday.model.provider}` : 'Default'],
-      ['Conversation directory', friday.directory || 'Unavailable'],
-      ['Saved sessions', friday.sessionsDirectory || 'Unavailable'],
-      ['Current session', friday.sessionPath || 'No active session'],
-    ]);
-  } else if (feature === 'pi-settings') {
-    renderSettings({ ...settings, fridayChat: null, systemUsage: undefined });
-  } else {
-    renderSettingCards(elements.serverSettingsList, [
-      ['System usage', formatUsage(settings.systemUsage)],
-      ['Server', settings.host && settings.port ? `${settings.host}:${settings.port}` : 'Unavailable'],
-      ['Pi command', settings.piCommand || 'Unavailable'],
-    ]);
-    const githubStatus = $('#github-cli-status');
-    const deviceStatus = elements.deviceStatus;
-    githubStatus.textContent = 'Checking GitHub CLI…';
-    deviceStatus.className = 'feature-notice';
-    deviceStatus.textContent = 'Loading connected devices…';
-    elements.deviceList.replaceChildren();
-    const devicesRequest = apiJson('/api/devices', {}, 'devices').then((devices) => {
-      if (state.activeFeature === feature) renderDevices(devices);
-    }).catch((error) => {
-      if (state.activeFeature !== feature || isAbort(error)) return;
-      deviceStatus.className = 'feature-notice warning';
-      deviceStatus.textContent = `Could not load devices: ${error.message}`;
-    });
-    const githubRequest = apiJson('/api/system/github').then((github) => {
-      if (state.activeFeature === feature) githubStatus.textContent = `Available: ${github.available ? 'Yes' : 'No'} · Authenticated: ${github.authenticated ? 'Yes' : 'No'}`;
-    }).catch((error) => {
-      if (state.activeFeature === feature && !isAbort(error)) githubStatus.textContent = `Status unavailable: ${error.message}`;
-    });
-    await Promise.all([devicesRequest, githubRequest]);
+  for (const node of byId.values()) {
+    const group = document.createElementNS(svg.namespaceURI, 'g'); group.classList.add('memory-graph-node');
+    const circle = document.createElementNS(svg.namespaceURI, 'circle'); circle.setAttribute('cx', node.x); circle.setAttribute('cy', node.y); circle.setAttribute('r', node.type === 'curated' ? 7 : 4.5); circle.classList.add(node.type === 'curated' ? 'curated' : 'daily');
+    const label = document.createElementNS(svg.namespaceURI, 'title'); label.textContent = node.label; circle.append(label); group.append(circle);
+    if (nodes.length <= 8 || node.type === 'curated') {
+      const text = document.createElementNS(svg.namespaceURI, 'text'); text.setAttribute('x', node.x); text.setAttribute('y', node.y + 15); text.textContent = node.type === 'curated' ? 'Memory' : node.label.slice(5); group.append(text);
+    }
+    svg.append(group);
   }
+  if (!nodes.length) {
+    const empty = document.createElementNS(svg.namespaceURI, 'text'); empty.setAttribute('x', '160'); empty.setAttribute('y', '78'); empty.setAttribute('text-anchor', 'middle'); empty.textContent = 'No memory notes yet'; svg.append(empty);
+  }
+  card.append(svg);
+  const review = document.createElement('button'); review.type = 'button'; review.className = 'memory-graph-review'; review.textContent = 'Browse memory';
+  review.addEventListener('click', () => { state.files.files.path = 'memory'; void setFeature('files'); });
+  card.append(review);
+}
+
+async function loadDashboard() {
+  const cards = $('#dashboard-cards'); cards.replaceChildren();
+  const results = await Promise.allSettled([
+    apiJson('/api/friday/status'), apiJson('/api/status'), apiJson('/api/system/settings'), apiJson('/api/devices'), apiJson('/api/friday/memory/graph'),
+  ]);
+  const [friday, pi, system, devices, memoryGraph] = results.map((result) => result.status === 'fulfilled' ? result.value : null);
+  renderDashboardCard('Friday Agent', friday ? (friday.busy ? 'Working' : friday.running ? 'Ready' : 'Standby') : 'Unavailable', friday?.model?.name || 'General chat');
+  renderDashboardCard('Pi Agent', pi ? (pi.busy ? 'Working' : pi.piRunning ? 'Ready' : 'Standby') : 'Unavailable', pi?.workspace || 'Workspace unavailable');
+  const usage = pi?.contextUsage;
+  renderDashboardCard('Pi context', usage ? `${Math.round(usage.percent ?? usage.percentage ?? 0)}% used` : 'Unavailable');
+  if (friday) {
+    const fUsage = friday.contextUsage;
+    renderDashboardCard('Friday context', fUsage ? `${Math.round(fUsage.percent ?? fUsage.percentage ?? 0)}% used` : 'Unavailable');
+  }
+  renderDashboardCard('Host resources', system ? formatUsage(system.systemUsage) : 'Unavailable', system ? `${system.host}:${system.port}` : '');
+  renderDashboardCard('Devices', devices ? `${devices.devices?.filter((device) => device.online).length || 0} online` : 'Unavailable', devices ? `${devices.devices?.length || 0} visible` : '');
+  renderMemoryGraphCard(memoryGraph);
+}
+
+async function loadSettings() {
+  const [friday, pi, system] = await Promise.all([
+    apiJson('/api/friday/settings', {}, 'settings-friday'),
+    apiJson('/api/pi/settings', {}, 'settings-pi'),
+    apiJson('/api/system/settings', {}, 'settings-system'),
+  ]);
+  if (state.activeFeature !== 'settings') return;
+  renderSettings({ ...pi, fridayChat: friday.fridayChat, ...system });
+  await Promise.all([
+    loadProviderAuth('friday'), loadProviderAuth('pi'),
+    loadSyncSettings('friday'), loadSyncSettings('pi'),
+  ]);
+
+  const githubStatus = $('#github-cli-status');
+  const deviceStatus = elements.deviceStatus;
+  githubStatus.textContent = 'Checking GitHub CLI…';
+  deviceStatus.className = 'feature-notice';
+  deviceStatus.textContent = 'Loading connected devices…';
+  elements.deviceList.replaceChildren();
+  const devicesRequest = apiJson('/api/devices', {}, 'devices').then((devices) => {
+    if (state.activeFeature === 'settings' || state.activeFeature === 'dashboard') renderDevices(devices);
+  }).catch((error) => {
+    if (state.activeFeature !== 'settings' || isAbort(error)) return;
+    deviceStatus.className = 'feature-notice warning';
+    deviceStatus.textContent = `Could not load devices: ${error.message}`;
+  });
+  const githubRequest = apiJson('/api/system/github').then((github) => {
+    if (state.activeFeature === 'settings') githubStatus.textContent = `Available: ${github.available ? 'Yes' : 'No'} · Authenticated: ${github.authenticated ? 'Yes' : 'No'}`;
+  }).catch((error) => {
+    if (state.activeFeature === 'settings' && !isAbort(error)) githubStatus.textContent = `Status unavailable: ${error.message}`;
+  });
+  await Promise.all([devicesRequest, githubRequest]);
 }
 
 const fridayChat = fridayChatModule
-  ? fridayChatModule.createFridayChat({ apiJson, renderMarkdown, toast })
+  ? fridayChatModule.createFridayChat({ apiJson, renderMarkdown, toast, onHistory: () => {
+      void refreshFridaySessions().catch((error) => toast(error.message, 'error'));
+      void loadFridayPiConversations().catch((error) => toast(error.message, 'error'));
+    } })
   : {
       start() { $('#friday-status').textContent = 'Restart Friday server to enable chat'; },
       stop() {},
@@ -1474,6 +1609,28 @@ function currentFinanceMonth() {
 function currentFinanceDate() {
   const now = new Date();
   return `${currentFinanceMonth()}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function financeSummaryRange(months) {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  start.setMonth(start.getMonth() - months);
+  start.setDate(Math.min(now.getDate(), new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate()));
+  const dateString = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return { start: dateString(start), end: dateString(now) };
+}
+
+function updateFinanceSummary() {
+  const range = financeSummaryRange(Number(elements.financeSummaryPeriod.value) || 1);
+  const totals = financeEntries
+    .filter((entry) => entry.date >= range.start && entry.date <= range.end)
+    .reduce((result, entry) => {
+      result[entry.type] += entry.amount;
+      return result;
+    }, { income: 0, expense: 0 });
+  elements.financeIncome.textContent = money(totals.income);
+  elements.financeExpenses.textContent = money(totals.expense);
+  elements.financeBalance.textContent = money(totals.income - totals.expense);
 }
 
 function visibleFinanceEntries() {
@@ -1506,14 +1663,7 @@ function editFinance(entry) {
 async function loadFinances() {
   const { entries } = await apiJson('/api/finances', {}, 'finances');
   financeEntries = entries;
-  const monthEntries = entries.filter((entry) => !elements.financeMonth.value || entry.date.startsWith(elements.financeMonth.value));
-  const totals = monthEntries.reduce((result, entry) => {
-    result[entry.type] += entry.amount;
-    return result;
-  }, { income: 0, expense: 0 });
-  elements.financeIncome.textContent = money(totals.income);
-  elements.financeExpenses.textContent = money(totals.expense);
-  elements.financeBalance.textContent = money(totals.income - totals.expense);
+  updateFinanceSummary();
   elements.financeList.replaceChildren();
   const visibleEntries = visibleFinanceEntries();
   if (!financeEntries.length) {
@@ -1586,17 +1736,17 @@ async function addFinance(event) {
 }
 
 async function setFeature(name) {
+  if (name === 'friday-settings' || name === 'pi-settings') name = 'settings';
   if (!featureViews.has(name)) return;
   state.activeFeature = name;
-  sessionStorage.setItem('friday-active-feature', name);
   closeDrawer();
   for (const button of featureButtons) {
     const active = button.dataset.feature === name; button.classList.toggle('active', active);
     if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   }
   for (const view of new Set(featureViews.values())) {
-    const visible = view === $('#settings-feature')
-      ? ['settings', 'friday-settings', 'pi-settings'].includes(name)
+    const visible = view === $('#dashboard-feature') ? name === 'dashboard'
+      : view === $('#settings-feature') ? name === 'settings'
       : view === $('#files-feature') ? ['files', 'pi-files'].includes(name)
         : view === $('#repos-feature') ? name === 'repos'
           : view === $('#pi-repos-feature') ? name === 'pi-repos'
@@ -1605,26 +1755,18 @@ async function setFeature(name) {
                 : view === $('#finances-feature') ? name === 'finances' : name === 'friday';
     view.hidden = !visible;
   }
-  $('#friday-settings-view').hidden = name !== 'friday-settings';
-  $('#pi-settings-view').hidden = name !== 'pi-settings';
-  $('#system-settings-view').hidden = name !== 'settings';
-  $('#system-devices-view').hidden = name !== 'settings';
-  $('#settings-feature h1').textContent = { 'friday-settings': 'Friday settings', 'pi-settings': 'Pi settings', settings: 'System' }[name] || 'System';
-  $('#settings-feature .page-header p').textContent = {
-    'friday-settings': 'General chat and its provider credentials.',
-    'pi-settings': 'Coding agent, extensions, and provider credentials.',
-    settings: 'Server information and connected devices.',
-  }[name] || 'Server information and connected devices.';
+  $('#system-devices-view').hidden = false;
   try {
-    if (name === 'friday') await fridayChat.start();
-    else if (!['repos', 'pi-repos', 'notes', 'files', 'pi-files', 'finances', 'friday-settings', 'settings'].includes(name)) await initializePi();
+    if (name === 'friday') await Promise.all([fridayChat.start(), loadFridayPiConversations()]);
+    else if (!['dashboard', 'repos', 'pi-repos', 'notes', 'files', 'pi-files', 'finances', 'settings'].includes(name)) await initializePi();
     if (name === 'files' || name === 'pi-files') {
       elements.fileTitle.textContent = 'File preview';
       elements.fileMeta.textContent = 'Select a text file to preview it.';
       elements.fileContent.textContent = '';
       await loadFiles(state.files[name].path);
     }
-    if (['friday-settings', 'pi-settings', 'settings'].includes(name)) await loadSettings(name);
+    if (name === 'settings') await loadSettings(name);
+    if (name === 'dashboard') await loadDashboard();
     if (name === 'repos') await loadRepos();
     if (name === 'pi-repos') await loadPiRepos();
     if (name === 'notes') await loadNotes();
@@ -1653,6 +1795,114 @@ function resizeComposer() {
   elements.input.style.height = `${Math.min(elements.input.scrollHeight, 192)}px`;
   updateControls();
 }
+
+async function loadFridayPiConversations() {
+  const list = elements.fridayPiSessionList;
+  if (!list) return;
+  const { sessions = [] } = await apiJson('/api/friday/pi-conversations', {}, 'friday-pi-conversations');
+  list.replaceChildren();
+  if (!sessions.length) {
+    const empty = document.createElement('div'); empty.className = 'empty-state'; empty.textContent = 'No Pi conversations yet'; list.append(empty); return;
+  }
+  for (const session of sessions) {
+    const item = document.createElement('article'); item.className = 'session-item friday-session-item';
+    const open = document.createElement('button'); open.type = 'button'; open.className = 'session-open friday-session-open';
+    open.title = session.preview || session.name;
+    const title = document.createElement('span'); title.className = 'session-title'; title.textContent = session.name || 'Untitled Pi conversation';
+    const details = document.createElement('span'); details.className = 'session-details';
+    const meta = document.createElement('span'); meta.className = 'session-meta'; meta.textContent = `${formatDate(session.modified)} · ${session.messageCount} msg`;
+    const status = document.createElement('span');
+    status.className = `session-state ${session.busy || session.queuedPrompts ? 'working' : session.running ? 'running' : 'saved'}`;
+    status.textContent = session.busy ? 'Working' : session.queuedPrompts ? `${session.queuedPrompts} queued` : session.running ? 'Open' : 'Saved';
+    details.append(meta, status); open.append(title, details);
+    open.addEventListener('click', () => void openPiConversationFromFriday(session));
+    item.append(open); list.append(item);
+  }
+}
+
+async function openPiConversationFromFriday(session) {
+  if (state.locks.has('session')) return;
+  closeDrawer(); lock('session', true);
+  const context = ++state.contextVersion;
+  closeEventStream(); cancelRequest('history');
+  try {
+    const data = await apiJson('/api/session/select', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cwd: session.cwd, path: session.path }),
+    }, 'session-action');
+    if (context !== state.contextVersion) return;
+    if (data.runtimeId && data.runtimeId !== sessionStorage.getItem('friday-session-id')) { attachRuntime(data.runtimeId); return; }
+    const wasInitialized = piInitialized;
+    await setFeature('pi');
+    if (wasInitialized) {
+      elements.workspace.value = data.workspace; state.workspace = data.workspace; state.currentSessionPath = data.sessionPath;
+      await Promise.all([loadHistory({ forceScroll: true }), loadModels(), loadThinkingLevels(), loadSessions(data.workspace, { quiet: true })]);
+      const status = await apiJson('/api/status');
+      setAgentBusy(status.busy, status.busyOperation);
+      renderPiContextUsage(status.contextUsage);
+      if (status.busy) startPolling(); else schedulePoll(1200);
+      void connectEventStream();
+    }
+  } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); }
+  finally { lock('session', false); }
+}
+
+const fridaySessionList = $('#friday-session-list');
+let activeFridaySession = null;
+async function refreshFridaySessions() {
+  const data = await apiJson('/api/friday/sessions');
+  if (!Array.isArray(data) && data.currentSession) activeFridaySession = String(data.currentSession);
+  const sessions = Array.isArray(data) ? data : data.sessions || [];
+  fridaySessionList.replaceChildren();
+  for (const session of sessions) {
+    const id = String(session.id ?? session.sessionId ?? '');
+    const item = document.createElement('div');
+    item.className = `session-item friday-session-item${id === activeFridaySession ? ' selected' : ''}`;
+    const open = document.createElement('button'); open.type = 'button'; open.className = 'session-open friday-session-open';
+    open.setAttribute('aria-current', id === activeFridaySession ? 'true' : 'false');
+    open.title = session.preview || session.name || 'New conversation';
+    const title = document.createElement('span'); title.className = 'session-title friday-session-title'; title.textContent = session.name || session.title || 'New conversation';
+    const details = document.createElement('span'); details.className = 'session-details';
+    const meta = document.createElement('span'); meta.className = 'session-meta'; meta.textContent = `${formatDate(session.modified)} · ${session.messageCount || 0} msg`;
+    details.append(meta); open.append(title, details);
+    open.addEventListener('click', async () => {
+      try {
+        await apiJson(`/api/friday/sessions/${encodeURIComponent(id)}/open`, { method: 'POST' });
+        activeFridaySession = id; await fridayChat.refreshTranscript(); await refreshFridaySessions(); closeDrawer();
+      } catch (error) { toast(error.message, 'error'); }
+    });
+    const actions = document.createElement('div'); actions.className = 'session-actions friday-session-actions';
+    const rename = document.createElement('button'); rename.type = 'button'; rename.className = 'session-action'; rename.textContent = 'Rename';
+    rename.setAttribute('aria-label', `Rename ${session.name || 'conversation'}`);
+    rename.addEventListener('click', async () => {
+      const name = prompt('Conversation name', session.name || session.title || '');
+      if (name === null || !name.trim()) return;
+      try { await apiJson(`/api/friday/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() }) }); await refreshFridaySessions(); }
+      catch (error) { toast(error.message, 'error'); }
+    });
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'session-action danger'; remove.textContent = 'Delete';
+    remove.setAttribute('aria-label', `Delete ${session.name || 'conversation'}`);
+    remove.addEventListener('click', async () => {
+      if (!confirm(`Delete “${session.name || session.title || 'New conversation'}”?`)) return;
+      try { await apiJson(`/api/friday/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); if (id === activeFridaySession) { activeFridaySession = null; await fridayChat.refreshTranscript(); } await refreshFridaySessions(); }
+      catch (error) { toast(error.message, 'error'); }
+    });
+    actions.append(rename, remove); item.append(open, actions); fridaySessionList.append(item);
+  }
+  if (!sessions.length) { const empty = document.createElement('div'); empty.className = 'empty-state'; empty.textContent = 'No conversations yet'; fridaySessionList.append(empty); }
+}
+$('#friday-refresh-sessions').addEventListener('click', () => void refreshFridaySessions().catch((error) => toast(error.message, 'error')));
+elements.fridayPiSessionsRefresh.addEventListener('click', () => void loadFridayPiConversations().catch((error) => toast(error.message, 'error')));
+elements.fridayPiSessionsToggle.addEventListener('click', () => void loadFridayPiConversations().catch((error) => toast(error.message, 'error')));
+elements.fridayReviewMemory.addEventListener('click', async () => {
+  state.files.files.path = 'memory/daily';
+  await setFeature('files');
+});
+$('#friday-new-conversation').addEventListener('click', async () => {
+  try { const data = await apiJson('/api/friday/sessions', { method: 'POST' }); activeFridaySession = String(data.id ?? data.sessionId ?? data.session?.id); await fridayChat.refreshTranscript(); await refreshFridaySessions(); closeDrawer(); }
+  catch (error) { toast(error.message, 'error'); }
+});
+void refreshFridaySessions().catch((error) => toast(error.message, 'error'));
 
 for (const button of featureButtons) button.addEventListener('click', () => void setFeature(button.dataset.feature));
 for (const button of document.querySelectorAll('[data-open-drawer]')) button.addEventListener('click', () => openDrawer(button.dataset.openDrawer));
@@ -1717,7 +1967,8 @@ elements.workspace.addEventListener('change', async () => {
     state.workspace = data.workspace;
     state.history = []; state.historyTotal = 0; state.currentSessionPath = null;
     renderHistory([]);
-    await Promise.all([loadSessions(data.workspace), loadHistory({ forceScroll: true }), loadModels(), loadThinkingLevels()]);
+    await Promise.all([loadHistory({ forceScroll: true }), loadModels(), loadThinkingLevels()]);
+    await loadSessions(data.workspace);
     if (state.activeFeature === 'files' || state.activeFeature === 'pi-files') await loadFiles('');
     toast('Workspace changed');
   } catch (error) {
@@ -1734,6 +1985,39 @@ elements.refreshSessions.addEventListener('click', async () => {
   catch (error) { if (!isAbort(error)) toast(error.message, 'error'); }
 });
 
+elements.fileEditor.addEventListener('input', () => {
+  elements.fileSave.disabled = elements.fileEditor.value === elements.fileEditor.dataset.original;
+  if (elements.fileEditorLayout.dataset.editorType === 'markdown') {
+    elements.fileMarkdownPreview.replaceChildren();
+    renderMarkdown(elements.fileMarkdownPreview, elements.fileEditor.value);
+  }
+});
+elements.fileSave.addEventListener('click', async () => {
+  const feature = state.activeFeature;
+  const path = state.files[feature]?.selectedFilePath;
+  if (!path || !fileHasUnsavedChanges()) return;
+  const scope = feature === 'files' ? 'friday' : 'pi';
+  const content = elements.fileEditor.value;
+  elements.fileSave.disabled = true;
+  elements.fileEditStatus.textContent = 'Saving…';
+  try {
+    await apiJson(`/api/${scope}/files/content?path=${encodeURIComponent(path)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }),
+    });
+    elements.fileEditor.dataset.original = content;
+    elements.fileEditStatus.textContent = 'Saved';
+    toast('File saved');
+    await loadFile(path);
+    await loadFiles(path.split('/').slice(0, -1).join('/'));
+  } catch (error) {
+    elements.fileEditStatus.textContent = error.message;
+    elements.fileSave.disabled = false;
+  }
+});
+elements.fileCancel.addEventListener('click', () => {
+  const path = state.files[state.activeFeature]?.selectedFilePath;
+  if (path) void loadFile(path);
+});
 $('#refresh-files').addEventListener('click', () => void loadFiles());
 elements.filesUp.addEventListener('click', () => {
   const path = state.files[state.activeFeature]?.path;
@@ -1742,6 +2026,21 @@ elements.filesUp.addEventListener('click', () => {
 });
 $('#refresh-devices').addEventListener('click', async () => { try { await loadDevices(); toast('Devices refreshed'); } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); } });
 $('#refresh-settings').addEventListener('click', async () => { try { await loadSettings(); toast('System refreshed'); } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); } });
+$('#refresh-dashboard').addEventListener('click', async () => { try { await loadDashboard(); toast('Dashboard refreshed'); } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); } });
+$('#restart-friday').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!window.confirm('Restart Friday now? Active chats and requests will be interrupted. The service should return shortly.')) return;
+  button.disabled = true;
+  $('#restart-friday-status').textContent = 'Scheduling restart…';
+  try {
+    await apiJson('/api/system/restart', { method: 'POST' });
+    $('#restart-friday-status').textContent = 'Restart accepted. Friday should be back shortly.';
+    toast('Friday is restarting. Reopen the page in a few seconds.');
+  } catch (error) {
+    $('#restart-friday-status').textContent = error.message;
+    button.disabled = false;
+  }
+});
 
 elements.model.addEventListener('change', async () => {
   const selected = elements.model.value;
@@ -1837,6 +2136,7 @@ elements.reset.addEventListener('click', async () => {
     }
     state.history = []; state.historyTotal = 0; state.currentSessionPath = data.sessionPath; renderHistory([]);
     await Promise.all([loadModels(), loadThinkingLevels(), loadSessions(data.workspace)]);
+    renderPiContextUsage((await apiJson('/api/status', {}, 'poll-status')).contextUsage);
     updateSessionSubtitle(); toast('New session ready');
   } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); }
   finally {
@@ -1857,8 +2157,10 @@ function initializePi() {
     try {
       await loadWorkspace();
       await Promise.all([loadHistory(), loadModels(), loadThinkingLevels()]);
+      await loadSessions(elements.workspace.value, { quiet: true });
       const current = await apiJson('/api/status', {}, 'startup-status');
       setAgentBusy(current.busy, current.canAbort === true);
+      renderPiContextUsage(current.contextUsage);
       setConnection(true);
       piInitialized = true;
       if (current.busy) startPolling();
@@ -1891,7 +2193,8 @@ elements.logout.addEventListener('click', async () => {
 setConnection(navigator.onLine);
 updateControls();
 void fridayChat.start();
-if (state.activeFeature !== 'friday') void setFeature(state.activeFeature);
+if (state.activeFeature === 'friday') void loadFridayPiConversations().catch((error) => toast(error.message, 'error'));
+else void setFeature(state.activeFeature);
 
 function attachCloneForm(formId, progressId, endpoint, reload) {
   const form = $(formId);
@@ -1923,6 +2226,7 @@ attachCloneForm('#clone-repo-form', '#friday-clone-progress', '/api/repos', load
 attachCloneForm('#clone-pi-repo-form', '#pi-clone-progress', '/api/pi/repos', loadPiRepos);
 resetFinanceForm();
 elements.financeMonth.value = currentFinanceMonth();
+elements.financeSummaryPeriod.addEventListener('change', updateFinanceSummary);
 elements.financeForm.addEventListener('submit', (event) => void addFinance(event));
 elements.financeCancel.addEventListener('click', resetFinanceForm);
 for (const filter of [elements.financeMonth, elements.financeTypeFilter, elements.financeCategoryFilter]) {

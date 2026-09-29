@@ -3,7 +3,17 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, lstat, rm, cp, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { syncGitHubSnapshot, validateGitHubSyncTarget } from '../src/github-sync.js';
+import { millisecondsUntilNextQuarterHour, syncGitHubSnapshot, validateGitHubSyncTarget } from '../src/github-sync.js';
+
+test('scheduled sync delay aligns with the next wall-clock quarter-hour', () => {
+  const cases = [
+    [new Date(2026, 8, 28, 10, 7, 10), 7 * 60_000 + 50_000],
+    [new Date(2026, 8, 28, 10, 14, 59), 1_000],
+    [new Date(2026, 8, 28, 10, 15, 0), 15 * 60_000],
+    [new Date(2026, 8, 28, 10, 59, 40), 20_000],
+  ];
+  for (const [now, expected] of cases) assert.equal(millisecondsUntilNextQuarterHour(now), expected);
+});
 
 test('sync includes settings, credentials, sessions and binary data, excluding only repos, node_modules and symlinks', async () => {
   const root = await mkdtemp(join(tmpdir(), 'github-sync-test-'));
@@ -126,6 +136,56 @@ test('sync pulls remote changes, pushes local changes, and merges distinct paths
   assert.equal(await readFile(join(source, 'remote-only.txt'), 'utf8'), 'remote v2');
   assert.equal(await readFile(join(remote, 'remote-only.txt'), 'utf8'), 'remote v2');
   assert.equal(pushed, 2);
+});
+
+test('sync excludes its own config file on both sides to avoid self-conflicts', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'github-sync-config-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source');
+  const remote = join(root, 'remote', '.friday');
+  const stateFile = join(root, 'state', 'baseline.json');
+  const localConfig = join(source, 'config', 'github-sync.json');
+  const remoteConfig = join(remote, 'config', 'github-sync.json');
+  const localModels = join(source, 'agent', 'models-store.json');
+  const remoteModels = join(remote, 'agent', 'models-store.json');
+  await mkdir(join(source, 'config'), { recursive: true });
+  await mkdir(join(remote, 'config'), { recursive: true });
+  await mkdir(join(source, 'agent'), { recursive: true });
+  await mkdir(join(remote, 'agent'), { recursive: true });
+  await writeFile(localConfig, '{"owner":"old","lastSync":"base"}');
+  await writeFile(remoteConfig, '{"owner":"old","lastSync":"base"}');
+  await writeFile(localModels, '{"provider":"local-base"}');
+  await writeFile(remoteModels, '{"provider":"local-base"}');
+  await writeFile(join(source, 'settings.json'), '{"theme":"dark"}');
+  const backend = {
+    validate: async () => true,
+    prepare: async ({ path }) => { await mkdir(path, { recursive: true }); await cp(remote, join(path, '.friday'), { recursive: true }); },
+    commitAndPush: async ({ path }) => {
+      await rm(join(root, 'remote'), { recursive: true, force: true });
+      await cp(path, join(root, 'remote'), { recursive: true });
+      return { changed: true, pushed: true };
+    },
+  };
+  const baseOptions = { directory: source, snapshotName: '.friday', owner: 'me', repo: 'private', stateFile, backend };
+  await syncGitHubSnapshot(baseOptions);
+  await writeFile(localConfig, '{"owner":"local","lastSync":"new"}');
+  await writeFile(remoteConfig, '{"owner":"remote","lastSync":"old"}');
+  await writeFile(localModels, '{"provider":"local-new"}');
+  await writeFile(remoteModels, '{"provider":"remote-new"}');
+  const options = { ...baseOptions, excludedPaths: ['config/github-sync.json', 'agent/models-store.json'] };
+  await syncGitHubSnapshot(options);
+  assert.equal(await readFile(localConfig, 'utf8'), '{"owner":"local","lastSync":"new"}');
+  assert.equal(await readFile(remoteConfig, 'utf8'), '{"owner":"remote","lastSync":"old"}');
+  assert.equal(await readFile(localModels, 'utf8'), '{"provider":"local-new"}');
+  assert.equal(await readFile(remoteModels, 'utf8'), '{"provider":"remote-new"}');
+
+  await writeFile(localConfig, '{"owner":"local","lastSync":"newer"}');
+  await writeFile(remoteConfig, '{"owner":"remote","lastSync":"newer"}');
+  await syncGitHubSnapshot(options);
+  assert.equal(await readFile(localConfig, 'utf8'), '{"owner":"local","lastSync":"newer"}');
+  assert.equal(await readFile(remoteConfig, 'utf8'), '{"owner":"remote","lastSync":"newer"}');
+  assert.equal(await readFile(localModels, 'utf8'), '{"provider":"local-new"}');
+  assert.equal(await readFile(remoteModels, 'utf8'), '{"provider":"remote-new"}');
 });
 
 test('sync propagates deletions and rejects same-file conflicts without overwriting either side', async (t) => {

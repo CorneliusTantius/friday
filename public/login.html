@@ -20,11 +20,14 @@
       input:focus { outline: 2px solid #8b5cf6; outline-offset: 1px; }
       button { border: 0; background: #7c3aed; color: white; cursor: pointer; font-weight: 700; }
       button:disabled { cursor: wait; opacity: .65; }
+      #login-toast { position: fixed; z-index: 2; top: 1rem; left: 50%; transform: translateX(-50%); border: 1px solid #6b5ca5; border-radius: 10px; background: #201b32; box-shadow: 0 8px 24px #0008; color: #ddd6fe; padding: .7rem 1rem; font-size: .9rem; }
+      #login-toast[hidden] { display: none; }
       #error { min-height: 1.3rem; margin: 0; color: #fda4af; font-size: .85rem; }
     </style>
     <script src="/login.js" defer></script>
   </head>
   <body>
+    <div id="login-toast" role="status" aria-live="polite" hidden>Login required</div>
     <main>
       <p class="brand">Friday</p>
       <h1>Sign in</h1>

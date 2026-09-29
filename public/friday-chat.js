@@ -1,4 +1,4 @@
-export function createFridayChat({ apiJson, renderMarkdown, toast }) {
+export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory }) {
   const messages = document.querySelector('#friday-messages');
   const form = document.querySelector('#friday-form');
   const input = document.querySelector('#friday-message');
@@ -6,7 +6,36 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
   const model = document.querySelector('#friday-model');
   const thinking = document.querySelector('#friday-thinking-level');
   const status = document.querySelector('#friday-status');
+  const contextUsage = document.querySelector('#friday-context-usage');
+  const contextProgress = document.querySelector('#friday-context-progress');
+  const contextLabel = document.querySelector('#friday-context-label');
   const announcement = document.querySelector('#friday-announcement');
+
+  function renderContextUsage(usage) {
+    if (!contextUsage || !contextProgress || !contextLabel) return;
+    const tokens = Number.isFinite(usage?.tokens) ? usage.tokens : null;
+    const windowSize = Number.isFinite(usage?.contextWindow) ? usage.contextWindow : null;
+    const rawPercent = Number.isFinite(usage?.percent)
+      ? usage.percent
+      : tokens !== null && windowSize > 0 ? tokens / windowSize * 100 : null;
+    const percent = rawPercent === null ? null : Math.max(0, Math.min(100, rawPercent));
+    const formatTokens = (value) => value < 1_000 ? String(Math.round(value)) : `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`;
+    contextProgress.value = percent ?? 0;
+    contextUsage.classList.toggle('warning', percent >= 80 && percent < 95);
+    contextUsage.classList.toggle('critical', percent >= 95);
+    const percentLabel = percent === null ? '' : percent > 0 && percent < 0.1 ? '<0.1%' : `${percent.toFixed(1)}%`;
+    contextLabel.textContent = percent === null
+      ? 'Unavailable'
+      : tokens !== null && windowSize !== null
+        ? `${formatTokens(tokens)} / ${formatTokens(windowSize)} (${percentLabel})`
+        : percentLabel;
+    contextUsage.title = percent === null
+      ? 'Context usage is not available yet'
+      : tokens !== null && windowSize !== null
+        ? `${Math.round(tokens).toLocaleString()} of ${Math.round(windowSize).toLocaleString()} context tokens (${percent.toFixed(1)}%)`
+        : `${percent.toFixed(1)}% of the context window used`;
+    contextProgress.setAttribute('aria-valuetext', percent === null ? 'Unavailable' : `${percent.toFixed(1)} percent`);
+  }
 
   let history = [];
   let optimistic = null;
@@ -230,6 +259,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
         busy = runtime.busy;
         canAbort = runtime.canAbort === true;
         applyState(runtime);
+        renderContextUsage(runtime.contextUsage);
       }
       render();
       updateControls();
@@ -331,6 +361,10 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
       updateControls();
       connect();
     }
+  }
+
+  function refreshTranscript() {
+    return sync({ withStatus: true });
   }
 
   function stop() {
@@ -453,9 +487,10 @@ export function createFridayChat({ apiJson, renderMarkdown, toast }) {
         else scheduleFallback();
       }
       if (!source || source.readyState !== 1) scheduleFallback();
+      onHistory?.();
       input.focus();
     }
   });
 
-  return { start, stop };
+  return { start, stop, refreshTranscript };
 }

@@ -7,6 +7,15 @@ import { join, resolve, basename, sep, dirname } from 'node:path';
 import { mkdtemp, readdir, lstat, open, readFile, writeFile, mkdir, rm, rename, unlink, chmod, rmdir } from 'node:fs/promises';
 
 const exec = promisify(execFile);
+
+export function millisecondsUntilNextQuarterHour(now = new Date()) {
+  const current = now instanceof Date ? now : new Date(now);
+  const next = new Date(current);
+  next.setSeconds(0, 0);
+  next.setMinutes((Math.floor(current.getMinutes() / 15) + 1) * 15);
+  return next.getTime() - current.getTime();
+}
+
 const forbiddenDirectories = new Set(['repos', 'node_modules']);
 
 function validTarget(owner, repo) {
@@ -60,14 +69,15 @@ async function writeBaseline(stateFile, owner, repo, files) {
   }
 }
 
-async function scanTree(root, { excluded = [], rejectSymlinks = false } = {}) {
+async function scanTree(root, { excluded = [], excludedPaths = [], rejectSymlinks = false } = {}) {
   const result = new Map();
   const unsafe = new Set();
   const resolvedExclusions = excluded.map((path) => resolve(path));
+  const relativeExclusions = new Set(excludedPaths);
   async function walk(directory, prefix = '') {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (!safeRelativePath(relativePath)) continue;
+      if (!safeRelativePath(relativePath) || relativeExclusions.has(relativePath)) continue;
       const path = join(directory, entry.name);
       const absolute = resolve(path);
       if (resolvedExclusions.some((excludedPath) => absolute === excludedPath || absolute.startsWith(`${excludedPath}${sep}`))) continue;
@@ -180,8 +190,9 @@ function reconcile(local, remote, baseline, unsafeLocal) {
   return merged;
 }
 
-export async function syncGitHubSnapshot({ directory = join(homedir(), '.friday'), snapshotName = basename(directory), owner, repo, managedRepos = [], stateFile, git = 'git', gh = 'gh', backend } = {}) {
+export async function syncGitHubSnapshot({ directory = join(homedir(), '.friday'), snapshotName = basename(directory), owner, repo, managedRepos = [], excludedPaths = [], stateFile, git = 'git', gh = 'gh', backend } = {}) {
   if (!/^[A-Za-z0-9._-]{1,100}$/.test(snapshotName) || snapshotName === '.' || snapshotName === '..') throw new Error('Invalid agent snapshot directory');
+  if (!Array.isArray(excludedPaths) || excludedPaths.some((path) => !safeRelativePath(path))) throw new Error('Invalid excluded sync path');
   const source = resolve(directory);
   const sourceInfo = await lstat(source);
   if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()) throw new Error('Sync source must be a real directory');
@@ -221,14 +232,14 @@ export async function syncGitHubSnapshot({ directory = join(homedir(), '.friday'
 
     const localExclusions = [...managedRepos, ...(stateFile ? [stateFile] : [])];
     const [localScan, remoteScan, baseline] = await Promise.all([
-      scanTree(source, { excluded: localExclusions }),
-      scanTree(snapshot, { rejectSymlinks: true }),
+      scanTree(source, { excluded: localExclusions, excludedPaths }),
+      scanTree(snapshot, { excludedPaths, rejectSymlinks: true }),
       readBaseline(stateFile, owner, repo),
     ]);
     const merged = reconcile(localScan.files, remoteScan.files, baseline, localScan.unsafe);
     const pulled = [...merged].filter(([path, file]) => !same(localScan.files.get(path), file) && same(remoteScan.files.get(path), file)).length;
     // Detect edits made while the remote copy was being prepared before applying pulled changes.
-    const latestLocal = await scanTree(source, { excluded: localExclusions });
+    const latestLocal = await scanTree(source, { excluded: localExclusions, excludedPaths });
     for (const path of new Set([...localScan.files.keys(), ...latestLocal.files.keys()])) {
       if (!same(localScan.files.get(path), latestLocal.files.get(path))) throw new Error(`Local file changed during sync: ${path}`);
     }

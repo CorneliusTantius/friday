@@ -1,3 +1,12 @@
+const loginToast = document.querySelector('#login-toast');
+const loginUrl = new URL(window.location.href);
+if (loginUrl.searchParams.get('notice') === 'login-required') {
+  loginToast.hidden = false;
+  loginUrl.searchParams.delete('notice');
+  history.replaceState(null, '', `${loginUrl.pathname}${loginUrl.search}${loginUrl.hash}`);
+  setTimeout(() => { loginToast.hidden = true; }, 6000);
+}
+
 const form = document.querySelector('#login-form');
 const password = document.querySelector('#password');
 const error = document.querySelector('#error');

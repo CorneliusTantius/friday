@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FridaySdkSession, fridayHistory } from '../src/friday-sdk-session.js';
@@ -51,6 +51,97 @@ test('SDK session aborts an active chat turn', async (t) => {
   assert.equal(await adapter.abort(), false);
 });
 
+test('SDK session lists, creates, opens, renames, and deletes conversations', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'friday-sdk-sessions-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const adapter = new FridaySdkSession({
+    cwd: root,
+    agentDir: join(root, 'config'),
+    dataDir: join(root, 'data'),
+    createModelRuntime: async () => ({}),
+    createSession: async ({ sessionManager }) => ({ session: {
+      sessionManager,
+      sessionFile: sessionManager.getSessionFile(),
+      messages: [],
+      modelRuntime: { getAvailableSnapshot: () => [] },
+      dispose() {},
+    } }),
+  });
+
+  const first = await adapter.newSession();
+  adapter.sessionManager.appendMessage({ role: 'user', content: 'first conversation', timestamp: new Date().toISOString() });
+  adapter.sessionManager.appendMessage({ role: 'assistant', content: 'saved reply', timestamp: new Date().toISOString() });
+  const second = await adapter.newSession();
+  adapter.sessionManager.appendMessage({ role: 'assistant', content: 'second conversation', timestamp: new Date().toISOString() });
+  assert.notEqual(second, first);
+  assert.deepEqual(new Set((await adapter.listSessions()).sessions.map(({ id }) => id)), new Set([second, first]));
+  await adapter.openSession(first);
+  assert.equal(adapter.sessionManager.getSessionId(), first);
+  await adapter.renameSession(first, 'Planning');
+  assert.equal((await adapter.listSessions()).sessions.find(({ id }) => id === first).name, 'Planning');
+  await adapter.deleteSession(second);
+  await assert.rejects(adapter.openSession(second), { status: 404 });
+  const result = await adapter.deleteSession(first);
+  assert.notEqual(result.currentSession, first);
+  assert.equal((await adapter.listSessions()).currentSession, result.currentSession);
+  await adapter.stop();
+});
+
+test('SDK session loads and persists model and thinking defaults without replacing settings', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'friday-sdk-settings-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, 'config');
+  await mkdir(config, { recursive: true });
+  const settingsPath = join(config, 'settings.json');
+  await writeFile(settingsPath, JSON.stringify({ theme: 'dark', defaultProvider: 'mock', defaultModel: 'saved', defaultThinkingLevel: 'low' }));
+  let options;
+  const session = {
+    messages: [], modelRuntime: { getAvailableSnapshot: () => [{ provider: 'mock', id: 'saved' }, { provider: 'mock', id: 'chosen' }] },
+    setModel: async (model) => { session.model = model; },
+    setThinkingLevel: async (level) => { session.thinkingLevel = level; }, dispose() {},
+  };
+  const adapter = new FridaySdkSession({ cwd: root, agentDir: config, dataDir: join(root, 'data'), createModelRuntime: async () => session.modelRuntime, createSession: async (value) => { options = value; return { session }; } });
+  await adapter.start();
+  assert.deepEqual(options.model, { provider: 'mock', id: 'saved' });
+  assert.equal(options.thinkingLevel, 'low');
+  await adapter.setModel('mock', 'chosen');
+  await adapter.setThinkingLevel('high');
+  assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')), { theme: 'dark', defaultProvider: 'mock', defaultModel: 'chosen', defaultThinkingLevel: 'high' });
+  await adapter.stop();
+});
+
+test('Friday SDK adds curated memory context and conversation-scoped Pi tools', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'friday-sdk-memory-pi-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let options;
+  let memoryRead = false;
+  let queued;
+  const adapter = new FridaySdkSession({
+    cwd: root, agentDir: join(root, 'config'), dataDir: join(root, 'data'),
+    createModelRuntime: async () => ({ getAvailableSnapshot: () => [] }),
+    memory: { readMemory: async () => { memoryRead = true; return '# User preferences\\nConcise answers'; } },
+    piControl: {
+      listConversations: async () => [],
+      sendPrompt: async (input) => { queued = input; return { runId: '123e4567-e89b-12d3-a456-426614174000', position: 1 }; },
+      getRunStatus: async () => ({ running: true }),
+      stopRun: async () => ({ stopped: true }),
+    },
+    createSession: async (value) => {
+      options = value;
+      return { session: { sessionFile: value.sessionManager.getSessionFile(), messages: [], modelRuntime: value.modelRuntime, dispose() {} } };
+    },
+  });
+  await adapter.start();
+  assert.equal(memoryRead, true);
+  assert.deepEqual(options.customTools.map((tool) => tool.name), ['pi_list_conversations', 'pi_send_prompt', 'pi_run_status', 'pi_stop_run']);
+  const sendTool = options.customTools.find((tool) => tool.name === 'pi_send_prompt');
+  const result = await sendTool.execute('tool-call', { prompt: 'inspect this' }, undefined, undefined, undefined);
+  assert.match(result.content[0].text, /queued.*run.*123e4567/i);
+  assert.equal(queued.conversationId, adapter.currentSessionId);
+  assert.equal(queued.prompt, 'inspect this');
+  await adapter.stop();
+});
+
 test('SDK session initializes once, disables tools, and disposes', async () => {
   let options;
   let disposed = false;
@@ -61,6 +152,7 @@ test('SDK session initializes once, disables tools, and disposes', async () => {
     prompt: async (text) => { session.messages.push({ role: 'assistant', content: [{ type: 'text', text } ] }); },
     modelRuntime: { getAvailableSnapshot: () => [{ provider: 'mock', id: 'next-model' }] },
     getAvailableThinkingLevels: () => ['off', 'low', 'high'],
+    getContextUsage: () => ({ tokens: 40_000, contextWindow: 200_000, percent: 20 }),
     setModel: async (model) => { session.model = model; },
     setThinkingLevel: (level) => { session.thinkingLevel = level; session.level = level; },
     dispose: () => { disposed = true; },
@@ -68,6 +160,7 @@ test('SDK session initializes once, disables tools, and disposes', async () => {
   const adapter = new FridaySdkSession({ cwd: '/tmp/friday', agentDir: '/tmp/friday-sdk-config', sessionManager: {}, model: 'initial-model', thinkingLevel: 'low', createModelRuntime: async (paths) => paths, createSession: async (value) => { options = value; return { session }; } });
   adapter.onEvent((event) => events.push(event));
   assert.equal(await adapter.chat('test'), 'test');
+  assert.deepEqual(await adapter.getContextUsage(), { tokens: 40_000, contextWindow: 200_000, percent: 20 });
   assert.equal(options.cwd, '/tmp/friday');
   assert.deepEqual(options.tools, ['bash', 'edit', 'read', 'write']);
   assert.equal(options.noTools, undefined);

@@ -1,11 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
-import { lstat, mkdir, readdir, realpath, readFile } from 'node:fs/promises';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 
 export const MAX_AGENT_FILE_BYTES = 1024 * 1024;
-export const MAX_AGENT_ENTRIES = 1000;
-const secretName = /^(auth\.json|credentials\.json|settings\.json|models\.json|\.env(?:\..*)?|id_(?:rsa|ed25519|ecdsa)|.*\.(?:pem|key))$/i;
-const secretText = /(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password)\s*[:=]\s*["']?\S+)/i;
 
 function rootPath(root, home, env) {
   if (root === 'friday') return resolve(env.FRIDAY_HOME || join(home, '.friday'));
@@ -19,10 +17,10 @@ async function prepareRoot(path) {
   if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('agent files root must be a directory, not a symlink');
   return realpath(path);
 }
-function safeName(name) { return !name.startsWith('.') && !secretName.test(name); }
-function within(root, path) { return path === root || path.startsWith(`${root}${sep}`); }
+
+function isWithin(root, path) { return path === root || path.startsWith(`${root}${sep}`); }
 function relativePath(input = '') {
-  if (typeof input !== 'string' || input.includes('\\') || input.startsWith('/') || input.split('/').some((part) => part === '..' || part === '.')) throw new Error('invalid file path');
+  if (typeof input !== 'string' || input.includes('\\') || input.includes('\0') || input.startsWith('/') || (input !== '' && input.split('/').some((part) => !part || part === '.' || part === '..'))) throw new Error('invalid file path');
   return input;
 }
 
@@ -35,50 +33,90 @@ async function rejectSymlinkComponents(base, rel) {
   }
 }
 
-export async function listAgentFiles({ root, path = '', home = homedir(), env = process.env } = {}) {
+async function resolveAgentPath(root, path, home, env) {
   const base = await prepareRoot(rootPath(root, home, env));
   const rel = relativePath(path);
-  if (rel.split('/').some((part) => part && !safeName(part))) throw new Error('file path is unavailable');
   const target = resolve(base, rel);
-  if (!within(base, target)) throw new Error('path outside root');
+  if (!isWithin(base, target)) throw new Error('path outside root');
   await rejectSymlinkComponents(base, rel);
   let canonical;
-  try { canonical = await realpath(target); } catch { throw new Error('directory not found'); }
-  if (!within(base, canonical)) throw new Error('path outside root');
+  try { canonical = await realpath(target); } catch { throw new Error('file or directory not found'); }
+  if (!isWithin(base, canonical)) throw new Error('path outside root');
+  return { base, rel, target };
+}
+
+export async function listAgentFiles({ root, path = '', home = homedir(), env = process.env } = {}) {
+  const { base, rel, target } = await resolveAgentPath(root, path, home, env);
   const stat = await lstat(target);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('path is not a directory');
   const names = await readdir(target, { withFileTypes: true });
-  if (names.length > MAX_AGENT_ENTRIES) throw new Error(`directory exceeds ${MAX_AGENT_ENTRIES} entries`);
+  if (names.length > 1000) throw new Error('directory exceeds 1000 entries');
   const entries = [];
   for (const item of names) {
-    if (!safeName(item.name)) continue;
     const child = join(target, item.name);
     const info = await lstat(child);
     if (info.isSymbolicLink() || (!info.isFile() && !info.isDirectory())) continue;
-    entries.push({ name: item.name, path: rel ? `${rel}/${item.name}` : item.name, type: info.isDirectory() ? 'directory' : 'file', size: info.isFile() ? info.size : null, modified: info.mtime.toISOString(), workspacePath: null });
+    const childPath = rel ? `${rel}/${item.name}` : item.name;
+    entries.push({
+      name: item.name,
+      path: childPath,
+      type: info.isDirectory() ? 'directory' : 'file',
+      size: info.isFile() ? info.size : null,
+      modified: info.mtime.toISOString(),
+      previewable: info.isDirectory() || info.isFile(),
+      editable: info.isFile(),
+      workspacePath: null,
+    });
   }
   entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'directory' ? -1 : 1));
   return { root, directory: base, path: rel, entries };
 }
 
 export async function readAgentFile({ root, path, home = homedir(), env = process.env, maxBytes = MAX_AGENT_FILE_BYTES } = {}) {
-  const base = await prepareRoot(rootPath(root, home, env));
-  const rel = relativePath(path);
+  const { rel, target } = await resolveAgentPath(root, path, home, env);
   if (!rel) throw new Error('file path required');
-  if (rel.split('/').some((part) => !safeName(part))) throw new Error('file cannot be previewed');
-  const target = resolve(base, rel);
-  if (!within(base, target)) throw new Error('path outside root');
-  await rejectSymlinkComponents(base, rel);
-  let canonical;
-  try { canonical = await realpath(target); } catch { throw new Error('file not found'); }
-  if (!within(base, canonical)) throw new Error('path outside root');
   const info = await lstat(target);
-  if (info.isSymbolicLink() || !info.isFile() || !safeName(rel.split('/').at(-1))) throw new Error('file cannot be previewed');
+  if (info.isSymbolicLink() || !info.isFile()) throw new Error('file cannot be previewed');
   if (info.size > maxBytes) throw new Error(`file exceeds ${maxBytes} bytes`);
   const data = await readFile(target);
   if (data.length > maxBytes) throw new Error(`file exceeds ${maxBytes} bytes`);
   if (data.includes(0)) throw new Error('binary files cannot be previewed');
-  const content = data.toString('utf8');
-  if (secretText.test(content)) throw new Error('file contains credential-like content');
-  return { root, path: rel, workspacePath: null, size: data.length, modified: info.mtime.toISOString(), content };
+  let content;
+  try { content = new TextDecoder('utf-8', { fatal: true }).decode(data); }
+  catch { throw new Error('binary files cannot be previewed'); }
+  return {
+    root,
+    path: rel,
+    workspacePath: null,
+    size: data.length,
+    modified: info.mtime.toISOString(),
+    content,
+    editable: true,
+    editorType: rel.toLowerCase().endsWith('.md') || rel.toLowerCase().endsWith('.markdown') ? 'markdown' : rel.toLowerCase().endsWith('.json') ? 'json' : 'text',
+  }; 
+}
+
+export async function writeAgentFile({ root, path, content, home = homedir(), env = process.env } = {}) {
+  if (typeof content !== 'string') throw new Error('file content is required');
+  if (Buffer.byteLength(content) > 512 * 1024) throw new Error('file exceeds 512 KB');
+  if (content.includes('\0')) throw new Error('file content contains binary data');
+
+  const { rel, target } = await resolveAgentPath(root, path, home, env);
+  if (!rel) throw new Error('file path required');
+  if (rel.toLowerCase().endsWith('.json')) {
+    try { JSON.parse(content); } catch { throw new Error('content must be valid JSON'); }
+  }
+  const info = await lstat(target);
+  if (info.isSymbolicLink() || !info.isFile()) throw new Error('file cannot be edited');
+  if (info.size > MAX_AGENT_FILE_BYTES) throw new Error(`file exceeds ${MAX_AGENT_FILE_BYTES} bytes`);
+
+  const temporary = join(dirname(target), `.friday-edit-${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, content, { mode: 0o600, flag: 'wx' });
+    await rename(temporary, target);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+  const updated = await lstat(target);
+  return { root, path: rel, size: Buffer.byteLength(content), modified: updated.mtime.toISOString() };
 }

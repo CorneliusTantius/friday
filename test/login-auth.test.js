@@ -35,8 +35,12 @@ test('password login protects the app with a memory-only session cookie', { time
 
   const loginPage = await fetch(`${base}/login`);
   assert.equal(loginPage.status, 200);
-  assert.match(await loginPage.text(), /id="password"/);
-  assert.equal((await fetch(`${base}/login.js`)).status, 200);
+  const loginHtml = await loginPage.text();
+  assert.match(loginHtml, /id="password"/);
+  assert.match(loginHtml, /id="login-toast"/);
+  const loginScript = await fetch(`${base}/login.js`);
+  assert.equal(loginScript.status, 200);
+  assert.match(await loginScript.text(), /notice.*login-required/s);
   const health = await fetch(`${base}/healthz`);
   assert.equal(health.status, 200);
   assert.deepEqual(await health.json(), { status: 'ok' });
@@ -58,12 +62,16 @@ test('password login protects the app with a memory-only session cookie', { time
   assert.match(setCookie, /SameSite=Strict/);
   assert.doesNotMatch(setCookie, /Max-Age|Expires=/);
   assert.equal((await client.request('/')).status, 200);
-  assert.equal((await client.request('/app.js')).status, 200);
+  const appScript = await client.request('/app.js');
+  assert.equal(appScript.status, 200);
+  assert.match(await appScript.text(), /location\.replace\('\/login\?notice=login-required'\)/);
 
   const logout = await client.request('/api/logout', { method: 'POST' });
   assert.equal(logout.status, 204);
   assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);
-  assert.equal((await client.request('/api/status')).status, 401);
+  const expiredRequest = await client.request('/api/status');
+  assert.equal(expiredRequest.status, 401);
+  assert.deepEqual(await expiredRequest.json(), { error: 'Login required' });
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const failed = await fetch(`${base}/api/login`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'wrong' }),

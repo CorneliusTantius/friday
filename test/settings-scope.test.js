@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createAppClient } from '../test-support/app-client.js';
 
@@ -15,6 +15,9 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   const port = 20000 + Math.floor(Math.random() * 30000);
   const piCommand = join(home, 'pi');
   const marker = join(home, 'pi-started');
+  const fakeBin = join(home, 'bin');
+  await mkdir(fakeBin);
+  await writeFile(join(fakeBin, 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
   await mkdir(join(home, 'friday', 'config'), { recursive: true });
   await writeFile(join(home, 'friday', 'config', 'config.json'), JSON.stringify({ workspace: join(home, '.pi') }));
   await mkdir(join(home, 'friday', 'repos', 'legacy-friday', '.git'), { recursive: true });
@@ -28,6 +31,8 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
       FRIDAY_HOME: join(home, 'friday'),
       PI_CODING_AGENT_DIR: join(home, '.pi', 'agent'),
       PI_COMMAND: piCommand,
+      INVOCATION_ID: '',
+      PATH: `${fakeBin}${delimiter}${process.env.PATH || ''}`,
       PORT: String(port),
     },
     stdio: 'ignore',
@@ -45,9 +50,30 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
     await delay(100);
   }
   assert.ok(ready, 'server should start');
+  for (const [url, method] of [
+    ['/api/friday/files', 'GET'],
+    ['/api/friday/files/content?path=config/auth.json', 'GET'],
+    ['/api/friday/files/content?path=config/auth.json', 'PUT'],
+    ['/api/pi/files', 'GET'],
+    ['/api/pi/files/content?path=agent/auth.json', 'GET'],
+    ['/api/pi/files/content?path=agent/auth.json', 'PUT'],
+  ]) {
+    assert.equal((await request(url, { method })).status, 401, `${method} ${url} requires app login`);
+  }
   await client.login();
+  const appHtml = await (await request('/')).text();
+  assert.doesNotMatch(appHtml, /data-feature="(?:friday-settings|pi-settings)"/);
+  assert.match(appHtml, /<details open class="settings-group friday-settings-group">/);
+  assert.ok(appHtml.indexOf('data-feature="dashboard"') < appHtml.indexOf('Friday Agent'));
+  assert.match(appHtml, /<h2 id="server-settings-heading">Server<\/h2>[\s\S]*<h3 id="connected-devices-heading">Connected devices<\/h3>/);
+  assert.match(appHtml, /id="restart-friday"/);
+  const appJs = await (await request('/app.js')).text();
+  const settingsRenderer = appJs.slice(appJs.indexOf('function renderSettings'), appJs.indexOf('function renderDashboardCard'));
+  assert.doesNotMatch(settingsRenderer, /Current session|Pi command|Thinking|\['Model'/);
   assert.deepEqual((await (await request('/api/repos')).json()).repos.map(({ name }) => name), ['legacy-friday']);
   assert.deepEqual((await (await request('/api/pi/repos')).json()).repos.map(({ name }) => name), ['legacy-pi']);
+  const restart = await request('/api/system/restart', { method: 'POST' });
+  assert.equal(restart.status, 409, 'manual server instances must not terminate without a systemd restart policy');
 
   const authorized = await request('/api/friday/auth');
   assert.equal(authorized.status, 200);
@@ -65,10 +91,32 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   const fridayFiles = await (await request('/api/friday/files')).json();
   assert.equal(fridayFiles.directory, join(home, 'friday'));
   const fridayConfigFiles = await (await request('/api/friday/files?path=config')).json();
-  assert.ok(!fridayConfigFiles.entries.some((item) => item.name === 'auth.json'));
-  assert.equal((await request('/api/friday/files/content?path=config/auth.json')).status, 400);
+  assert.equal(fridayConfigFiles.entries.find((item) => item.name === 'auth.json').previewable, true);
+  assert.equal(fridayConfigFiles.entries.find((item) => item.name === 'auth.json').editable, true);
+  await writeFile(join(home, 'friday', 'config', 'settings.json'), '{"theme":"dark"}');
+  const authPreview = await (await request('/api/friday/files/content?path=config/auth.json')).json();
+  assert.match(authPreview.content, /friday-server-test-secret/);
+  const authWrite = await request('/api/friday/files/content?path=config/auth.json', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: authPreview.content }),
+  });
+  assert.equal(authWrite.status, 200);
+  const settingsPreview = await (await request('/api/friday/files/content?path=config/settings.json')).json();
+  assert.equal(settingsPreview.editable, true);
+  const settingsWrite = await request('/api/friday/files/content?path=config/settings.json', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: '{"theme":"light"}' }),
+  });
+  assert.equal(settingsWrite.status, 200);
+  assert.equal((await settingsWrite.json()).path, 'config/settings.json');
   const piFiles = await (await request('/api/pi/files')).json();
   assert.equal(piFiles.directory, join(home, '.pi'));
+  await mkdir(join(home, '.pi', 'agent'), { recursive: true });
+  await writeFile(join(home, '.pi', 'agent', 'README.md'), '# Pi notes');
+  const markdown = await (await request('/api/pi/files/content?path=agent/README.md')).json();
+  assert.equal(markdown.editorType, 'markdown');
+  const markdownWrite = await request('/api/pi/files/content?path=agent/README.md', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: '# Updated notes\n\n**Edited**' }),
+  });
+  assert.equal(markdownWrite.status, 200);
   assert.equal((await request('/api/files/content?path=.friday/config/auth.json')).status, 404);
   await assert.rejects(readFile(join(home, '.pi', 'agent', 'auth.json')), { code: 'ENOENT' });
   const oauth = await request('/api/friday/auth/login', {
@@ -105,7 +153,9 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   const saveSync = async (scope, owner, repo) => request(`/api/${scope}/sync/settings`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ owner, repo }),
   });
-  assert.equal((await saveSync('friday', 'owner', 'friday-private')).status, 200);
+  const fridaySyncStart = await saveSync('friday', 'owner', 'friday-private');
+  assert.equal(fridaySyncStart.status, 200);
+  assert.equal((await fridaySyncStart.json()).status, 'Syncing…', 'saving a target starts automatic sync');
   assert.equal((await saveSync('pi', 'owner', 'pi-private')).status, 200);
   assert.equal((await (await request('/api/friday/sync/settings')).json()).repo, 'friday-private');
   assert.equal((await (await request('/api/pi/sync/settings')).json()).repo, 'pi-private');

@@ -15,7 +15,7 @@ test('financial tracker API supports persistent transaction CRUD and serves its 
   const port = 20000 + Math.floor(Math.random() * 30000);
   const child = spawn(process.execPath, [serverPath], {
     cwd: home,
-    env: { ...process.env, HOME: home, FRIDAY_HOME: join(home, '.friday'), PORT: String(port), FRIDAY_CHAT_DRIVER: 'rpc' },
+    env: { ...process.env, HOME: home, FRIDAY_HOME: join(home, '.friday'), PORT: String(port) },
     stdio: 'ignore',
   });
   t.after(async () => {
@@ -35,6 +35,10 @@ test('financial tracker API supports persistent transaction CRUD and serves its 
   const page = await (await request('/')).text();
   assert.match(page, /id="finances-feature"/);
   assert.match(page, /data-feature="finances"/);
+  assert.match(page, /<option value="1" selected>Past 1 month<\/option>/);
+  assert.match(page, /<option value="3">Past 3 months<\/option>/);
+  assert.match(page, /<option value="6">Past 6 months<\/option>/);
+  assert.match(page, /<option value="12">Past 12 months<\/option>/);
   assert.equal((await (await request('/styles.css')).text()).includes('.finance-page'), true);
   const create = await request('/api/finances', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

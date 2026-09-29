@@ -19,6 +19,9 @@
         </div>
 
         <nav class="feature-nav" aria-label="Features">
+          <div class="nav-group">
+          <button class="feature" type="button" data-feature="dashboard" aria-label="Dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3h8v6h-8zM3 17h8v4H3z"/></svg><span>Dashboard</span></button>
+          </div>
           <div class="nav-group"><span class="nav-group-title">Friday Agent</span>
           <button class="feature active" type="button" data-feature="friday" aria-current="page" aria-label="Friday">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H8l-4 3V6Z"/><path d="M8 10h8M8 14h5"/></svg>
@@ -31,13 +34,11 @@
             <span>Files</span>
           </button>
           <button class="feature" type="button" data-feature="finances" aria-label="Financial tracker"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 5-7"/></svg><span>Finances</span></button>
-          <button class="feature" type="button" data-feature="friday-settings" aria-label="Friday settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.25a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34A1.7 1.7 0 0 0 14 20.93V21h-4v-.08A1.7 1.7 0 0 0 8.96 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.04 14H3v-4h.08A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 10 3.01V3h4v.08a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06L19.8 7l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.96 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/></svg><span>Settings</span></button>
           </div>
           <div class="nav-group"><span class="nav-group-title">Pi Agent</span>
           <button class="feature" type="button" data-feature="pi" aria-label="Pi"><span class="feature-pi-icon" aria-hidden="true">π</span><span>Pi</span></button>
           <button class="feature" type="button" data-feature="pi-repos" aria-label="Pi repositories"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-10Z"/><path d="M3.5 10h17"/></svg><span>Repos</span></button>
           <button class="feature" type="button" data-feature="pi-files" aria-label="Pi files"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6A2.5 2.5 0 0 1 20.5 9.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z"/></svg><span>Files</span></button>
-          <button class="feature" type="button" data-feature="pi-settings" aria-label="Pi settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.25a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34A1.7 1.7 0 0 0 14 20.93V21h-4v-.08A1.7 1.7 0 0 0 8.96 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.04 14H3v-4h.08A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 10 3.01V3h4v.08a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06L19.8 7l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.96 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/></svg><span>Settings</span></button>
           </div>
           <div class="nav-group"><span class="nav-group-title">System</span>
           <button class="feature" type="button" data-feature="settings" aria-label="System settings">
@@ -55,25 +56,41 @@
       </aside>
 
       <main class="feature-shell">
-        <section id="friday-feature" class="feature-layout">
+        <section id="friday-feature" class="feature-layout friday-layout">
+          <aside class="context-sidebar friday-sidebar" id="friday-sidebar" aria-label="Friday conversations">
+            <div class="context-heading"><span>Conversations</span><button class="mobile-close icon-button" type="button" data-close-drawer aria-label="Close conversations">×</button></div>
+            <button id="friday-new-conversation" class="secondary" type="button">＋ New Conversation</button>
+            <button id="friday-review-memory" class="secondary" type="button">Review daily memory notes</button>
+            <div class="panel-heading"><span>Recent conversations</span><button id="friday-refresh-sessions" class="icon-button" type="button" title="Refresh conversations" aria-label="Refresh conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button></div>
+            <div id="friday-session-list" class="session-list" aria-label="Saved conversations"></div>
+          </aside>
           <div class="app friday-app">
             <header class="header">
-              <div>
-                <h1>Friday</h1>
-                <p>Your general chat, separate from Pi workspaces</p>
+              <div class="header-title">
+                <button class="drawer-toggle icon-button" type="button" data-open-drawer="friday-sidebar" aria-label="Open conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+                <div><h1>Friday</h1>
+                <p>Your general chat, separate from Pi workspaces</p></div>
               </div>
-              <span id="friday-status" class="status" role="status" aria-live="polite">Connecting…</span>
+              <div class="friday-header-actions">
+                <span id="friday-status" class="status" role="status" aria-live="polite">Connecting…</span>
+                <button id="friday-pi-sessions-toggle" class="drawer-toggle icon-button" type="button" data-open-drawer="friday-pi-sidebar" aria-label="Open Pi conversations" title="Pi conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/><path d="M15 4v16"/></svg></button>
+              </div>
             </header>
-            <p class="friday-tool-notice">Friday’s bash, read, edit, and write tools run with the Friday server account; the workspace is not a sandbox.</p>
+            <p class="friday-tool-notice">Friday’s file and shell tools run with the server account; workspaces are not sandboxes. Pi prompts are queued asynchronously.</p>
             <section id="friday-messages" class="messages" aria-label="Friday conversation"></section>
             <div id="friday-announcement" class="sr-only" role="status" aria-live="polite"></div>
             <form id="friday-form" class="composer">
               <label class="sr-only" for="friday-message">Message Friday</label>
               <textarea id="friday-message" rows="1" maxlength="20000" placeholder="Talk to Friday…" required></textarea>
               <div class="composer-footer">
-                <div class="agent-controls">
-                  <label><span>Model</span><select id="friday-model" aria-label="Friday model"></select></label>
-                  <label><span>Thinking</span><select id="friday-thinking-level" aria-label="Friday thinking level"></select></label>
+                <div class="agent-control-stack">
+                  <div class="agent-controls">
+                    <label><span>Model</span><select id="friday-model" aria-label="Friday model"></select></label>
+                    <label><span>Thinking</span><select id="friday-thinking-level" aria-label="Friday thinking level"></select></label>
+                  </div>
+                  <div class="context-usage" id="friday-context-usage" aria-label="Friday context usage">
+                    <span class="context-usage-label">Context</span><progress id="friday-context-progress" max="100" value="0" aria-label="Friday context-window usage"></progress><span id="friday-context-label">Unavailable</span>
+                  </div>
                 </div>
                 <button id="friday-send" class="send-button" type="submit" aria-label="Send message to Friday">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-5 14-2.5-5.5L5 12Z"/></svg>
@@ -81,6 +98,10 @@
               </div>
             </form>
           </div>
+          <aside class="context-sidebar friday-pi-sidebar" id="friday-pi-sidebar" aria-label="Pi conversations">
+            <div class="context-heading"><span>Pi conversations</span><div><button id="friday-pi-sessions-refresh" class="icon-button" type="button" title="Refresh Pi conversations" aria-label="Refresh Pi conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button><button class="mobile-close icon-button" type="button" data-close-drawer aria-label="Close Pi conversations">×</button></div></div>
+            <div id="friday-pi-session-list" class="session-list" aria-label="Saved Pi conversations"></div>
+          </aside>
         </section>
 
         <section id="pi-feature" class="feature-layout pi-layout" hidden>
@@ -130,15 +151,20 @@
               <label class="sr-only" for="message">Message Friday</label>
               <textarea id="message" rows="1" maxlength="20000" placeholder="Message Friday…" required></textarea>
               <div class="composer-footer">
-                <div class="agent-controls">
-                  <label>
-                    <span>Model</span>
-                    <select id="model" aria-label="Model"></select>
-                  </label>
-                  <label>
-                    <span>Thinking</span>
-                    <select id="thinking-level" aria-label="Thinking level"></select>
-                  </label>
+                <div class="agent-control-stack">
+                  <div class="agent-controls">
+                    <label>
+                      <span>Model</span>
+                      <select id="model" aria-label="Model"></select>
+                    </label>
+                    <label>
+                      <span>Thinking</span>
+                      <select id="thinking-level" aria-label="Thinking level"></select>
+                    </label>
+                  </div>
+                  <div class="context-usage" id="pi-context-usage" aria-label="Pi context usage">
+                    <span class="context-usage-label">Context</span><progress id="pi-context-progress" max="100" value="0" aria-label="Pi context-window usage"></progress><span id="pi-context-label">Unavailable</span>
+                  </div>
                 </div>
                 <div class="send-controls">
                   <span id="status" class="status" role="status" aria-live="polite">Starting…</span>
@@ -181,9 +207,18 @@
               </div>
             </header>
             <pre id="file-content" class="file-content"><span class="empty-placeholder">Select a file from the workspace.</span></pre>
+            <div id="file-editor-layout" class="file-editor-layout" hidden>
+              <textarea id="file-editor" class="file-content file-editor" spellcheck="false" aria-label="Edit file"></textarea>
+              <article id="file-markdown-preview" class="file-markdown-preview message-content" aria-label="Rendered Markdown" hidden></article>
+            </div>
+            <div id="file-edit-actions" class="file-edit-actions" hidden><span id="file-edit-status" role="status" aria-live="polite"></span><button id="file-save" class="secondary" type="button">Save file</button><button id="file-cancel" class="secondary" type="button">Cancel</button></div>
           </section>
         </section>
 
+        <section id="dashboard-feature" class="feature-page dashboard-page" hidden>
+          <header class="feature-header page-header"><div><span class="eyebrow">Overview</span><h1>Dashboard</h1><p>Friday, Pi, and host health at a glance.</p></div><button id="refresh-dashboard" class="secondary compact" type="button">Refresh</button></header>
+          <div id="dashboard-cards" class="dashboard-cards" aria-live="polite"></div>
+        </section>
         <section id="repos-feature" class="feature-page" hidden><header class="feature-header page-header"><div><h1>Friday repositories</h1><p>Cloned into ~/.friday/workspace/repos</p></div></header><form id="clone-repo-form" class="repo-form"><label for="clone-repo-url">Git URL</label><input id="clone-repo-url" type="url" required placeholder="https://github.com/owner/repo.git"><button type="submit">Clone</button></form><div id="friday-clone-progress" class="clone-progress" role="status" hidden><progress aria-label="Friday repository clone in progress"></progress><span>Cloning repository…</span></div><div id="repo-list" class="device-list"></div></section>
         <section id="pi-repos-feature" class="feature-page" hidden><header class="feature-header page-header"><div><h1>Pi repositories</h1><p>Cloned into ~/.pi/workspace/repos</p></div></header><form id="clone-pi-repo-form" class="repo-form"><label for="clone-pi-repo-url">Git URL</label><input id="clone-pi-repo-url" type="url" required placeholder="https://github.com/owner/repo.git"><button type="submit">Clone for Pi</button></form><div id="pi-clone-progress" class="clone-progress" role="status" hidden><progress aria-label="Pi repository clone in progress"></progress><span>Cloning repository…</span></div><div id="pi-repo-list" class="device-list"></div></section>
         <section id="notes-feature" class="feature-layout notes-layout" hidden>
@@ -211,7 +246,8 @@
         </section>
         <section id="finances-feature" class="feature-page finance-page" hidden>
           <header class="feature-header page-header"><div><span class="eyebrow">Friday Agent</span><h1>Financial tracker</h1><p>Keep a simple record of income and spending.</p></div></header>
-          <div class="finance-summary" aria-label="Financial summary"><article><span>Balance this month</span><strong id="finance-balance">Rp0</strong></article><article><span>Income this month</span><strong id="finance-income">Rp0</strong></article><article><span>Expenses this month</span><strong id="finance-expenses">Rp0</strong></article></div>
+          <div class="finance-summary-header"><h2>Summary</h2><label for="finance-summary-period">Period<select id="finance-summary-period"><option value="1" selected>Past 1 month</option><option value="3">Past 3 months</option><option value="6">Past 6 months</option><option value="12">Past 12 months</option></select></label></div>
+          <div class="finance-summary" aria-label="Financial summary"><article><span>Balance</span><strong id="finance-balance">Rp0</strong></article><article><span>Income</span><strong id="finance-income">Rp0</strong></article><article><span>Expenses</span><strong id="finance-expenses">Rp0</strong></article></div>
           <form id="finance-form" class="finance-form"><label>Type<select name="type"><option value="expense">Expense</option><option value="income">Income</option></select></label><label>Amount (IDR)<input name="amount" type="number" inputmode="numeric" min="1" step="1" placeholder="e.g. 50000" required></label><label>Date<input name="date" type="date" required></label><label>Category<select name="category"><option>Housing</option><option>Food</option><option>Transport</option><option>Utilities</option><option>Health</option><option>Entertainment</option><option>Shopping</option><option>Income</option><option>Other</option></select></label><label class="finance-description">Description<input name="description" maxlength="120" placeholder="What was this for?"></label><button id="finance-submit" type="submit">Add entry</button><button id="finance-cancel" class="secondary" type="button" hidden>Cancel</button></form>
           <section class="finance-transactions" aria-labelledby="finance-transactions-heading">
             <header class="finance-toolbar"><h2 id="finance-transactions-heading">Transactions</h2><div class="finance-filters"><label>Month<input id="finance-month" type="month"></label><label>Type<select id="finance-type-filter"><option value="all">All types</option><option value="income">Income</option><option value="expense">Expenses</option></select></label><label>Category<select id="finance-category-filter"><option value="all">All categories</option><option>Housing</option><option>Food</option><option>Transport</option><option>Utilities</option><option>Health</option><option>Entertainment</option><option>Shopping</option><option>Income</option><option>Other</option></select></label><button id="finance-export" class="secondary" type="button">Export CSV</button></div></header>
@@ -228,44 +264,37 @@
             <button id="refresh-settings" class="secondary compact" type="button">Refresh</button>
           </header>
           <div class="settings-groups">
-            <section id="friday-settings-view" class="settings-group friday-settings-group" aria-labelledby="friday-settings-heading">
-              <header class="section-heading">
-                <div><h2 id="friday-settings-heading">Friday Chat</h2><p>General conversation, separate from Pi workspaces and tools.</p></div>
-              </header>
-              <div id="friday-settings-list" class="settings-list"></div>
-              <section class="auth-panel" data-auth-provider="friday" aria-label="Friday provider authentication"></section>
-              <section class="github-sync" data-sync="friday"><h3>GitHub sync</h3><form><label>Owner <input name="owner" required autocomplete="off"></label><label>Repository <input name="repo" required autocomplete="off"></label><button class="secondary" type="submit">Save</button><button class="secondary" type="button" data-sync-run>Sync now</button></form><p class="sync-status" role="status" aria-live="polite"></p><p class="sync-help">Syncs ~/.friday/ including settings, credentials, sessions and memory to a private GitHub repository (created if missing). Repositories, node_modules, .git metadata and symlinks are excluded. Secrets and conversation history are included—anyone with repo access can read them.</p></section>
-            </section>
-            <section id="pi-settings-view" class="settings-group pi-settings-group" aria-labelledby="runtime-settings-heading">
-              <header class="section-heading">
-                <div><h2 id="runtime-settings-heading">Pi runtime</h2><p>Current agent state and workspace.</p></div>
-              </header>
-              <div id="settings-list" class="settings-list"></div>
-              <section class="auth-panel" data-auth-provider="pi" aria-label="Pi provider authentication"></section>
-              <section class="github-sync" data-sync="pi"><h3>GitHub sync</h3><form><label>Owner <input name="owner" required autocomplete="off"></label><label>Repository <input name="repo" required autocomplete="off"></label><button class="secondary" type="submit">Save</button><button class="secondary" type="button" data-sync-run>Sync now</button></form><p class="sync-status" role="status" aria-live="polite"></p><p class="sync-help">Syncs ~/.pi/ including settings, credentials, sessions and memory to a private GitHub repository (created if missing). Repositories, node_modules, .git metadata and symlinks are excluded. Secrets and conversation history are included—anyone with repo access can read them.</p></section>
-              <div class="settings-subsection">
-                <header class="section-heading settings-subheading">
-                  <div><h3 id="extensions-heading">Installed Pi extensions</h3><p>Configured packages available to Pi.</p></div>
-                </header>
-                <div id="extensions-list" class="extensions-list"></div>
+            <details open class="settings-group friday-settings-group">
+              <summary class="settings-group-summary"><div><h2 id="friday-settings-heading">Friday Chat</h2><p>General conversation, workspace, and provider.</p></div><span class="settings-chevron" aria-hidden="true">⌄</span></summary>
+              <div class="settings-group-content">
+                <div id="friday-settings-list" class="settings-list"></div>
+                <section class="auth-panel" data-auth-provider="friday" aria-label="Friday provider authentication"></section>
+                <section class="github-sync" data-sync="friday"><h3>GitHub sync</h3><form><label>Owner <input name="owner" required autocomplete="off"></label><label>Repository <input name="repo" required autocomplete="off"></label><button class="secondary" type="submit">Save</button><button class="secondary" type="button" data-sync-run>Sync now</button></form><p class="sync-status" role="status" aria-live="polite"></p><p class="sync-help">Syncs ~/.friday/ including settings, credentials, sessions and memory to a private GitHub repository (created if missing). Repositories, node_modules, .git metadata and symlinks are excluded. Secrets and conversation history are included—anyone with repo access can read them.</p></section>
               </div>
-            </section>
-            <section id="system-settings-view" class="settings-group" aria-labelledby="server-settings-heading">
-              <header class="section-heading">
-                <div><h2 id="server-settings-heading">Friday server</h2><p>Host configuration and resource usage.</p></div>
-              </header>
-              <div id="server-settings-list" class="settings-list"></div>
-              <section class="github-system"><h3>GitHub CLI</h3><p id="github-cli-status" role="status">Loading…</p></section>
-            </section>
+            </details>
+            <details open class="settings-group pi-settings-group">
+              <summary class="settings-group-summary"><div><h2 id="runtime-settings-heading">Pi runtime</h2><p>Workspace, extensions, and provider.</p></div><span class="settings-chevron" aria-hidden="true">⌄</span></summary>
+              <div class="settings-group-content">
+                <div id="settings-list" class="settings-list"></div>
+                <section class="auth-panel" data-auth-provider="pi" aria-label="Pi provider authentication"></section>
+                <section class="github-sync" data-sync="pi"><h3>GitHub sync</h3><form><label>Owner <input name="owner" required autocomplete="off"></label><label>Repository <input name="repo" required autocomplete="off"></label><button class="secondary" type="submit">Save</button><button class="secondary" type="button" data-sync-run>Sync now</button></form><p class="sync-status" role="status" aria-live="polite"></p><p class="sync-help">Syncs ~/.pi/ including settings, credentials, sessions and memory to a private GitHub repository (created if missing). Repositories, node_modules, .git metadata and symlinks are excluded. Secrets and conversation history are included—anyone with repo access can read them.</p></section>
+                <div class="settings-subsection"><h3 id="extensions-heading">Installed Pi extensions</h3><p>Configured packages available to Pi.</p><div id="extensions-list" class="extensions-list"></div></div>
+              </div>
+            </details>
+            <details open class="settings-group">
+              <summary class="settings-group-summary"><div><h2 id="server-settings-heading">Server</h2><p>Host configuration, sync, resources, and connected devices.</p></div><span class="settings-chevron" aria-hidden="true">⌄</span></summary>
+              <div class="settings-group-content">
+                <div id="server-settings-list" class="settings-list"></div>
+                <section class="github-system"><h3>GitHub CLI</h3><p id="github-cli-status" role="status">Loading…</p></section>
+                <section class="github-system restart-system"><h3>Restart Friday</h3><p>Restart the Friday service to apply server-side changes. Active chats and requests will be interrupted.</p><button id="restart-friday" class="secondary danger-button" type="button">Restart Friday service</button><p id="restart-friday-status" role="status" aria-live="polite"></p></section>
+                <section id="system-devices-view" class="settings-subsection settings-devices" aria-labelledby="connected-devices-heading">
+                  <header class="section-heading"><div><h3 id="connected-devices-heading">Connected devices</h3><p>Hosts visible to this Friday server.</p></div><button id="refresh-devices" class="text-button" type="button">Refresh</button></header>
+                  <div id="device-status" class="feature-notice"></div>
+                  <div id="device-list" class="device-list"></div>
+                </section>
+              </div>
+            </details>
           </div>
-          <section id="system-devices-view" class="settings-devices" aria-label="Devices">
-            <header class="section-heading">
-              <div><h2>Connected devices</h2><p>Hosts visible to this Friday server.</p></div>
-              <button id="refresh-devices" class="text-button" type="button">Refresh</button>
-            </header>
-            <div id="device-status" class="feature-notice"></div>
-            <div id="device-list" class="device-list"></div>
-          </section>
         </section>
       </main>
     </div>

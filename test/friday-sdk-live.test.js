@@ -8,13 +8,13 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createAppClient } from '../test-support/app-client.js';
 
-test('opt-in Friday SDK starts without installed coding Pi and keeps its own data', { timeout: 15000 }, async (t) => {
+test('Friday SDK starts without installed coding Pi and keeps its own data', { timeout: 15000 }, async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'friday-sdk-live-'));
   const port = 20000 + Math.floor(Math.random() * 30000);
   const child = spawn(process.execPath, [new URL('../src/server.js', import.meta.url).pathname], {
     cwd: home,
     env: { ...process.env, FRIDAY_HOME: join(home, '.friday'), PI_COMMAND: join(home, 'missing-pi'),
-      FRIDAY_CHAT_DRIVER: 'sdk', PORT: String(port) }, stdio: 'ignore',
+      PORT: String(port) }, stdio: 'ignore',
   });
   t.after(async () => {
     child.kill('SIGTERM');
