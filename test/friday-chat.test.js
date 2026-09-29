@@ -50,7 +50,9 @@ rl.on('line', line => {
  else if (req.type === 'set_model') { model = { provider: req.provider, id: req.modelId, name: 'Alternate' }; respond({}); }
  else if (req.type === 'set_thinking_level') { thinkingLevel = req.level; respond({}); }
  else if (req.type === 'prompt') {
-  messages.push({ role: 'user', content: req.message }); send({ type: 'agent_start' }); send({ type: 'message_start', message: { role: 'assistant' } });
+  messages.push({ role: 'user', content: req.message });
+  if (req.message === 'compaction summary test') messages.push({ role: 'compactionSummary', summary: 'The earlier implementation plan and decisions.', tokensBefore: 90000, timestamp: Date.now() });
+  send({ type: 'agent_start' }); send({ type: 'message_start', message: { role: 'assistant' } });
   const finish = () => { if (activeAbort) clearTimeout(activeAbort.timer); activeAbort = null; const content = 'Friday: ' + req.message; messages.push({ role: 'assistant', content }); send({ type: 'message_end', message: { role: 'assistant', content } }); send({ type: 'agent_end' }); send({ type: 'agent_settled' }); respond({}); };
   if (req.message === 'long-running test') { const timer = setTimeout(finish, 2500); activeAbort = { timer, finish }; } else finish();
  }
@@ -176,6 +178,11 @@ rl.on('line', line => {
   assert.equal(JSON.parse(resetSessionFile.split('\n')[0]).cwd, piStatus.workspace);
   const sessionsAfterReset = await (await request(`/api/sessions?cwd=${encodeURIComponent(piStatus.workspace)}`)).json();
   assert.ok(sessionsAfterReset.sessions.some((session) => session.path === resetSession.sessionPath), 'new empty session is saved and listed immediately');
+  const compactHeaders = { 'X-Friday-Session': resetSession.runtimeId };
+  const compactPrompt = await request('/api/chat', { method: 'POST', headers: { ...compactHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'compaction summary test' }) });
+  assert.equal(compactPrompt.status, 200);
+  const compactHistory = await (await request('/api/history', { headers: compactHeaders })).json();
+  assert.ok(compactHistory.messages.some((message) => message.role === 'compaction' && message.content === 'The earlier implementation plan and decisions.'));
 
   const codingResponse = await request('/api/events/token', { method: 'POST' });
   const fridayResponse = await request('/api/friday/events/token', { method: 'POST' });

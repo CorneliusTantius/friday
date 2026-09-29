@@ -32,8 +32,8 @@ function clientMessage(message) {
     }));
 
   return {
-    role: message.role === 'toolResult' ? 'tool' : message.role,
-    content: textFromMessage(message).trim(),
+    role: message.role === 'toolResult' ? 'tool' : message.role === 'compactionSummary' ? 'compaction' : message.role,
+    content: message.role === 'compactionSummary' && typeof message.summary === 'string' ? message.summary.trim() : textFromMessage(message).trim(),
     ...(toolCalls.length ? { toolCalls } : {}),
     ...(message.toolCallId ? { toolCallId: message.toolCallId } : {}),
     ...(message.toolName ? { toolName: message.toolName } : {}),
@@ -329,7 +329,7 @@ export class PiSession extends EventEmitter {
     const response = await this.#send({ type: 'get_messages' });
     this.#assertReadVersion(version);
     const messages = response.data.messages
-      .filter((message) => ['user', 'assistant', 'toolResult'].includes(message.role))
+      .filter((message) => ['user', 'assistant', 'toolResult', 'compactionSummary'].includes(message.role))
       .map(clientMessage)
       .filter((message) => message.content || message.toolCalls?.length);
     return Number.isInteger(limit) && limit > 0 ? messages.slice(-limit) : messages;

@@ -435,6 +435,17 @@ function addSystemEntry(title, body, isError = false, target = elements.messages
   target.append(entry);
 }
 
+function addCompactionSummary(message, target = elements.messages) {
+  const entry = document.createElement('details');
+  entry.className = 'system-entry compaction-summary';
+  entry.open = true;
+  const heading = document.createElement('summary'); heading.textContent = 'Context summary · Pi compacted earlier history';
+  const body = document.createElement('div'); body.className = 'message-content compaction-summary-body'; renderMarkdown(body, message.content);
+  entry.append(heading, body);
+  entry.renderSignature = renderSignature(message);
+  target.append(entry);
+}
+
 function toolSummary(records) {
   const counts = new Map();
   for (const { call } of records) {
@@ -565,6 +576,11 @@ function renderHistory(history) {
   };
 
   for (const message of history) {
+    if (message.role === 'compaction') {
+      flushToolGroup();
+      addCompactionSummary(message, nextContainer);
+      continue;
+    }
     if (message.role === 'tool') {
       const record = pendingToolCalls.get(message.toolCallId);
       if (record) record.result = message;

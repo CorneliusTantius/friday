@@ -286,6 +286,8 @@ h2 { font-size: 14px; }
 .system-entry.error { border-color: rgba(251,113,133,.3); }
 .system-entry.error summary { color: #fda4af; }
 .system-entry pre { max-height: 20rem; overflow: auto; margin: 0; border-top: 1px solid var(--border); padding: .75rem; color: var(--text-2); font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.compaction-summary-body { max-height: 28rem; overflow: auto; border-top: 1px solid var(--border); padding: .75rem; color: var(--text-2); font-size: 12px; line-height: 1.55; }
+.compaction-summary-body > * + * { margin-top: .55rem; }
 
 .jump-latest { position: absolute; z-index: 3; right: clamp(1.2rem,4vw,3rem); bottom: 8rem; border: 1px solid var(--border-strong); border-radius: 99px; background: var(--surface-3); box-shadow: var(--shadow); color: var(--text-2); cursor: pointer; padding: .42rem .7rem; font-size: 12px; }
 .composer { flex: 0 0 auto; border: 1px solid var(--border-strong); border-radius: 16px; background: #16161b; box-shadow: 0 12px 44px rgba(0,0,0,.2), inset 0 1px rgba(255,255,255,.025); padding: .7rem; transition: border-color .18s ease, box-shadow .18s ease; }
