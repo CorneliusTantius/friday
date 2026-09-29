@@ -143,6 +143,7 @@ const contentTypes = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.png': 'image/png',
+  '.svg': 'image/svg+xml',
 };
 
 function validClientId(value) {
@@ -910,6 +911,7 @@ async function serveStatic(pathname, response) {
     '/friday-chat.js': 'friday-chat.js',
     '/styles.css': 'styles.css',
     '/friday-logo.png': 'friday-logo.png',
+    '/friday-logo.svg': 'friday-logo.svg',
   };
   const filename = filenames[pathname];
   if (!filename) {

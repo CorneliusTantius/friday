@@ -91,6 +91,11 @@ rl.on('line', line => {
   assert.match(html, /id="friday-feature" class="feature-layout friday-layout"/);
   assert.match(html, /id="friday-model"/);
   assert.match(html, /id="friday-thinking-level"/);
+  assert.match(html, /rel="icon" type="image\/svg\+xml" href="\/friday-logo\.svg"/);
+  const favicon = await request('/friday-logo.svg');
+  assert.equal(favicon.status, 200);
+  assert.match(favicon.headers.get('content-type'), /image\/svg\+xml/);
+  assert.match(await favicon.text(), /<text[^>]*>Fr<\/text>/);
   assert.ok(html.indexOf('id="friday-settings-heading"') < html.indexOf('id="runtime-settings-heading"'));
   const script = await request('/friday-chat.js');
   assert.equal(script.status, 200);
