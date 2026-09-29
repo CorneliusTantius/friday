@@ -14,12 +14,12 @@
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
-    <div class="shell workspace-shell">
+    <div class="shell workspace-shell" data-assistant="closed">
       <aside id="workspace-sidebar" class="sidebar workspace-sidebar" aria-label="Primary navigation">
         <button class="icon-button shell-sidebar-close" type="button" data-shell-close aria-label="Close navigation">×</button>
         <div class="brand" aria-label="Friday">
           <span class="brand-mark" aria-hidden="true">Fr</span>
-          <span class="brand-copy"><strong>FRIDAY</strong><small>Personal operating system</small></span>
+          <span class="brand-copy"><strong>FRIDAY</strong><small>Studio</small></span>
         </div>
 
         <nav class="feature-nav" aria-label="Features">
@@ -29,7 +29,7 @@
           </div>
           <div class="nav-group workspace-nav-group">
             <span class="nav-group-title workspace-nav-heading">Agents</span>
-            <button class="feature" type="button" data-feature="friday" aria-label="Friday Agent"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H8l-4 3V6Z"/><path d="M8 10h8M8 14h5"/></svg><span>Friday Agent</span></button>
+            <button class="feature" type="button" data-feature="friday" aria-label="Friday Agent"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5L12 2Z"/><path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15Z"/></svg><span>Friday Agent</span></button>
             <button class="feature" type="button" data-feature="pi" aria-label="Pi Agent"><span class="feature-pi-icon" aria-hidden="true">π</span><span>Pi Agent</span></button>
           </div>
           <div class="nav-group workspace-nav-group">
@@ -62,6 +62,7 @@
         <section id="friday-feature" class="feature-layout friday-layout">
           <aside class="context-sidebar friday-sidebar" id="friday-sidebar" aria-label="Friday conversations">
             <div class="context-heading"><span>Conversations</span><button class="mobile-close icon-button" type="button" data-close-drawer aria-label="Close conversations">×</button></div>
+            <label class="workspace-field friday-directory-field"><span>Workspace directory</span><input id="friday-workspace-directory" type="text" disabled readonly placeholder="Loading directory…" aria-label="Friday workspace directory, view only"></label>
             <button id="friday-new-conversation" class="secondary" type="button">＋ New Conversation</button>
             <button id="friday-review-memory" class="secondary" type="button">Review daily memory notes</button>
             <div class="panel-heading"><span>Recent conversations</span><button id="friday-refresh-sessions" class="icon-button" type="button" title="Refresh conversations" aria-label="Refresh conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button></div>
@@ -265,8 +266,8 @@
         </section>
         <section id="finances-feature" class="feature-page finance-page" hidden>
           <header class="feature-header page-header"><div><span class="eyebrow">Friday Agent</span><h1>Financial tracker</h1><p>Keep a simple record of income and spending.</p></div></header>
-          <div class="finance-summary-header"><h2>Summary</h2><label for="finance-summary-period">Period<select id="finance-summary-period"><option value="1" selected>Past 1 month</option><option value="3">Past 3 months</option><option value="6">Past 6 months</option><option value="12">Past 12 months</option></select></label></div>
-          <div class="finance-summary" aria-label="Financial summary"><article><span>Balance</span><strong id="finance-balance">Rp0</strong></article><article><span>Income</span><strong id="finance-income">Rp0</strong></article><article><span>Expenses</span><strong id="finance-expenses">Rp0</strong></article></div>
+          <div class="finance-summary-header"><h2>Summary</h2><button class="finance-visibility-toggle" type="button" data-finance-visibility aria-label="Show financial summary" aria-pressed="false" title="Show financial summary"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button><label for="finance-summary-period">Period<select id="finance-summary-period"><option value="1" selected>Past 1 month</option><option value="3">Past 3 months</option><option value="6">Past 6 months</option><option value="12">Past 12 months</option></select></label></div>
+          <div class="finance-summary" aria-label="Financial summary"><article><span>Balance</span><strong id="finance-balance" class="financial-sensitive is-censored" aria-hidden="true">••••••</strong></article><article><span>Income</span><strong id="finance-income" class="financial-sensitive is-censored" aria-hidden="true">••••••</strong></article><article><span>Expenses</span><strong id="finance-expenses" class="financial-sensitive is-censored" aria-hidden="true">••••••</strong></article></div>
           <form id="finance-form" class="finance-form"><label>Type<select name="type"><option value="expense">Expense</option><option value="income">Income</option></select></label><label>Amount (IDR)<input name="amount" type="number" inputmode="numeric" min="1" step="1" placeholder="e.g. 50000" required></label><label>Date<input name="date" type="date" required></label><label>Category<select name="category"><option>Housing</option><option>Food</option><option>Transport</option><option>Utilities</option><option>Health</option><option>Entertainment</option><option>Shopping</option><option>Income</option><option>Other</option></select></label><label class="finance-description">Description<input name="description" maxlength="120" placeholder="What was this for?"></label><button id="finance-submit" type="submit">Add entry</button><button id="finance-cancel" class="secondary" type="button" hidden>Cancel</button></form>
           <section class="finance-transactions" aria-labelledby="finance-transactions-heading">
             <header class="finance-toolbar"><h2 id="finance-transactions-heading">Transactions</h2><div class="finance-filters"><label>Month<input id="finance-month" type="month"></label><label>Type<select id="finance-type-filter"><option value="all">All types</option><option value="income">Income</option><option value="expense">Expenses</option></select></label><label>Category<select id="finance-category-filter"><option value="all">All categories</option><option>Housing</option><option>Food</option><option>Transport</option><option>Utilities</option><option>Health</option><option>Entertainment</option><option>Shopping</option><option>Income</option><option>Other</option></select></label><button id="finance-export" class="secondary" type="button">Export CSV</button></div></header>
@@ -316,16 +317,16 @@
           </div>
         </section>
       </main>
-      <aside id="assistant-rail" class="assistant-rail" aria-label="Friday assistant"></aside>
+      <aside id="assistant-rail" class="assistant-rail" aria-label="Friday assistant" hidden></aside>
     </div>
 
     <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
     <div id="shell-backdrop" class="drawer-backdrop shell-backdrop" hidden></div>
     <nav class="shell-mobile-shortcuts" aria-label="Mobile shortcuts">
-      <button type="button" data-navigate="dashboard" data-shell-shortcut><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg>Home</button>
-      <button type="button" data-navigate="pi" data-shell-shortcut><span class="shortcut-pi" aria-hidden="true">π</span>Agents</button>
-      <button type="button" class="chat-tab" data-shell-drawer="assistant" aria-controls="assistant-rail" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3z"/></svg>Friday</button>
-      <button type="button" data-navigate="notes" data-shell-shortcut><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6l2 2 2-2h6v16h-6l-2 2-2-2H4zM12 6v16"/></svg>Knowledge</button>
+      <button type="button" data-navigate="pi" data-shell-shortcut><span class="shortcut-pi" aria-hidden="true">π</span>Pi</button>
+      <button type="button" data-navigate="friday" data-shell-shortcut><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5L12 2Z"/><path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15Z"/></svg>Friday</button>
+      <button type="button" class="dashboard-tab" data-navigate="dashboard" data-shell-shortcut><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg>Dashboard</button>
+      <button type="button" data-navigate="finances" data-shell-shortcut><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 5-7"/></svg>Finance</button>
       <button type="button" data-shell-drawer="sidebar" aria-controls="workspace-sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>More</button>
     </nav>
     <dialog id="shell-command-dialog" aria-label="Search pages and commands">

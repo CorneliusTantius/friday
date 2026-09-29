@@ -27,9 +27,40 @@ test('public workspace UI contract has every feature, form, and shell integratio
   for (const variable of ['display', 'mono', 'purple']) assert.match(css, new RegExp(`--${variable}:`));
 });
 
-test('workspace branding and lock screen use the updated UI', () => {
+test('assistant rail and launch buttons hide in either full chat view', () => {
+  assert.match(app, /\['friday', 'pi'\]\.includes\(getFeature\(\)\)/);
+  assert.match(app, /assistant\.hidden = chatFeature/);
+  assert.match(app, /button\.hidden = chatFeature/);
+  assert.match(app, /assistantExpanded = !assistantExpanded/);
+  assert.match(css, /\.shell\[data-assistant="closed"\]/);
+});
+
+test('financial summaries start censored and share the visibility toggle', () => {
+  assert.match(html, /data-finance-visibility/);
+  assert.equal((html.match(/class="financial-sensitive is-censored" aria-hidden="true"/g) || []).length, 3);
+  assert.match(app, /document\.addEventListener\('click', \(event\) => \{\s*if \(!event\.target\.closest\('\[data-finance-visibility\]'\)\)/);
+  assert.match(app, /setFinanceValue\(element, value\)/);
+  assert.match(app, /'••••••'/);
+  assert.doesNotMatch(app, /markFinancialSensitive\(chart\)/);
+  assert.doesNotMatch(css, /financial-sensitive[^}]*filter:\s*blur/);
+});
+
+test('dashboard welcome and workspace branding use the simplified Studio UI', () => {
+  assert.match(html, /<strong>FRIDAY<\/strong><small>Studio<\/small>/);
+  assert.match(app, /Good morning.*Good afternoon.*Good evening/s);
+  assert.match(app, /\$\{greeting\}, Cornelius\./);
+  assert.match(app, /className = 'dashboard-clock'/);
+  assert.match(app, /find\(\(device\) => device\.self\)\?\.hostname/);
+  assert.match(app, /Number\(friday\.running === true\) \+ Number\(pi\.piRunning === true\)/);
+  assert.match(app, /dashboard-clock-seconds/);
+  assert.match(app, /loadFridayDirectory\(\)/);
+  assert.match(html, /id="friday-workspace-directory"[^>]*disabled readonly/);
+  assert.match(css, /\.feature\[data-feature="friday"\]\.active/);
+  assert.match(app, /\['Ask Friday', 'friday'\], \['Pi workspace', 'pi'\]/);
+  assert.doesNotMatch(app, /Open workspace|YOUR WORLD, CONNECTED|A clear mind\.|FRIDAY NEURAL CORE/);
+  assert.match(css, /\.dashboard-orbit[^}]*width:clamp\(/);
   assert.match(html, /class="brand-mark"[^>]*>Fr<\/span>/);
-  assert.doesNotMatch(html, /Friday workspace|Local environment|class="workspace"/);
+  assert.doesNotMatch(html, /<strong>FRIDAY<\/strong><small>Personal operating system<\/small>/);
   assert.match(login, /class="logo"[^>]*>Fr<\/span>/);
   assert.match(login, /Workspace locked/);
   assert.match(login, /#72d9e5/);

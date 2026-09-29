@@ -134,6 +134,7 @@ rl.on('line', line => {
   assert.equal(fridayLevelsResponse.status, 200);
   assert.ok(Array.isArray((await fridayLevelsResponse.json()).levels));
   const fridayState = await (await request('/api/friday/status')).json();
+  assert.equal(fridayState.running, true);
   assert.equal(fridayState.canAbort, false);
   assert.equal(fridayState.contextUsage, null);
   assert.equal((await (await request('/api/models')).json()).current.id, 'default');

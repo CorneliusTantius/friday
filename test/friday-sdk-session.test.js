@@ -4,6 +4,18 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FridaySdkSession, fridayHistory } from '../src/friday-sdk-session.js';
+import { fridaySystemPrompt } from '../src/friday-system-prompt.js';
+
+test('Friday identity is explicit and multipurpose, not coding-only', () => {
+  assert.match(fridaySystemPrompt, /Your identity is Friday: the user's multipurpose personal AI assistant/);
+  assert.match(fridaySystemPrompt, /polished assistant manner of J\.A\.R\.V\.I\.S\./);
+  assert.match(fridaySystemPrompt, /Whenever asked who or what you are, explicitly say you are Friday/);
+  assert.match(fridaySystemPrompt, /I'm Friday, your personal AI assistant/);
+  assert.match(fridaySystemPrompt, /Never identify yourself as merely an AI coding assistant/);
+  assert.match(fridaySystemPrompt, /pi_list_conversations to find the intended saved Pi Agent conversation and its runId/);
+  assert.match(fridaySystemPrompt, /pi_read_conversation to review Pi's latest reply/);
+  assert.match(fridaySystemPrompt, /Only call pi_stop_run when the user explicitly asks/);
+});
 
 test('Friday history projects SDK messages and limits the tail', () => {
   const messages = [
@@ -124,6 +136,7 @@ test('Friday SDK adds curated memory context and conversation-scoped Pi tools', 
       listConversations: async () => [],
       sendPrompt: async (input) => { queued = input; return { runId: '123e4567-e89b-12d3-a456-426614174000', position: 1 }; },
       getRunStatus: async () => ({ running: true }),
+      readConversation: async ({ runId }) => ({ runId, messages: [] }),
       stopRun: async () => ({ stopped: true }),
     },
     createSession: async (value) => {
@@ -133,7 +146,10 @@ test('Friday SDK adds curated memory context and conversation-scoped Pi tools', 
   });
   await adapter.start();
   assert.equal(memoryRead, true);
-  assert.deepEqual(options.customTools.map((tool) => tool.name), ['pi_list_conversations', 'pi_send_prompt', 'pi_run_status', 'pi_stop_run']);
+  await options.resourceLoader.reload();
+  assert.match(options.resourceLoader.getSystemPrompt(), /Your identity is Friday: the user's multipurpose personal AI assistant/);
+  assert.match(options.resourceLoader.getSystemPrompt(), /pi_read_conversation to review Pi's latest reply/);
+  assert.deepEqual(options.customTools.map((tool) => tool.name), ['pi_list_conversations', 'pi_send_prompt', 'pi_run_status', 'pi_read_conversation', 'pi_stop_run']);
   const sendTool = options.customTools.find((tool) => tool.name === 'pi_send_prompt');
   const result = await sendTool.execute('tool-call', { prompt: 'inspect this' }, undefined, undefined, undefined);
   assert.match(result.content[0].text, /queued.*run.*123e4567/i);

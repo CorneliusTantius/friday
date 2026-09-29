@@ -3,20 +3,23 @@ import { Type } from 'typebox';
 const UUID = Type.String({ format: 'uuid' });
 const result = (text) => ({ content: [{ type: 'text', text }] });
 
-export function createFridayPiTools({ listConversations, sendPrompt, getRunStatus, stopRun, getConversationId }) {
+export function createFridayPiTools({ listConversations, sendPrompt, getRunStatus, readConversation, stopRun, getConversationId }) {
   return [
     {
       name: 'pi_list_conversations', label: 'List conversations',
-      description: 'List available conversations.',
+      description: 'List saved Pi Agent conversations in the selected workspace, newest first. Use a returned runId to read or send work to a conversation.',
       parameters: Type.Object({}),
       async execute() {
         const conversations = await listConversations();
-        return result(JSON.stringify(conversations));
+        const visible = conversations.map(({ id, name, modified, messageCount, runId, running, busy, queuedPrompts }) => ({
+          id, name, modified, messageCount, runId, running, busy, queuedPrompts,
+        }));
+        return result(JSON.stringify(visible));
       },
     },
     {
       name: 'pi_send_prompt', label: 'Queue Pi prompt',
-      description: 'Queue a prompt for Pi and return immediately; this does not wait for Pi completion.',
+      description: 'Queue a prompt for the Pi conversation identified by runId, or the run linked to this Friday conversation when runId is omitted. Return immediately without waiting for Pi completion.',
       parameters: Type.Object({ prompt: Type.String({ minLength: 1, maxLength: 20000 }), runId: Type.Optional(UUID) }),
       async execute(_id, { prompt, runId }) {
         const conversationId = await getConversationId();
@@ -33,6 +36,15 @@ export function createFridayPiTools({ listConversations, sendPrompt, getRunStatu
       async execute(_id, { runId }) {
         const status = await getRunStatus(runId);
         return result(status == null ? 'Run not found.' : JSON.stringify(status));
+      },
+    },
+    {
+      name: 'pi_read_conversation', label: 'Read Pi conversation',
+      description: 'Read the most recent messages in a listed Pi conversation. Use after checking its run status to review Pi’s reply.',
+      parameters: Type.Object({ runId: UUID, limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })) }),
+      async execute(_id, { runId, limit }) {
+        const conversation = await readConversation({ runId, limit });
+        return result(conversation == null ? 'Pi conversation not found.' : JSON.stringify(conversation));
       },
     },
     {

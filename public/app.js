@@ -1501,6 +1501,53 @@ for (const panel of document.querySelectorAll('[data-sync]')) {
   run.addEventListener('click', () => void submit(`/api/${scope}/sync/run`));
 }
 
+let financeSummaryVisible = false;
+const financeValues = new WeakMap();
+
+function setFinanceValue(element, value) {
+  element.classList.add('financial-sensitive');
+  financeValues.set(element, String(value));
+  element.classList.toggle('is-censored', !financeSummaryVisible);
+  element.textContent = financeSummaryVisible ? String(value) : '••••••';
+  element.setAttribute('aria-hidden', String(!financeSummaryVisible));
+  return element;
+}
+
+function updateFinancePrivacy() {
+  for (const element of document.querySelectorAll('.financial-sensitive')) {
+    const value = financeValues.get(element);
+    if (value !== undefined) element.textContent = financeSummaryVisible ? value : '••••••';
+    element.classList.toggle('is-censored', !financeSummaryVisible);
+    element.setAttribute('aria-hidden', String(!financeSummaryVisible));
+  }
+  for (const button of document.querySelectorAll('[data-finance-visibility]')) {
+    const label = `${financeSummaryVisible ? 'Hide' : 'Show'} financial summary`;
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    button.setAttribute('aria-pressed', String(financeSummaryVisible));
+  }
+}
+
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('[data-finance-visibility]')) return;
+  financeSummaryVisible = !financeSummaryVisible;
+  updateFinancePrivacy();
+});
+updateFinancePrivacy();
+
+function createFinanceVisibilityButton() {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'finance-visibility-toggle';
+  button.dataset.financeVisibility = '';
+  button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const label = `${financeSummaryVisible ? 'Hide' : 'Show'} financial summary`;
+  button.setAttribute('aria-label', label);
+  button.setAttribute('aria-pressed', String(financeSummaryVisible));
+  button.title = label;
+  return button;
+}
+
 function renderDashboardCard(label, value, detail = '') {
   const card = document.createElement('article'); card.className = 'dashboard-metric';
   const title = document.createElement('span'); title.className = 'dashboard-metric-label'; title.textContent = label;
@@ -1546,40 +1593,51 @@ function renderMemoryGraphCard(graph) {
 }
 
 let dashboardLoadSequence = 0;
+let dashboardClockTimer;
 async function loadDashboard() {
   const sequence = ++dashboardLoadSequence;
   const cards = $('#dashboard-cards');
   const results = await Promise.allSettled([
     apiJson('/api/friday/status'), apiJson('/api/status'), apiJson('/api/system/settings'), apiJson('/api/devices'), apiJson('/api/friday/memory/graph'), apiJson('/api/finances'),
   ]);
-  if (sequence !== dashboardLoadSequence) return;
+  if (sequence !== dashboardLoadSequence || state.activeFeature !== 'dashboard') return;
   const [friday, pi, system, devices, memoryGraph, finances] = results.map((result) => result.status === 'fulfilled' ? result.value : null);
+  const hostName = devices?.devices?.find((device) => device.self)?.hostname || devices?.devices?.find((device) => device.local)?.hostname;
   const page = document.createElement('div'); page.className = 'dashboard-content';
   const header = $('#dashboard-feature .page-header');
-  const dateText = new Date().toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  header.querySelector('.eyebrow').textContent = dateText;
-  header.querySelector('h1').textContent = `${new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 18 ? 'Good afternoon' : 'Good evening'}.`;
-  header.querySelector('p').textContent = 'Your connected workspace, at a glance.';
+  const now = new Date();
+  const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 18 ? 'Good afternoon' : 'Good evening';
+  header.querySelector('.eyebrow').textContent = now.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  header.querySelector('h1').textContent = 'Dashboard';
+  header.querySelector('p').textContent = 'Your workspace at a glance.';
   const hero = document.createElement('section'); hero.className = 'dashboard-hero';
   const copy = document.createElement('div'); copy.className = 'dashboard-hero-copy';
-  const eyebrow = document.createElement('span'); eyebrow.className = 'eyebrow'; eyebrow.textContent = 'YOUR WORLD, CONNECTED';
-  const title = document.createElement('h2'); title.innerHTML = 'A clear mind.<br><span>A connected workspace.</span>';
-  const description = document.createElement('p'); description.textContent = 'Your agents, ideas, and everyday work. One place to find your focus and make room for what comes next.';
+  const title = document.createElement('h2'); title.textContent = `${greeting}, Cornelius.`;
+  const clock = document.createElement('time'); clock.className = 'dashboard-clock';
+  const clockTime = document.createElement('span');
+  const clockSeconds = document.createElement('span'); clockSeconds.className = 'dashboard-clock-seconds';
+  clock.append(clockTime, clockSeconds);
+  const updateClock = () => { const time = new Date(); clock.dateTime = time.toISOString(); clockTime.textContent = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }); clockSeconds.textContent = String(time.getSeconds()).padStart(2, '0'); }; 
+  clearInterval(dashboardClockTimer); updateClock(); dashboardClockTimer = setInterval(updateClock, 1000);
   const actions = document.createElement('div'); actions.className = 'dashboard-actions';
-  for (const [label, feature] of [['Open workspace', 'pi'], ['Ask Friday', 'friday']]) {
+  for (const [label, feature] of [['Ask Friday', 'friday'], ['Pi workspace', 'pi']]) {
     const button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.addEventListener('click', () => { if (feature === 'friday') workspaceShell.openAssistant(); else void setFeature(feature); }); actions.append(button);
   }
-  copy.append(eyebrow, title, description, actions);
-  const orbit = document.createElement('div'); orbit.className = 'dashboard-orbit'; orbit.setAttribute('aria-hidden', 'true'); orbit.innerHTML = '<svg viewBox="0 0 240 240"><defs><radialGradient id="dashboard-orb"><stop stop-color="#72d9e5" stop-opacity=".15"/><stop offset="1" stop-color="#72d9e5" stop-opacity="0"/></radialGradient></defs><circle cx="120" cy="120" r="104" fill="url(#dashboard-orb)"/><g fill="none" stroke="currentColor"><circle cx="120" cy="120" r="94" stroke-opacity=".1"/><g class="orbit-rotate"><circle cx="120" cy="120" r="85" stroke-opacity=".3" stroke-dasharray="1 8"/><path d="M120 25a95 95 0 0 1 95 95M120 215a95 95 0 0 1-95-95" stroke-opacity=".55"/><circle cx="120" cy="25" r="3" fill="currentColor" stroke="none"/></g><g class="orbit-rotate orbit-reverse"><circle cx="120" cy="120" r="66" stroke-opacity=".35" stroke-dasharray="70 14 5 14"/><path d="m120 51 60 34v70l-60 34-60-34V85Z" stroke-opacity=".13"/></g><circle cx="120" cy="120" r="49" stroke-opacity=".2"/><path d="M120 65v15m0 80v15M65 120h15m80 0h15" stroke-opacity=".55"/></g><g class="orbit-breathe" fill="none" stroke="currentColor"><path d="m120 92 7.5 20.5L148 120l-20.5 7.5L120 148l-7.5-20.5L92 120l20.5-7.5Z" stroke-width="1.4"/><circle cx="120" cy="120" r="5" fill="currentColor" opacity=".4"/></g><text x="120" y="228" fill="currentColor" opacity=".6" text-anchor="middle" font-size="6" font-family="monospace" letter-spacing="3">FRIDAY NEURAL CORE</text></svg>';
+  copy.append(title, clock, actions);
+  const orbit = document.createElement('div'); orbit.className = 'dashboard-orbit'; orbit.setAttribute('aria-hidden', 'true'); orbit.innerHTML = '<svg viewBox="0 0 240 240"><defs><radialGradient id="dashboard-orb"><stop stop-color="#72d9e5" stop-opacity=".15"/><stop offset="1" stop-color="#72d9e5" stop-opacity="0"/></radialGradient></defs><circle cx="120" cy="120" r="104" fill="url(#dashboard-orb)"/><g fill="none" stroke="currentColor"><circle cx="120" cy="120" r="94" stroke-opacity=".1"/><g class="orbit-rotate"><circle cx="120" cy="120" r="85" stroke-opacity=".3" stroke-dasharray="1 8"/><path d="M120 25a95 95 0 0 1 95 95M120 215a95 95 0 0 1-95-95" stroke-opacity=".55"/><circle cx="120" cy="25" r="3" fill="currentColor" stroke="none"/></g><g class="orbit-rotate orbit-reverse"><circle cx="120" cy="120" r="66" stroke-opacity=".35" stroke-dasharray="70 14 5 14"/><path d="m120 51 60 34v70l-60 34-60-34V85Z" stroke-opacity=".13"/></g><circle cx="120" cy="120" r="49" stroke-opacity=".2"/><path d="M120 65v15m0 80v15M65 120h15m80 0h15" stroke-opacity=".55"/></g><g class="orbit-breathe" fill="none" stroke="currentColor"><path d="m120 92 7.5 20.5L148 120l-20.5 7.5L120 148l-7.5-20.5L92 120l20.5-7.5Z" stroke-width="1.4"/><circle cx="120" cy="120" r="5" fill="currentColor" opacity=".4"/></g></svg>';
   hero.append(copy, orbit);
   const metrics = document.createElement('section'); metrics.className = 'dashboard-metrics';
   const metricItems = [
-    ['Active agents', friday && pi ? `${Number(friday.busy === true) + Number(pi.busy === true)} / 2` : 'Unavailable', 'Friday + Pi runtimes'],
-    ['Host CPU', Number.isFinite(system?.systemUsage?.cpuPercent) ? `${system.systemUsage.cpuPercent.toFixed(1)}%` : 'Unavailable', system?.host || 'CPU usage'],
+    ['Active agents', friday && pi ? String(Number(friday.running === true) + Number(pi.piRunning === true)) : 'Unavailable', `Friday ${friday ? `${Number(friday.running === true)} running` : 'unavailable'} · Pi ${pi ? `${Number(pi.piRunning === true)} running` : 'unavailable'}`],
+    ['Host CPU', Number.isFinite(system?.systemUsage?.cpuPercent) ? `${system.systemUsage.cpuPercent.toFixed(1)}%` : 'Unavailable', hostName || 'CPU usage'],
     ['Monthly expenses', finances && Array.isArray(finances.entries) ? money(finances.entries.filter((entry) => entry.type === 'expense' && entry.date >= financeSummaryRange(1).start && entry.date <= financeSummaryRange(1).end).reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0)) : 'Unavailable', 'Past month · IDR'],
     ['Memory notes', memoryGraph ? String(memoryGraph.nodes?.length || 0) : 'Unavailable', 'Friday memory'],
   ];
-  for (const item of metricItems) metrics.append(renderDashboardCard(...item));
+  for (const item of metricItems) {
+    const card = renderDashboardCard(...item);
+    if (item[0] === 'Monthly expenses' && item[1] !== 'Unavailable') setFinanceValue(card.querySelector('.dashboard-metric-value'), item[1]);
+    metrics.append(card);
+  }
   const columns = document.createElement('div'); columns.className = 'dashboard-columns';
   const agents = document.createElement('section'); agents.className = 'dashboard-panel';
   const agentsHeading = document.createElement('h2'); agentsHeading.className = 'dashboard-panel-heading'; agentsHeading.textContent = 'Your agents'; agents.append(agentsHeading);
@@ -1597,18 +1655,20 @@ async function loadDashboard() {
   }
   const resources = document.createElement('section'); resources.className = 'dashboard-panel';
   const resourceHeading = document.createElement('h2'); resourceHeading.className = 'dashboard-panel-heading'; resourceHeading.textContent = 'Host resources'; resources.append(resourceHeading);
-  const resourceDetail = document.createElement('p'); resourceDetail.textContent = `${devices ? `${(devices.devices || []).length} visible devices` : 'Device count unavailable'} · ${system?.host ? `Host: ${system.host}` : 'Host unavailable'}`; resources.append(resourceDetail);
+  const resourceDetail = document.createElement('p'); resourceDetail.textContent = `${devices ? `${(devices.devices || []).length} visible devices` : 'Device count unavailable'} · ${hostName ? `Host: ${hostName}` : 'Host unavailable'}`; resources.append(resourceDetail);
   for (const [label, value] of [['CPU', system?.systemUsage?.cpuPercent], ['RAM', system?.systemUsage?.memoryPercent]]) {
     const wrap = document.createElement('div'); wrap.className = 'dashboard-resource-gauge'; const text = document.createElement('label'); text.textContent = `${label}: ${Number.isFinite(value) ? `${value}%` : 'Unavailable'}`; const gauge = document.createElement('progress'); gauge.max = 100; gauge.value = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0; gauge.setAttribute('aria-label', `${label} usage`); gauge.setAttribute('aria-valuetext', Number.isFinite(value) ? `${value}%` : 'Unavailable'); wrap.append(text, gauge); resources.append(wrap);
   }
   const memory = renderMemoryGraphCard(memoryGraph);
   const finance = document.createElement('section'); finance.className = 'dashboard-panel dashboard-finance';
-  const financeHeading = document.createElement('h2'); financeHeading.className = 'dashboard-panel-heading'; financeHeading.textContent = 'Financial snapshot'; finance.append(financeHeading);
+  const financeHeading = document.createElement('h2'); financeHeading.className = 'dashboard-panel-heading'; financeHeading.textContent = 'Financial snapshot'; financeHeading.append(createFinanceVisibilityButton()); finance.append(financeHeading);
   if (finances && Array.isArray(finances.entries)) {
     const range = financeSummaryRange(1); const entries = finances.entries.filter((entry) => entry.date >= range.start && entry.date <= range.end);
     const totals = entries.reduce((sum, entry) => { if (entry.type === 'expense') sum.expense += Number(entry.amount) || 0; else sum.income += Number(entry.amount) || 0; return sum; }, { income: 0, expense: 0 });
-    const amount = document.createElement('strong'); amount.textContent = money(totals.income - totals.expense); finance.append(amount);
-    const detail = document.createElement('p'); detail.textContent = `${range.start} – ${range.end} · Income ${money(totals.income)} · Expenses ${money(totals.expense)}`; finance.append(detail);
+    finance.append(setFinanceValue(document.createElement('strong'), money(totals.income - totals.expense)));
+    const detail = document.createElement('p');
+    detail.append(`${range.start} – ${range.end} · Income `, setFinanceValue(document.createElement('span'), money(totals.income)), ' · Expenses ', setFinanceValue(document.createElement('span'), money(totals.expense)));
+    finance.append(detail);
     if (entries.length) {
       const daily = new Map();
       for (const entry of entries) daily.set(entry.date, (daily.get(entry.date) || 0) + (entry.type === 'income' ? entry.amount : -entry.amount));
@@ -1706,9 +1766,9 @@ function updateFinanceSummary() {
       result[entry.type] += entry.amount;
       return result;
     }, { income: 0, expense: 0 });
-  elements.financeIncome.textContent = money(totals.income);
-  elements.financeExpenses.textContent = money(totals.expense);
-  elements.financeBalance.textContent = money(totals.income - totals.expense);
+  setFinanceValue(elements.financeIncome, money(totals.income));
+  setFinanceValue(elements.financeExpenses, money(totals.expense));
+  setFinanceValue(elements.financeBalance, money(totals.income - totals.expense));
 }
 
 function visibleFinanceEntries() {
@@ -1826,17 +1886,20 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
   const commandResults = dialog.querySelector('.command-results');
   let drawer = null;
   let returnFocus = null;
+  let assistantExpanded = false;
   const narrowSidebar = matchMedia('(max-width: 600px)');
   const narrowAssistant = matchMedia('(max-width: 1170px)');
   const isDrawer = (element) => element === sidebar ? narrowSidebar.matches : narrowAssistant.matches;
   const focusable = (element) => [...element.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),textarea:not(:disabled),select:not(:disabled),[tabindex="0"]')]
     .filter((item) => item.getClientRects().length && !item.closest('[inert]'));
   function sync() {
-    const fullChat = getFeature() === 'friday';
-    assistant.hidden = fullChat;
+    const chatFeature = ['friday', 'pi'].includes(getFeature());
+    assistant.hidden = chatFeature || (!narrowAssistant.matches && !assistantExpanded);
+    shell.dataset.assistant = assistantExpanded ? 'open' : 'closed';
+    for (const button of document.querySelectorAll('[data-shell-drawer="assistant"]')) button.hidden = chatFeature;
     for (const element of [sidebar, assistant]) {
       const closed = isDrawer(element) && drawer !== element;
-      element.inert = closed || (element === assistant && fullChat);
+      element.inert = closed || (element === assistant && (chatFeature || assistant.hidden));
       if (element.inert) element.setAttribute('aria-hidden', 'true');
       else element.removeAttribute('aria-hidden');
     }
@@ -1848,11 +1911,22 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
     if (drawer && drawer !== assistant) assistant.inert = true;
     for (const button of document.querySelectorAll('[data-shell-drawer]')) {
       const target = button.dataset.shellDrawer === 'sidebar' ? sidebar : assistant;
-      button.setAttribute('aria-expanded', String(drawer === target));
+      const expanded = target === assistant && !chatFeature
+        ? narrowAssistant.matches ? drawer === assistant : assistantExpanded
+        : drawer === target;
+      button.setAttribute('aria-expanded', String(expanded));
+      if (target === assistant) button.setAttribute('aria-label', `${expanded ? 'Close' : 'Open'} Friday assistant`);
     }
   }
   function close(restore = true) {
-    if (!drawer) return;
+    if (!drawer) {
+      if (!narrowAssistant.matches && assistantExpanded) {
+        assistantExpanded = false;
+        sync();
+        if (restore) document.querySelector('[data-shell-drawer="assistant"]:not([hidden])')?.focus();
+      }
+      return;
+    }
     drawer.classList.remove('shell-drawer-open');
     drawer.removeAttribute('role');
     drawer.removeAttribute('aria-modal');
@@ -1863,12 +1937,16 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
     returnFocus = null;
   }
   function open(element, trigger = document.activeElement) {
-    if (element === assistant && getFeature() === 'friday') {
-      $('#friday-message').focus();
+    if (element === assistant && ['friday', 'pi'].includes(getFeature())) {
+      $(getFeature() === 'friday' ? '#friday-message' : '#message').focus();
       return;
     }
     if (!isDrawer(element)) {
-      (element === assistant ? $('#friday-message') : focusable(sidebar)[0])?.focus();
+      if (element === assistant) {
+        assistantExpanded = true;
+        sync();
+        $('#friday-message').focus();
+      } else focusable(sidebar)[0]?.focus();
       return;
     }
     close(false);
@@ -1886,7 +1964,14 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
     button.addEventListener('click', () => { close(false); void navigate(button.dataset.navigate); });
   }
   for (const button of document.querySelectorAll('[data-shell-drawer]')) {
-    button.addEventListener('click', () => open(button.dataset.shellDrawer === 'sidebar' ? sidebar : assistant, button));
+    button.addEventListener('click', () => {
+      const target = button.dataset.shellDrawer === 'sidebar' ? sidebar : assistant;
+      if (target === assistant && !isDrawer(assistant) && !['friday', 'pi'].includes(getFeature())) {
+        assistantExpanded = !assistantExpanded;
+        sync();
+        if (assistantExpanded) $('#friday-message').focus(); else button.focus();
+      } else open(target, button);
+    });
   }
   for (const button of document.querySelectorAll('[data-shell-close]')) button.addEventListener('click', () => close());
   backdrop.addEventListener('click', () => close());
@@ -1926,7 +2011,12 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
       if (dialog.open) dialog.close(); else openCommands();
     } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'j' && !dialog.open) {
       event.preventDefault();
-      if (drawer === assistant) close(); else open(assistant);
+      if (drawer === assistant) close();
+      else if (!isDrawer(assistant) && !['friday', 'pi'].includes(getFeature())) {
+        assistantExpanded = !assistantExpanded;
+        sync();
+        if (assistantExpanded) $('#friday-message').focus();
+      } else open(assistant);
     } else if (event.key === 'Escape' && !dialog.open) close();
     if (dialog.open) {
       const buttons = [...commandResults.children];
@@ -1996,6 +2086,13 @@ function syncScopeSelectors() {
   $('#clone-repo-url').setAttribute('aria-label', `${piRepos ? 'Pi' : 'Friday'} repository Git URL`);
 }
 
+async function loadFridayDirectory() {
+  const data = await apiJson('/api/friday/settings', {}, 'friday-directory');
+  const input = $('#friday-workspace-directory');
+  input.value = data.fridayChat?.directory || 'Unavailable';
+  input.title = input.value;
+}
+
 async function setFeature(name) {
   if (name === 'friday-settings' || name === 'pi-settings') name = 'settings';
   if (name === 'files') name = state.fileFeature;
@@ -2006,6 +2103,7 @@ async function setFeature(name) {
   if (['files', 'pi-files'].includes(state.activeFeature) && !['files', 'pi-files'].includes(name) && !confirmDiscardFileChanges()) return;
   if (!featureViews.has(name)) return;
   state.activeFeature = name;
+  if (name !== 'dashboard') clearInterval(dashboardClockTimer);
   sessionStorage.setItem('friday-files-scope', state.fileFeature === 'pi-files' ? 'pi' : 'friday');
   sessionStorage.setItem('friday-repos-scope', state.repoFeature === 'pi-repos' ? 'pi' : 'friday');
   syncScopeSelectors(); updateTopbar(name);
@@ -2028,7 +2126,7 @@ async function setFeature(name) {
   workspaceShell.updateFeature(name);
   $('#system-devices-view').hidden = false;
   try {
-    if (name === 'friday') await Promise.all([fridayChat.start(), loadFridayPiConversations()]);
+    if (name === 'friday') await Promise.all([fridayChat.start(), loadFridayPiConversations(), loadFridayDirectory()]);
     else if (!['dashboard', 'repos', 'pi-repos', 'notes', 'files', 'pi-files', 'finances', 'settings'].includes(name)) await initializePi();
     if (name === 'files' || name === 'pi-files') {
       elements.fileTitle.textContent = 'File preview';

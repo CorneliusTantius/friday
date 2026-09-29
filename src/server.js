@@ -275,6 +275,7 @@ const piControl = {
   listConversations: listPiConversations,
   sendPrompt: enqueuePiPrompt,
   getRunStatus: getPiRunStatus,
+  readConversation: readPiConversation,
   stopRun: stopPiRun,
 };
 
@@ -807,6 +808,23 @@ async function listPiConversations() {
   return sessionsWithRunIds(preferredWorkspace);
 }
 
+async function readPiConversation({ runId, limit = 10 }) {
+  const run = await piRunRegistry.getRun(runId);
+  if (!run) return null;
+  const runtime = await findRunRuntime(run);
+  runtime.entry.lastUsed = Date.now();
+  const messages = await runtime.entry.pi.history(limit);
+  return {
+    runId: run.id,
+    name: run.name || 'Pi conversation',
+    busy: runtime.entry.pi.isBusy,
+    messages: messages.map((message) => ({
+      ...message,
+      content: message.content.length > 4000 ? `${message.content.slice(0, 4000)}… [truncated]` : message.content,
+    })),
+  };
+}
+
 async function getPiRunStatus(runId) {
   const run = await piRunRegistry.getRun(runId);
   if (!run) return null;
@@ -920,6 +938,7 @@ async function handleFridayRequest(request, response, pathname) {
   const pi = await getFridayPi();
   if (request.method === 'GET' && pathname === '/api/friday/status') {
     sendJson(response, 200, {
+      running: pi.isRunning,
       busy: pi.isBusy,
       canAbort: pi.canAbort,
       sessionPath: pi.currentSessionPath,

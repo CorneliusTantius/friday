@@ -56,7 +56,7 @@ async function runBrowserCheck(repositoryRoot) {
       else if (endpoint === '/api/finances') {
         if (request.method() === 'POST') entries.push({ ...request.postDataJSON(), amount: Number(request.postDataJSON().amount), id: 'entry-2' });
         body = { entries };
-      } else if (endpoint.endsWith('/devices')) body = { available: true, devices: [{ hostname: 'Local host', online: true, self: true, addresses: ['127.0.0.1'], usage: { cpuPercent: 15, memoryPercent: 40, load1: 0.2 } }] };
+      } else if (endpoint.endsWith('/devices')) body = { available: true, devices: [{ hostname: 'MSI', online: true, self: true, addresses: ['127.0.0.1'], usage: { cpuPercent: 15, memoryPercent: 40, load1: 0.2 } }] };
       else if (endpoint.endsWith('/system/settings')) body = { host: 'localhost', port: 3000, systemUsage: { cpuPercent: 15, memoryPercent: 40, load1: 0.2 } };
       else if (endpoint.endsWith('/friday/settings')) body = { fridayChat: { running: true, directory: '/friday', sessionsDirectory: '/friday/sessions' } };
       else if (endpoint.endsWith('/pi/settings')) body = { ...status, piPackages: [] };
@@ -71,6 +71,9 @@ async function runBrowserCheck(repositoryRoot) {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator('.dashboard-hero').waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll('.dashboard-metric')].some(card => card.querySelector('.dashboard-metric-label')?.textContent === 'Host CPU' && card.querySelector('.dashboard-metric-detail')?.textContent === 'MSI'));
+    assert.equal(await page.locator('.dashboard-metric').filter({ hasText: 'Active agents' }).locator('.dashboard-metric-value').textContent(), '2');
+    assert.equal(await page.locator('.dashboard-metric').filter({ hasText: 'Active agents' }).locator('.dashboard-metric-detail').textContent(), 'Friday 1 running · Pi 1 running');
     async function checkShellLayout(width, height, expectedTopbarHeight) {
       const layout = await page.evaluate(() => {
         const box = selector => document.querySelector(selector).getBoundingClientRect();
@@ -92,6 +95,7 @@ async function runBrowserCheck(repositoryRoot) {
       if (width > 600) assert.ok(Math.abs(layout.sidebar.top - layout.shell.top) <= 1 && Math.abs(layout.sidebar.bottom - layout.shell.bottom) <= 1, `Sidebar does not span shell height ${width}x${height}: ${JSON.stringify(layout)}`);
     }
     await checkShellLayout(1440, 1000, 71);
+    assert.equal(await page.locator('#assistant-rail').evaluate(el => el.hidden), true, 'Desktop assistant rail starts collapsed');
     await page.waitForFunction(() => !document.querySelector('#friday-message').disabled);
     await page.evaluate(() => { window.originalFridayForm = document.querySelector('#friday-form'); });
     async function navigate(feature) {
@@ -118,10 +122,16 @@ async function runBrowserCheck(repositoryRoot) {
       for (const feature of ['dashboard', 'friday', 'pi', 'files', 'repos', 'notes', 'finances', 'settings']) {
         await navigate(feature);
         await checkBounds(width, feature);
-        await checkShellLayout(width, 900, width <= 600 ? 59 : 71);
+        await checkShellLayout(width, 900, width <= 600 ? 0 : 71);
         assert.equal(await page.locator(`.feature[data-feature="${feature}"]`).getAttribute('aria-current'), 'page');
       }
       await navigate('dashboard');
+      if (width <= 600) {
+        assert.deepEqual(await page.locator('.shell-mobile-shortcuts button').allTextContents(), ['πPi', 'Friday', 'Dashboard', 'Finance', 'More']);
+        assert.equal(await page.locator('.dashboard-tab').getAttribute('aria-current'), 'page');
+        const center = await page.locator('.dashboard-tab').boundingBox();
+        assert.ok(Math.abs(center.x + center.width / 2 - width / 2) < 2, 'Dashboard shortcut stays centered');
+      }
       if (width <= 1170) {
         const askFriday = page.getByRole('button', { name: 'Ask Friday', exact: true });
         await askFriday.click();
@@ -135,28 +145,43 @@ async function runBrowserCheck(repositoryRoot) {
         await page.keyboard.press('Escape');
         assert.equal(await page.locator('#assistant-rail').evaluate(el => el.inert), true);
       } else {
+        const assistantToggle = page.locator('.shell-assistant-toggle');
+        assert.equal(await page.locator('#assistant-rail').evaluate(el => el.hidden), true, 'Desktop assistant rail starts collapsed');
+        await assistantToggle.click();
+        assert.equal(await page.locator('#assistant-rail').evaluate(el => el.hidden), false);
+        await page.keyboard.press('Escape');
+        assert.equal(await page.locator('#assistant-rail').evaluate(el => el.hidden), true, 'Escape collapses the desktop assistant rail');
+        assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('.shell-assistant-toggle')), true);
+        await assistantToggle.click();
         await page.locator('#friday-message').fill('Keep this draft');
         const rects = await page.evaluate(() => ['#main-content', '#assistant-rail'].map(s => { const r = document.querySelector(s).getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width }; }));
-        assert.ok(rects[1].width >= 280 && rects[1].left >= rects[0].right - 1, 'Assistant rail overlaps main');
+        assert.ok(rects[1].width >= 280 && rects[1].left >= rects[0].right - 1, 'Assistant rail sits beside main');
+        await assistantToggle.click();
+        assert.equal(await page.locator('#assistant-rail').evaluate(el => el.hidden), true);
+        assert.equal(await page.locator('.workspace-shell').getAttribute('data-assistant'), 'closed');
       }
       await navigate('friday');
+      await page.waitForFunction(() => document.querySelector('#friday-workspace-directory').value === '/friday');
+      assert.equal(await page.locator('#friday-workspace-directory').isDisabled(), true);
+      assert.equal(await page.locator('#friday-workspace-directory').getAttribute('readonly'), '');
       assert.equal(await page.locator('#friday-message').inputValue(), 'Keep this draft');
       assert.equal(await page.evaluate(() => window.originalFridayForm === document.querySelector('#friday-form')), true);
       await navigate('dashboard');
       assert.equal(await page.locator('#friday-message').inputValue(), 'Keep this draft');
       if (width <= 600) {
-        await page.locator('.shell-menu-toggle').click();
+        const moreButton = page.locator('.shell-mobile-shortcuts [data-shell-drawer="sidebar"]');
+        await moreButton.click();
         assert.equal(await page.locator('#workspace-sidebar').evaluate(el => el.inert), false);
         await page.keyboard.press('Shift+Tab');
         assert.equal(await page.evaluate(() => document.activeElement.id), 'logout', await page.evaluate(() => document.activeElement.outerHTML));
         await page.keyboard.press('Escape');
         assert.equal(await page.locator('#workspace-sidebar').evaluate(el => el.inert), true);
-        assert.equal(await page.evaluate(() => document.activeElement.classList.contains('shell-menu-toggle')), true);
+        assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('.shell-mobile-shortcuts [data-shell-drawer="sidebar"]')), true);
       }
     }
     for (const [width, height] of [[320, 700], [667, 375]]) {
       await page.setViewportSize({ width, height });
-      await checkShellLayout(width, height, width <= 600 ? 59 : 71);
+      await checkShellLayout(width, height, width <= 600 ? 0 : 71);
       await navigate('dashboard');
       await checkBounds(width, 'dashboard');
     }
