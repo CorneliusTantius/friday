@@ -150,6 +150,7 @@ test('Friday SDK adds curated memory context and conversation-scoped Pi tools', 
   assert.equal(memoryRead, true);
   assert.match(options.resourceLoader.getSystemPrompt(), /Your identity is Friday: the user's multipurpose personal AI assistant/);
   assert.match(options.resourceLoader.getSystemPrompt(), /pi_read_conversation to review Pi's latest reply/);
+  assert.deepEqual(options.tools, ['bash', 'edit', 'read', 'write', 'pi_list_conversations', 'pi_send_prompt', 'pi_run_status', 'pi_read_conversation', 'pi_stop_run']);
   assert.deepEqual(options.customTools.map((tool) => tool.name), ['pi_list_conversations', 'pi_send_prompt', 'pi_run_status', 'pi_read_conversation', 'pi_stop_run']);
   const sendTool = options.customTools.find((tool) => tool.name === 'pi_send_prompt');
   const result = await sendTool.execute('tool-call', { prompt: 'inspect this' }, undefined, undefined, undefined);

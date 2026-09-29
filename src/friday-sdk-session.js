@@ -94,8 +94,9 @@ export class FridaySdkSession extends EventEmitter {
           systemPrompt,
           noSkills: true, noExtensions: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
         await resourceLoader.reload();
+        const tools = ['bash', 'edit', 'read', 'write', ...customTools.map((tool) => tool.name)];
         return this.createSession({
-          cwd: this.cwd, agentDir: this.agentDir, tools: ['bash', 'edit', 'read', 'write'], customTools, modelRuntime, settingsManager,
+          cwd: this.cwd, agentDir: this.agentDir, tools, customTools, modelRuntime, settingsManager,
           resourceLoader,
           sessionManager: manager, model: this.model, thinkingLevel: this.thinkingLevel,
         });
