@@ -1686,7 +1686,7 @@ async function loadDashboard() {
   }
   const temperatureWrap = document.createElement('div'); temperatureWrap.className = 'dashboard-resource-gauge';
   const temperatureText = document.createElement('span'); temperatureText.className = 'dashboard-resource-temperature'; temperatureText.setAttribute('aria-live', 'polite'); temperatureText.id = 'dashboard-temperature';
-  temperatureWrap.append(temperatureText); resources.append(temperatureWrap); renderDashboardTemperature(temperature);
+  temperatureWrap.append(temperatureText); resources.append(temperatureWrap);
   const memory = renderMemoryGraphCard(memoryGraph);
   const finance = document.createElement('section'); finance.className = 'dashboard-panel dashboard-finance';
   const dashboardFinanceValues = [];
@@ -1725,6 +1725,7 @@ async function loadDashboard() {
   const footer = document.createElement('footer'); footer.className = 'dashboard-footer'; footer.innerHTML = '<span>FRIDAY OS / A SPACE FOR YOUR MIND.</span><span>LOCAL-FIRST · HUMAN-CENTERED</span>';
   page.append(hero, metrics, columns, footer);
   cards.replaceChildren(page);
+  renderDashboardTemperature(temperature);
   scheduleDashboardTemperatureRefresh();
 }
 

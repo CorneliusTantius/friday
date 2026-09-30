@@ -57,6 +57,7 @@ async function runBrowserCheck(repositoryRoot) {
         if (request.method() === 'POST') entries.push({ ...request.postDataJSON(), amount: Number(request.postDataJSON().amount), id: 'entry-2' });
         body = { entries };
       } else if (endpoint.endsWith('/devices')) body = { available: true, devices: [{ hostname: 'MSI', online: true, self: true, addresses: ['127.0.0.1'], usage: { cpuPercent: 15, memoryPercent: 40, load1: 0.2 } }] };
+      else if (endpoint === '/api/system/temperature') body = { status: 'available', celsius: 45, sampledAt: '2026-09-30T00:00:00.000Z' };
       else if (endpoint.endsWith('/system/settings')) body = { host: 'localhost', port: 3000, systemUsage: { cpuPercent: 15, memoryPercent: 40, load1: 0.2 } };
       else if (endpoint.endsWith('/friday/settings')) body = { fridayChat: { running: true, directory: '/friday', sessionsDirectory: '/friday/sessions' } };
       else if (endpoint.endsWith('/pi/settings')) body = { ...status, piPackages: [] };
@@ -71,6 +72,7 @@ async function runBrowserCheck(repositoryRoot) {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator('.dashboard-hero').waitFor();
+    assert.equal(await page.locator('#dashboard-temperature').textContent(), 'Highest sensor: 45.0 °C', 'initial temperature is rendered immediately without waiting for polling');
     await page.waitForFunction(() => [...document.querySelectorAll('.dashboard-metric')].some(card => card.querySelector('.dashboard-metric-label')?.textContent === 'Host CPU' && card.querySelector('.dashboard-metric-detail')?.textContent === 'MSI'));
     assert.equal(await page.locator('.dashboard-metric').filter({ hasText: 'Active agents' }).locator('.dashboard-metric-value').textContent(), '2');
     assert.equal(await page.locator('.dashboard-metric').filter({ hasText: 'Active agents' }).locator('.dashboard-metric-detail').textContent(), 'Friday 1 running · Pi 1 running');

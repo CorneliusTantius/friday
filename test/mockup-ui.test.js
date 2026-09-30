@@ -27,6 +27,13 @@ test('public workspace UI contract has every feature, form, and shell integratio
   for (const variable of ['display', 'mono', 'purple']) assert.match(css, new RegExp(`--${variable}:`));
 });
 
+test('dashboard renders the initial temperature after attaching its DOM', () => {
+  const dashboard = app.indexOf('async function loadDashboard()');
+  const attach = app.indexOf('cards.replaceChildren(page);', dashboard);
+  const initialRender = app.indexOf('renderDashboardTemperature(temperature);', dashboard);
+  assert.ok(attach >= 0 && initialRender > attach, 'initial temperature render must occur after dashboard DOM attachment');
+});
+
 test('dashboard presents host temperature with safe unavailable states and infrequent polling', () => {
   assert.match(app, /apiJson\('\/api\/system\/temperature'\)/);
   assert.match(app, /Unsupported on this host/);
