@@ -35,12 +35,18 @@ test('assistant rail and launch buttons hide in either full chat view', () => {
   assert.match(css, /\.shell\[data-assistant="closed"\]/);
 });
 
-test('financial summaries start censored and share the visibility toggle', () => {
-  assert.match(html, /data-finance-visibility/);
+test('financial summary values start censored and toggle independently', () => {
+  for (const id of ['finance-balance', 'finance-income', 'finance-expenses']) {
+    assert.match(html, new RegExp(`data-finance-target="${id}"`));
+  }
   assert.equal((html.match(/class="financial-sensitive is-censored" aria-hidden="true"/g) || []).length, 3);
-  assert.match(app, /document\.addEventListener\('click', \(event\) => \{\s*if \(!event\.target\.closest\('\[data-finance-visibility\]'\)\)/);
-  assert.match(app, /setFinanceValue\(element, value\)/);
+  assert.match(app, /const visibleFinanceValues = new WeakSet\(\)/);
+  assert.match(app, /function updateFinanceVisibility\(targets, button, label\)/);
+  assert.match(app, /createFinanceVisibilityButton\(dashboardFinanceValues, 'financial snapshot'\)/);
+  assert.match(app, /createFinanceVisibilityButton\(value, 'monthly expenses', true\)/);
+  assert.doesNotMatch(app, /createFinanceVisibilityButton\(income,/);
   assert.match(app, /'••••••'/);
+  assert.doesNotMatch(app, /financeSummaryVisible/);
   assert.doesNotMatch(app, /markFinancialSensitive\(chart\)/);
   assert.doesNotMatch(css, /financial-sensitive[^}]*filter:\s*blur/);
 });

@@ -7,7 +7,7 @@ const elements = {
   refreshSessions: $('#refresh-sessions'), sessionList: $('#session-list'), status: $('#status'),
   contextUsage: $('#pi-context-usage'), contextProgress: $('#pi-context-progress'), contextLabel: $('#pi-context-label'),
   workspace: $('#workspace'), workspaceOptions: $('#workspace-options'), model: $('#model'),
-  thinkingLevel: $('#thinking-level'), sessionSubtitle: $('#session-subtitle'), jumpLatest: $('#jump-latest'),
+  thinkingLevel: $('#thinking-level'), jumpLatest: $('#jump-latest'),
   fileList: $('#file-list'), filesPathLabel: $('#files-path'), filesUp: $('#files-up'), filesRootLabel: $('#files-root'),
   fileTitle: $('#file-title'), fileMeta: $('#file-meta'), fileContent: $('#file-content'),
   fileEditorLayout: $('#file-editor-layout'), fileEditor: $('#file-editor'), fileMarkdownPreview: $('#file-markdown-preview'),
@@ -678,12 +678,6 @@ async function loadHistory({ forceScroll = false, limit = null } = {}) {
   }
   state.historyTotal = data.total;
   state.currentSessionPath = data.sessionPath;
-  updateSessionSubtitle();
-}
-
-function updateSessionSubtitle() {
-  const workspaceName = elements.workspace.value.split('/').filter(Boolean).pop();
-  elements.sessionSubtitle.textContent = workspaceName ? `${workspaceName} · ${state.agentBusy ? 'working' : 'ready'}` : 'Your workspace copilot';
 }
 
 function stopPolling() {
@@ -784,7 +778,6 @@ async function connectEventStream() {
       }
       if (data.sessionPath && state.currentSessionPath && data.sessionPath !== state.currentSessionPath) return;
       setAgentBusy(data.busy === true, data.canAbort === true);
-      updateSessionSubtitle();
       scheduleEventRefresh(data.kind !== 'activity' || data.busy !== true || data.activity === 'session_info_changed');
     });
     source.onerror = () => {
@@ -822,7 +815,6 @@ async function pollHistory() {
     setConnection(true);
     setAgentBusy(data.busy, data.canAbort === true);
     renderPiContextUsage(data.contextUsage);
-    updateSessionSubtitle();
 
     if (data.busy) {
       await loadHistory({ limit: 10 });
@@ -968,7 +960,6 @@ async function loadSessions(cwd = elements.workspace.value, { quiet = false } = 
     elements.workspace.value = data.workspace;
     state.currentSessionPath = data.currentSession;
     renderSessions(data.sessions, data.currentSession);
-    updateSessionSubtitle();
   } finally {
     elements.refreshSessions.classList.remove('loading');
   }
@@ -984,7 +975,6 @@ async function openSession(sessionPath) {
   if (state.locks.has('session')) return;
   closeDrawer();
   lock('session', true);
-  elements.sessionSubtitle.textContent = 'Opening session…';
   const context = ++state.contextVersion;
   closeEventStream();
   cancelRequest('history');
@@ -1004,7 +994,6 @@ async function openSession(sessionPath) {
     if (!isAbort(error)) toast(error.message, 'error');
   } finally {
     lock('session', false);
-    updateSessionSubtitle();
     schedulePoll();
     void connectEventStream();
     elements.input.focus();
@@ -1501,50 +1490,51 @@ for (const panel of document.querySelectorAll('[data-sync]')) {
   run.addEventListener('click', () => void submit(`/api/${scope}/sync/run`));
 }
 
-let financeSummaryVisible = false;
 const financeValues = new WeakMap();
+const visibleFinanceValues = new WeakSet();
 
 function setFinanceValue(element, value) {
+  const visible = visibleFinanceValues.has(element);
   element.classList.add('financial-sensitive');
   financeValues.set(element, String(value));
-  element.classList.toggle('is-censored', !financeSummaryVisible);
-  element.textContent = financeSummaryVisible ? String(value) : '••••••';
-  element.setAttribute('aria-hidden', String(!financeSummaryVisible));
+  element.classList.toggle('is-censored', !visible);
+  element.textContent = visible ? String(value) : '••••••';
+  element.setAttribute('aria-hidden', String(!visible));
   return element;
 }
 
-function updateFinancePrivacy() {
-  for (const element of document.querySelectorAll('.financial-sensitive')) {
-    const value = financeValues.get(element);
-    if (value !== undefined) element.textContent = financeSummaryVisible ? value : '••••••';
-    element.classList.toggle('is-censored', !financeSummaryVisible);
-    element.setAttribute('aria-hidden', String(!financeSummaryVisible));
+function updateFinanceVisibility(targets, button, label) {
+  const elements = Array.isArray(targets) ? targets : [targets];
+  if (!elements.length || elements.some((element) => !financeValues.has(element))) return;
+  const visible = !elements.every((element) => visibleFinanceValues.has(element));
+  for (const element of elements) {
+    if (visible) visibleFinanceValues.add(element);
+    else visibleFinanceValues.delete(element);
+    setFinanceValue(element, financeValues.get(element));
   }
-  for (const button of document.querySelectorAll('[data-finance-visibility]')) {
-    const label = `${financeSummaryVisible ? 'Hide' : 'Show'} financial summary`;
-    button.setAttribute('aria-label', label);
-    button.title = label;
-    button.setAttribute('aria-pressed', String(financeSummaryVisible));
-  }
+  const accessibleLabel = `${visible ? 'Hide' : 'Show'} ${label}`;
+  button.setAttribute('aria-label', accessibleLabel);
+  button.title = accessibleLabel;
+  button.setAttribute('aria-pressed', String(visible));
 }
 
 document.addEventListener('click', (event) => {
-  if (!event.target.closest('[data-finance-visibility]')) return;
-  financeSummaryVisible = !financeSummaryVisible;
-  updateFinancePrivacy();
+  const button = event.target.closest('[data-finance-visibility][data-finance-target]');
+  if (!button) return;
+  const element = document.getElementById(button.dataset.financeTarget);
+  if (element) updateFinanceVisibility(element, button, button.dataset.financeLabel);
 });
-updateFinancePrivacy();
 
-function createFinanceVisibilityButton() {
+function createFinanceVisibilityButton(element, label, compact = false) {
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'finance-visibility-toggle';
+  button.className = `finance-visibility-toggle${compact ? ' finance-visibility-compact' : ''}`;
   button.dataset.financeVisibility = '';
   button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
-  const label = `${financeSummaryVisible ? 'Hide' : 'Show'} financial summary`;
-  button.setAttribute('aria-label', label);
-  button.setAttribute('aria-pressed', String(financeSummaryVisible));
-  button.title = label;
+  button.setAttribute('aria-label', `Show ${label}`);
+  button.setAttribute('aria-pressed', 'false');
+  button.title = `Show ${label}`;
+  button.addEventListener('click', () => updateFinanceVisibility(element, button, label));
   return button;
 }
 
@@ -1635,7 +1625,13 @@ async function loadDashboard() {
   ];
   for (const item of metricItems) {
     const card = renderDashboardCard(...item);
-    if (item[0] === 'Monthly expenses' && item[1] !== 'Unavailable') setFinanceValue(card.querySelector('.dashboard-metric-value'), item[1]);
+    if (item[0] === 'Monthly expenses' && item[1] !== 'Unavailable') {
+      const value = setFinanceValue(card.querySelector('.dashboard-metric-value'), item[1]);
+      const row = document.createElement('div'); row.className = 'dashboard-metric-value-row';
+      row.append(value, createFinanceVisibilityButton(value, 'monthly expenses', true));
+      const detail = card.querySelector('.dashboard-metric-detail');
+      card.insertBefore(row, detail);
+    }
     metrics.append(card);
   }
   const columns = document.createElement('div'); columns.className = 'dashboard-columns';
@@ -1661,13 +1657,20 @@ async function loadDashboard() {
   }
   const memory = renderMemoryGraphCard(memoryGraph);
   const finance = document.createElement('section'); finance.className = 'dashboard-panel dashboard-finance';
-  const financeHeading = document.createElement('h2'); financeHeading.className = 'dashboard-panel-heading'; financeHeading.textContent = 'Financial snapshot'; financeHeading.append(createFinanceVisibilityButton()); finance.append(financeHeading);
+  const dashboardFinanceValues = [];
+  const financeHeading = document.createElement('h2'); financeHeading.className = 'dashboard-panel-heading'; financeHeading.textContent = 'Financial snapshot';
+  const financeVisibility = createFinanceVisibilityButton(dashboardFinanceValues, 'financial snapshot'); financeVisibility.hidden = true;
+  financeHeading.append(financeVisibility); finance.append(financeHeading);
   if (finances && Array.isArray(finances.entries)) {
     const range = financeSummaryRange(1); const entries = finances.entries.filter((entry) => entry.date >= range.start && entry.date <= range.end);
     const totals = entries.reduce((sum, entry) => { if (entry.type === 'expense') sum.expense += Number(entry.amount) || 0; else sum.income += Number(entry.amount) || 0; return sum; }, { income: 0, expense: 0 });
-    finance.append(setFinanceValue(document.createElement('strong'), money(totals.income - totals.expense)));
+    const balance = setFinanceValue(document.createElement('strong'), money(totals.income - totals.expense)); dashboardFinanceValues.push(balance);
+    const balanceRow = document.createElement('div'); balanceRow.className = 'dashboard-finance-value'; balanceRow.append(balance); finance.append(balanceRow);
     const detail = document.createElement('p');
-    detail.append(`${range.start} – ${range.end} · Income `, setFinanceValue(document.createElement('span'), money(totals.income)), ' · Expenses ', setFinanceValue(document.createElement('span'), money(totals.expense)));
+    const income = setFinanceValue(document.createElement('span'), money(totals.income)); dashboardFinanceValues.push(income);
+    const expenses = setFinanceValue(document.createElement('span'), money(totals.expense)); dashboardFinanceValues.push(expenses);
+    financeVisibility.hidden = false;
+    detail.append(`${range.start} – ${range.end} · Income `, income, ' · Expenses ', expenses);
     finance.append(detail);
     if (entries.length) {
       const daily = new Map();
@@ -1676,7 +1679,8 @@ async function loadDashboard() {
       const points = [0, ...[...daily].sort(([a], [b]) => a.localeCompare(b)).map(([, change]) => balance += change)];
       const min = Math.min(...points), max = Math.max(...points);
       const chart = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      chart.classList.add('dashboard-finance-chart'); chart.setAttribute('viewBox', '0 0 300 95'); chart.setAttribute('preserveAspectRatio', 'none'); chart.setAttribute('role', 'img'); chart.setAttribute('aria-label', 'Cumulative net income and expenses for the past month');
+      chart.classList.add('dashboard-finance-chart'); chart.hidden = true; chart.setAttribute('viewBox', '0 0 300 95'); chart.setAttribute('preserveAspectRatio', 'none'); chart.setAttribute('role', 'img'); chart.setAttribute('aria-label', 'Cumulative net income and expenses for the past month');
+      financeVisibility.addEventListener('click', () => { chart.hidden = financeVisibility.getAttribute('aria-pressed') !== 'true'; });
       const line = document.createElementNS(chart.namespaceURI, 'polyline');
       line.setAttribute('points', points.map((value, i) => `${i / (points.length - 1) * 300},${80 - (value - min) / (max - min || 1) * 65}`).join(' '));
       line.setAttribute('fill', 'none'); line.setAttribute('stroke', 'var(--accent)'); line.setAttribute('stroke-width', '1.8'); line.setAttribute('vector-effect', 'non-scaling-stroke'); chart.append(line); finance.append(chart);
@@ -2517,7 +2521,7 @@ elements.reset.addEventListener('click', async () => {
     state.history = []; state.historyTotal = 0; state.currentSessionPath = data.sessionPath; renderHistory([]);
     await Promise.all([loadModels(), loadThinkingLevels(), loadSessions(data.workspace)]);
     renderPiContextUsage((await apiJson('/api/status', {}, 'poll-status')).contextUsage);
-    updateSessionSubtitle(); toast('New session ready');
+    toast('New session ready');
   } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); }
   finally {
     lock('session', false);
@@ -2549,7 +2553,6 @@ function initializePi() {
     } finally {
       state.initializing = false;
       updateControls();
-      updateSessionSubtitle();
       resizeComposer();
       piInitPromise = null;
     }
