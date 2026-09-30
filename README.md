@@ -50,6 +50,7 @@ npm run dev
 - `GET /api/devices` — read-only Tailscale device status
 - `GET /api/friday/settings`, `GET /api/pi/settings`, `GET /api/system/settings` — settings scoped to Friday Chat, coding Pi, and the server; Friday/System settings do not launch coding Pi
 - `GET /api/system/github` — whether `gh` is installed and authenticated, without returning credentials
+- `GET /api/system/temperature` — authenticated, cached highest readable Linux thermal-sensor value in Celsius; reports unsupported/unavailable states and does not expose sensor identifiers or paths
 - `GET/POST /api/{friday|pi}/sync/settings` and `POST /api/{friday|pi}/sync/run` — configure separate GitHub targets and manually push private snapshots
 - `GET /api/{friday|pi}/auth`, `POST /api/{friday|pi}/auth/login`, `GET/POST/DELETE /api/{friday|pi}/auth/flow`, `POST /api/{friday|pi}/auth/logout` — scoped provider authentication; accessible to devices permitted by your Tailscale ACLs
 - `GET /api/settings` — legacy combined runtime and server configuration details

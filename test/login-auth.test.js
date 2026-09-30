@@ -45,6 +45,7 @@ test('password login protects the app with a memory-only session cookie', { time
   assert.equal(health.status, 200);
   assert.deepEqual(await health.json(), { status: 'ok' });
   assert.equal((await fetch(`${base}/api/status`)).status, 401);
+  assert.equal((await fetch(`${base}/api/system/temperature`)).status, 401);
   const protectedPage = await fetch(`${base}/`, { redirect: 'manual' });
   assert.equal(protectedPage.status, 303);
   assert.equal(protectedPage.headers.get('location'), '/login');
@@ -62,6 +63,12 @@ test('password login protects the app with a memory-only session cookie', { time
   assert.match(setCookie, /SameSite=Strict/);
   assert.doesNotMatch(setCookie, /Max-Age|Expires=/);
   assert.equal((await client.request('/')).status, 200);
+  const temperatureResponse = await client.request('/api/system/temperature');
+  assert.equal(temperatureResponse.status, 200);
+  const temperature = await temperatureResponse.json();
+  assert.ok(['available', 'unsupported', 'unavailable', 'permission-denied'].includes(temperature.status));
+  assert.ok(temperature.sampledAt);
+  assert.equal(Object.hasOwn(temperature, 'path'), false);
   const appScript = await client.request('/app.js');
   assert.equal(appScript.status, 200);
   assert.match(await appScript.text(), /location\.replace\('\/login\?notice=login-required'\)/);

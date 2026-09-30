@@ -19,12 +19,14 @@ import { browseNotes, readNote } from './notes.js';
 import { listAgentFiles, readAgentFile, writeAgentFile } from './agent-files.js';
 import { millisecondsUntilNextQuarterHour, syncGitHubSnapshot, validateGitHubSyncTarget } from './github-sync.js';
 import { createFinanceStore } from './finances.js';
+import { createHostTemperatureMonitor } from './host-temperature.js';
 
 const host = process.env.HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.PORT || '3000', 10);
 const paths = fridayPaths();
 const repositories = createRepositoryStore({ directory: paths.reposDir });
 const finances = createFinanceStore({ file: join(paths.dataDir, 'finances.json') });
+const hostTemperature = createHostTemperatureMonitor();
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'));
 const piWorkspaceDir = join(dirname(agentDir), 'workspace');
 const piLegacyRepositoriesDir = join(dirname(agentDir), 'repos');
@@ -1401,6 +1403,10 @@ async function handleRequest(request, response) {
   }
   if (request.method === 'GET' && pathname === '/api/system/settings') {
     sendJson(response, 200, { host, port, piCommand, systemUsage: await getSystemUsage() });
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/api/system/temperature') {
+    sendJson(response, 200, await hostTemperature.read());
     return;
   }
   if (request.method === 'POST' && pathname === '/api/system/restart') {

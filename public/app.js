@@ -1584,14 +1584,43 @@ function renderMemoryGraphCard(graph) {
 
 let dashboardLoadSequence = 0;
 let dashboardClockTimer;
+let dashboardTemperatureTimer;
+function renderDashboardTemperature(data) {
+  const output = $('#dashboard-temperature');
+  if (!output) return;
+  if (data?.status === 'available' && Number.isFinite(data.celsius)) {
+    output.textContent = `Highest sensor: ${data.celsius.toFixed(1)} °C`;
+  } else {
+    const status = data?.status === 'unsupported' ? 'Unsupported on this host'
+      : data?.status === 'permission-denied' ? 'Sensor access restricted'
+        : 'Unavailable';
+    output.textContent = `Temperature: ${status}`;
+  }
+}
+function scheduleDashboardTemperatureRefresh() {
+  clearTimeout(dashboardTemperatureTimer);
+  dashboardTemperatureTimer = setTimeout(async () => {
+    if (state.activeFeature !== 'dashboard') return;
+    try {
+      const temperature = await apiJson('/api/system/temperature');
+      if (state.activeFeature !== 'dashboard') return;
+      renderDashboardTemperature(temperature);
+    } catch {
+      if (state.activeFeature !== 'dashboard') return;
+      renderDashboardTemperature(null);
+    }
+    scheduleDashboardTemperatureRefresh();
+  }, 60_000);
+}
 async function loadDashboard() {
+  clearTimeout(dashboardTemperatureTimer);
   const sequence = ++dashboardLoadSequence;
   const cards = $('#dashboard-cards');
   const results = await Promise.allSettled([
-    apiJson('/api/friday/status'), apiJson('/api/status'), apiJson('/api/system/settings'), apiJson('/api/devices'), apiJson('/api/friday/memory/graph'), apiJson('/api/finances'),
+    apiJson('/api/friday/status'), apiJson('/api/status'), apiJson('/api/system/settings'), apiJson('/api/system/temperature'), apiJson('/api/devices'), apiJson('/api/friday/memory/graph'), apiJson('/api/finances'),
   ]);
   if (sequence !== dashboardLoadSequence || state.activeFeature !== 'dashboard') return;
-  const [friday, pi, system, devices, memoryGraph, finances] = results.map((result) => result.status === 'fulfilled' ? result.value : null);
+  const [friday, pi, system, temperature, devices, memoryGraph, finances] = results.map((result) => result.status === 'fulfilled' ? result.value : null);
   const hostName = devices?.devices?.find((device) => device.self)?.hostname || devices?.devices?.find((device) => device.local)?.hostname;
   const page = document.createElement('div'); page.className = 'dashboard-content';
   const header = $('#dashboard-feature .page-header');
@@ -1655,6 +1684,9 @@ async function loadDashboard() {
   for (const [label, value] of [['CPU', system?.systemUsage?.cpuPercent], ['RAM', system?.systemUsage?.memoryPercent]]) {
     const wrap = document.createElement('div'); wrap.className = 'dashboard-resource-gauge'; const text = document.createElement('label'); text.textContent = `${label}: ${Number.isFinite(value) ? `${value}%` : 'Unavailable'}`; const gauge = document.createElement('progress'); gauge.max = 100; gauge.value = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0; gauge.setAttribute('aria-label', `${label} usage`); gauge.setAttribute('aria-valuetext', Number.isFinite(value) ? `${value}%` : 'Unavailable'); wrap.append(text, gauge); resources.append(wrap);
   }
+  const temperatureWrap = document.createElement('div'); temperatureWrap.className = 'dashboard-resource-gauge';
+  const temperatureText = document.createElement('span'); temperatureText.className = 'dashboard-resource-temperature'; temperatureText.setAttribute('aria-live', 'polite'); temperatureText.id = 'dashboard-temperature';
+  temperatureWrap.append(temperatureText); resources.append(temperatureWrap); renderDashboardTemperature(temperature);
   const memory = renderMemoryGraphCard(memoryGraph);
   const finance = document.createElement('section'); finance.className = 'dashboard-panel dashboard-finance';
   const dashboardFinanceValues = [];
@@ -1693,6 +1725,7 @@ async function loadDashboard() {
   const footer = document.createElement('footer'); footer.className = 'dashboard-footer'; footer.innerHTML = '<span>FRIDAY OS / A SPACE FOR YOUR MIND.</span><span>LOCAL-FIRST · HUMAN-CENTERED</span>';
   page.append(hero, metrics, columns, footer);
   cards.replaceChildren(page);
+  scheduleDashboardTemperatureRefresh();
 }
 
 async function loadSettings() {
@@ -2107,7 +2140,10 @@ async function setFeature(name) {
   if (['files', 'pi-files'].includes(state.activeFeature) && !['files', 'pi-files'].includes(name) && !confirmDiscardFileChanges()) return;
   if (!featureViews.has(name)) return;
   state.activeFeature = name;
-  if (name !== 'dashboard') clearInterval(dashboardClockTimer);
+  if (name !== 'dashboard') {
+    clearInterval(dashboardClockTimer);
+    clearTimeout(dashboardTemperatureTimer);
+  }
   sessionStorage.setItem('friday-files-scope', state.fileFeature === 'pi-files' ? 'pi' : 'friday');
   sessionStorage.setItem('friday-repos-scope', state.repoFeature === 'pi-repos' ? 'pi' : 'friday');
   syncScopeSelectors(); updateTopbar(name);

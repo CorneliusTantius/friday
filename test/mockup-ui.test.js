@@ -27,6 +27,15 @@ test('public workspace UI contract has every feature, form, and shell integratio
   for (const variable of ['display', 'mono', 'purple']) assert.match(css, new RegExp(`--${variable}:`));
 });
 
+test('dashboard presents host temperature with safe unavailable states and infrequent polling', () => {
+  assert.match(app, /apiJson\('\/api\/system\/temperature'\)/);
+  assert.match(app, /Unsupported on this host/);
+  assert.match(app, /Sensor access restricted/);
+  assert.match(app, /dashboard-temperature/);
+  assert.match(app, /setTimeout\(async \(\) => \{[\s\S]*?\}, 60_000\)/);
+  assert.match(app, /clearTimeout\(dashboardTemperatureTimer\)/);
+});
+
 test('assistant rail and launch buttons hide in either full chat view', () => {
   assert.match(app, /\['friday', 'pi'\]\.includes\(getFeature\(\)\)/);
   assert.match(app, /assistant\.hidden = chatFeature/);
