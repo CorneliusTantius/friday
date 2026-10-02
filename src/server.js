@@ -50,6 +50,7 @@ const fridaySessionDir = process.env.FRIDAY_CHAT_DIR ? join(fridayChatDir, 'sess
 const publicRoot = join(projectRoot, 'public');
 const piSessions = new Map();
 const piRunOpenings = new Map();
+const piRunOperations = new Map();
 let fridayPi;
 let fridayInit;
 const fridayRuntimeId = '$friday'; // Not a valid X-Friday-Session value.
@@ -280,6 +281,7 @@ const piControl = {
   getRunStatus: getPiRunStatus,
   readConversation: readPiConversation,
   stopRun: stopPiRun,
+  waitForPrompt: waitForPiPrompt,
 };
 
 async function getFridayPi() {
@@ -844,15 +846,41 @@ async function getPiRunStatus(runId) {
   };
 }
 
+async function withPiRunOperation(runId, operation) {
+  const previous = piRunOperations.get(runId) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => { release = resolve; });
+  piRunOperations.set(runId, current);
+  await previous;
+  try { return await operation(); }
+  finally {
+    release();
+    if (piRunOperations.get(runId) === current) piRunOperations.delete(runId);
+  }
+}
+
 async function stopPiRun(runId) {
   const run = await piRunRegistry.getRun(runId);
   if (!run) return null;
-  const runtime = [...piSessions.values()].find((entry) => entry.pi.currentSessionPath === run.sessionPath);
-  if (!runtime) return { runId, stopped: false, running: false, queuedPrompts: 0 };
-  const cleared = runtime.pi.clearPromptQueue();
-  const aborted = await runtime.pi.abort();
-  runtime.lastUsed = Date.now();
-  return { runId, stopped: Boolean(cleared || aborted), aborted, clearedPrompts: cleared, queuedPrompts: runtime.pi.promptQueue.length };
+  return withPiRunOperation(run.id, async () => {
+    const opening = piRunOpenings.get(run.id);
+    if (opening) { try { await opening; } catch {} }
+    const runtime = [...piSessions.values()].find((entry) => entry.pi.currentSessionPath === run.sessionPath);
+    if (!runtime) return { runId, stopped: false, running: false, queuedPrompts: 0 };
+    const cleared = runtime.pi.clearPromptQueue();
+    const aborted = await runtime.pi.abort();
+    runtime.lastUsed = Date.now();
+    return { runId, stopped: Boolean(cleared || aborted), aborted, clearedPrompts: cleared, queuedPrompts: runtime.pi.promptQueue.length };
+  });
+}
+
+async function waitForPiPrompt({ runId, queueId, timeoutMs, signal }) {
+  const run = await piRunRegistry.getRun(runId);
+  if (!run) return { runId, queueId, status: 'not_found' };
+  const entry = [...piSessions.values()].find((candidate) => candidate.pi.currentSessionPath === run.sessionPath);
+  if (!entry) return { runId, queueId, status: 'not_found' };
+  entry.lastUsed = Date.now();
+  return { runId, ...(await entry.pi.waitForPrompt(queueId, { timeoutMs, signal })) };
 }
 
 async function enqueuePiPrompt({ conversationId, runId, prompt }) {
@@ -878,15 +906,17 @@ async function enqueuePiPrompt({ conversationId, runId, prompt }) {
   }
 
   await piRunRegistry.linkConversation(conversationId, run.id);
-  let runtime;
-  try { runtime = await findRunRuntime(run); }
-  catch (error) {
-    console.error(`Could not open Pi run ${run.id}: ${error.message}`);
-    throw new RequestError(`Could not open Pi run ${run.id}; check Pi Agent status`, 503);
-  }
-  const queued = runtime.entry.pi.enqueuePrompt(prompt.trim());
-  runtime.entry.lastUsed = Date.now();
-  return { queued: true, runId: run.id, queueId: queued.id, position: queued.position };
+  return withPiRunOperation(run.id, async () => {
+    let runtime;
+    try { runtime = await findRunRuntime(run); }
+    catch (error) {
+      console.error(`Could not open Pi run ${run.id}: ${error.message}`);
+      throw new RequestError(`Could not open Pi run ${run.id}; check Pi Agent status`, 503);
+    }
+    const queued = runtime.entry.pi.enqueuePrompt(prompt.trim());
+    runtime.entry.lastUsed = Date.now();
+    return { queued: true, runId: run.id, queueId: queued.id, position: queued.position };
+  });
 }
 
 async function mutateSession(session, operation) {

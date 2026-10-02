@@ -5,6 +5,8 @@ import { lstat, mkdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 const COMMAND_TIMEOUT_MS = 30_000;
+const PROMPT_RESULT_TTL_MS = 10 * 60_000;
+const MAX_PROMPT_RESULTS = 500;
 
 function textFromMessage(message) {
   if (typeof message?.content === 'string') {
@@ -60,6 +62,7 @@ export class PiSession extends EventEmitter {
     this.model = null;
     this.thinkingLevel = 'off';
     this.promptQueue = [];
+    this.promptJobs = new Map();
     this.processingPromptQueue = false;
   }
 
@@ -237,6 +240,8 @@ export class PiSession extends EventEmitter {
   enqueuePrompt(message) {
     if (typeof message !== 'string' || !message.trim() || message.length > 20_000) throw new TypeError('prompt must be between 1 and 20000 characters');
     const item = { id: randomUUID(), message: message.trim() };
+    this.#prunePromptJobs();
+    this.promptJobs.set(item.id, { result: null, waiters: new Set(), completedAt: null });
     this.promptQueue.push(item);
     const position = this.promptQueue.length + (this.processingPromptQueue ? 1 : 0);
     this.#emitQueueStatus();
@@ -244,9 +249,66 @@ export class PiSession extends EventEmitter {
     return { queued: true, id: item.id, position };
   }
 
+  waitForPrompt(id, { timeoutMs = 60_000, signal } = {}) {
+    this.#prunePromptJobs();
+    const job = this.promptJobs.get(id);
+    if (!job) return Promise.resolve({ queueId: id, status: 'not_found' });
+    if (job.result) {
+      const { id: _id, ...outcome } = job.result;
+      return Promise.resolve({ queueId: id, ...outcome });
+    }
+    if (signal?.aborted) return Promise.resolve({ queueId: id, status: 'cancelled' });
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        job.waiters.delete(onResult);
+        resolve(result);
+      };
+      const onResult = (result) => finish(result);
+      const onAbort = () => finish({ queueId: id, status: 'cancelled' });
+      const timer = setTimeout(() => finish({ queueId: id, status: 'timed_out' }), timeoutMs);
+      timer.unref?.();
+      job.waiters.add(onResult);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+    });
+  }
+
+  #prunePromptJobs() {
+    const now = Date.now();
+    for (const [id, job] of this.promptJobs) {
+      if (job.completedAt && now - job.completedAt > PROMPT_RESULT_TTL_MS) this.promptJobs.delete(id);
+    }
+    while (this.promptJobs.size >= MAX_PROMPT_RESULTS) {
+      const oldest = this.promptJobs.keys().next().value;
+      if (!oldest) break;
+      const job = this.promptJobs.get(oldest);
+      if (job?.result) this.promptJobs.delete(oldest);
+      else break;
+    }
+  }
+
+  #completePrompt(item, outcome) {
+    const result = { id: item.id, ...outcome };
+    const job = this.promptJobs.get(item.id);
+    if (job) {
+      job.result = result;
+      job.completedAt = Date.now();
+      const { id: _id, ...waitResult } = result;
+      for (const waiter of job.waiters) waiter({ queueId: item.id, ...waitResult });
+      job.waiters.clear();
+    }
+    this.emit('prompt_queue_result', result);
+  }
+
   clearPromptQueue() {
     const cleared = this.promptQueue.splice(0);
-    for (const item of cleared) this.emit('prompt_queue_result', { id: item.id, cancelled: true, error: 'Prompt queue cleared' });
+    for (const item of cleared) this.#completePrompt(item, { status: 'cancelled', error: 'Prompt queue cleared', cancelled: true });
     this.#emitQueueStatus();
     return cleared.length;
   }
@@ -264,9 +326,9 @@ export class PiSession extends EventEmitter {
         this.#emitQueueStatus();
         try {
           const result = await this.chat(item.message);
-          this.emit('prompt_queue_result', { id: item.id, result });
+          this.#completePrompt(item, { status: 'completed', result });
         } catch (error) {
-          this.emit('prompt_queue_result', { id: item.id, error: error.message });
+          this.#completePrompt(item, { status: 'failed', error: error.message });
         }
       }
     } finally {
