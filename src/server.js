@@ -13,7 +13,7 @@ import { FridaySdkSession } from './friday-sdk-session.js';
 import { createFridayMemory } from './friday-memory.js';
 import { createPiRunRegistry } from './pi-run-registry.js';
 import { createProviderAuth } from './provider-auth.js';
-import { fridayPaths, loadConfig, migrateDirectory, migrateStorage } from './config.js';
+import { fridayPaths, loadConfig, migrateStorage } from './config.js';
 import { createRepositoryStore } from './repos.js';
 import { browseNotes, readNote } from './notes.js';
 import { listAgentFiles, readAgentFile, writeAgentFile } from './agent-files.js';
@@ -30,18 +30,16 @@ const finances = createFinanceStore({ file: join(paths.dataDir, 'finances.json')
 const hostTemperature = createHostTemperatureMonitor();
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'));
 const piWorkspaceDir = join(dirname(agentDir), 'workspace');
-const piLegacyRepositoriesDir = join(dirname(agentDir), 'repos');
-const piRepositories = createRepositoryStore({ directory: join(piWorkspaceDir, 'repos') });
 const fridayAuth = createProviderAuth({ agentDir: paths.configDir });
 const piAuth = createProviderAuth({ agentDir });
-const syncConfigs = { friday: join(paths.configDir, 'github-sync.json'), pi: join(agentDir, 'friday-sync.json') };
+const syncConfigFile = join(paths.configDir, 'github-sync.json');
 const syncStateRoot = join(process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'friday');
-const syncStateFiles = { friday: join(syncStateRoot, 'github-friday.json'), pi: join(syncStateRoot, 'github-pi.json') };
+const syncStateFile = join(syncStateRoot, 'github-friday.json');
 const fridayMemory = createFridayMemory({ directory: join(paths.root, 'memory') });
 const piRunRegistry = createPiRunRegistry({ file: join(syncStateRoot, 'pi-runs.json') });
-const syncState = { friday: { busy: false, error: null, promise: null }, pi: { busy: false, error: null, promise: null } };
-const workspaceRoots = [resolve(homedir()), repositories.directory, piRepositories.directory];
-let initialWorkspace = piWorkspaceDir;
+const syncState = { friday: { busy: false, error: null, promise: null } };
+const workspaceRoots = [resolve(homedir()), paths.workspaceDir, repositories.directory];
+let initialWorkspace = paths.workspaceDir;
 let preferredWorkspace = initialWorkspace;
 const settingsFile = paths.configFile;
 const sessionStorage = join(agentDir, 'sessions');
@@ -519,8 +517,8 @@ async function resolveWorkspace(path) {
 async function loadPersistedWorkspace() {
   try {
     const config = await loadConfig();
-    const legacyDefault = resolve(dirname(agentDir));
-    const migrateDefault = !process.env.FRIDAY_WORKSPACE && resolve(config.workspace) === legacyDefault;
+    const legacyDefaults = [resolve(dirname(agentDir)), resolve(piWorkspaceDir)];
+    const migrateDefault = !process.env.FRIDAY_WORKSPACE && legacyDefaults.includes(resolve(config.workspace));
     const workspace = await resolveWorkspace(migrateDefault ? initialWorkspace : config.workspace);
     initialWorkspace = workspace;
     preferredWorkspace = workspace;
@@ -1125,9 +1123,9 @@ async function handleFridayRequest(request, response, pathname) {
   sendJson(response, 404, { error: 'Not found' });
 }
 
-async function readSyncConfig(scope) {
+async function readSyncConfig() {
   try {
-    const value = JSON.parse(await readFile(syncConfigs[scope], 'utf8'));
+    const value = JSON.parse(await readFile(syncConfigFile, 'utf8'));
     return {
       owner: typeof value.owner === 'string' ? value.owner : '',
       repo: typeof value.repo === 'string' ? value.repo : '',
@@ -1139,8 +1137,8 @@ async function readSyncConfig(scope) {
   }
 }
 
-async function writeSyncConfig(scope, value) {
-  const file = syncConfigs[scope];
+async function writeSyncConfig(value) {
+  const file = syncConfigFile;
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.${randomUUID()}.tmp`;
   try {
@@ -1151,29 +1149,25 @@ async function writeSyncConfig(scope, value) {
   }
 }
 
-async function performSync(scope) {
-  const state = syncState[scope];
+async function performSync() {
+  const state = syncState.friday;
   if (state.busy) return null;
   state.busy = true;
   state.error = null;
   state.promise = (async () => {
-    const config = await readSyncConfig(scope);
+    const config = await readSyncConfig();
     validateGitHubSyncTarget(config.owner, config.repo);
     const result = await syncGitHubSnapshot({
-      directory: scope === 'friday' ? paths.root : dirname(agentDir),
-      snapshotName: scope === 'friday' ? '.friday' : '.pi',
-      managedRepos: [scope === 'friday' ? repositories.directory : piRepositories.directory],
-      excludedPaths: [
-        relative(scope === 'friday' ? paths.root : dirname(agentDir), syncConfigs[scope]).split(sep).join('/'),
-        ...(scope === 'pi' ? [relative(dirname(agentDir), join(agentDir, 'models-store.json')).split(sep).join('/')] : []),
-        ...(scope === 'friday' ? ['memory'] : []),
-      ],
-      stateFile: syncStateFiles[scope],
+      directory: paths.root,
+      snapshotName: '.friday',
+      managedRepos: [repositories.directory],
+      excludedPaths: [relative(paths.root, syncConfigFile).split(sep).join('/'), 'memory'],
+      stateFile: syncStateFile,
       owner: config.owner,
       repo: config.repo,
     });
     config.lastSync = new Date().toISOString();
-    await writeSyncConfig(scope, config);
+    await writeSyncConfig(config);
     return { ...result, lastSync: config.lastSync };
   })();
   try {
@@ -1188,15 +1182,13 @@ async function performSync(scope) {
 }
 
 async function runScheduledSyncs() {
-  for (const scope of ['friday', 'pi']) {
-    try {
-      const config = await readSyncConfig(scope);
-      if (!config.owner || !config.repo || syncState[scope].busy) continue;
-      const result = await performSync(scope);
-      if (result) console.log(`${scope} GitHub sync completed${result.pushed ? ' (pushed)' : ''}${result.pulled ? ` (pulled ${result.pulled} files)` : ''}`);
-    } catch (error) {
-      console.error(`${scope} scheduled GitHub sync failed: ${error.message}`);
-    }
+  try {
+    const config = await readSyncConfig();
+    if (!config.owner || !config.repo || syncState.friday.busy) return;
+    const result = await performSync();
+    if (result) console.log(`Friday GitHub sync completed${result.pushed ? ' (pushed)' : ''}${result.pulled ? ` (pulled ${result.pulled} files)` : ''}`);
+  } catch (error) {
+    console.error(`Friday scheduled GitHub sync failed: ${error.message}`);
   }
 }
 
@@ -1285,12 +1277,12 @@ async function handleRequest(request, response) {
     sendJson(response, 200, await githubStatus());
     return;
   }
-  const syncRoute = pathname.match(/^\/api\/(friday|pi)\/sync\/(settings|run)$/);
+  const syncRoute = pathname.match(/^\/api\/friday\/sync\/(settings|run)$/);
   if (syncRoute) {
-    const [, scope, action] = syncRoute;
-    const state = syncState[scope];
+    const action = syncRoute[1];
+    const state = syncState.friday;
     if (action === 'settings' && request.method === 'GET') {
-      const config = await readSyncConfig(scope);
+      const config = await readSyncConfig();
       sendJson(response, 200, { ...config, status: state.busy ? 'Syncing…' : config.owner ? 'Ready' : 'Not configured', error: state.error });
       return;
     }
@@ -1299,21 +1291,21 @@ async function handleRequest(request, response) {
       try { validateGitHubSyncTarget(body.owner, body.repo); }
       catch { throw new RequestError('Enter a valid GitHub owner and repository'); }
       if (state.busy) throw new RequestError('GitHub sync is already running', 409);
-      const previous = await readSyncConfig(scope);
+      const previous = await readSyncConfig();
       const config = { owner: body.owner, repo: body.repo, lastSync: previous.owner === body.owner && previous.repo === body.repo ? previous.lastSync : null };
-      await writeSyncConfig(scope, config);
+      await writeSyncConfig(config);
       state.error = null;
-      void performSync(scope).catch((error) => console.error(`${scope} automatic GitHub sync failed: ${error.message}`));
+      void performSync().catch((error) => console.error(`Friday automatic GitHub sync failed: ${error.message}`));
       sendJson(response, 200, { ...config, status: 'Syncing…', error: null });
       return;
     }
     if (action === 'run' && request.method === 'POST') {
       if (state.busy) throw new RequestError('GitHub sync is already running', 409);
-      const config = await readSyncConfig(scope);
+      const config = await readSyncConfig();
       try { validateGitHubSyncTarget(config.owner, config.repo); }
       catch { throw new RequestError('Configure a private GitHub repository in agent Settings first'); }
       let result;
-      try { result = await performSync(scope); }
+      try { result = await performSync(); }
       catch { throw new RequestError(`GitHub sync failed: ${state.error}`, 502); }
       if (!result) throw new RequestError('GitHub sync is already running', 409);
       sendJson(response, 200, result);
@@ -1350,12 +1342,10 @@ async function handleRequest(request, response) {
     response.end();
     return;
   }
-  const repoPullRoute = pathname.match(/^\/api\/(pi\/)?repos\/pull$/);
-  if (request.method === 'POST' && repoPullRoute) {
+  if (request.method === 'POST' && pathname === '/api/repos/pull') {
     const body = await readJson(request);
-    const store = repoPullRoute[1] ? piRepositories : repositories;
     try {
-      sendJson(response, 200, await store.pullRepository(body.name));
+      sendJson(response, 200, await repositories.pullRepository(body.name));
     } catch (error) {
       const status = error.code === 'DIRTY' || error.code === 'BUSY' ? 409
         : error.code === 'ENOENT' ? 404
@@ -1372,17 +1362,6 @@ async function handleRequest(request, response) {
     const body = await readJson(request);
     if (typeof body.url !== 'string') throw new RequestError('url is required');
     try { sendJson(response, 201, { repo: await repositories.cloneRepository(body.url) }); }
-    catch (error) { throw new RequestError(error.message, 400); }
-    return;
-  }
-  if (request.method === 'GET' && pathname === '/api/pi/repos') {
-    sendJson(response, 200, { repos: await piRepositories.listRepositories() });
-    return;
-  }
-  if (request.method === 'POST' && pathname === '/api/pi/repos') {
-    const body = await readJson(request);
-    if (typeof body.url !== 'string') throw new RequestError('url is required');
-    try { sendJson(response, 201, { repo: await piRepositories.cloneRepository(body.url) }); }
     catch (error) { throw new RequestError(error.message, 400); }
     return;
   }
@@ -1503,6 +1482,7 @@ async function handleRequest(request, response) {
     return;
   }
   if (request.method === 'GET' && await serveStatic(pathname, response)) return;
+  if (pathname === '/api/pi/repos' || pathname === '/api/pi/repos/pull') throw new RequestError('Not found', 404);
 
   const pi = piForRequest(request);
 
@@ -1880,9 +1860,6 @@ let restartScheduled = false;
 const startServer = async () => {
   await migrateStorage();
   await mkdir(dirname(agentDir), { recursive: true, mode: 0o700 });
-  await mkdir(piWorkspaceDir, { recursive: true, mode: 0o700 });
-  await migrateDirectory(piLegacyRepositoriesDir, piRepositories.directory);
-  await mkdir(piRepositories.directory, { recursive: true, mode: 0o700 });
   await loadPersistedWorkspace();
   await logSystemUsage();
   server.listen(port, host, () => {

@@ -34,7 +34,7 @@ const featureViews = new Map([
   ['friday', $('#friday-feature')],
   ['pi', $('#pi-feature')],
   ['files', $('#files-feature')], ['pi-files', $('#files-feature')],
-  ['repos', $('#repos-feature')], ['pi-repos', $('#repos-feature')], ['notes', $('#notes-feature')],
+  ['repos', $('#repos-feature')], ['notes', $('#notes-feature')],
   ['finances', $('#finances-feature')],
   ['dashboard', $('#dashboard-feature')], ['settings', $('#settings-feature')], ['friday-settings', $('#settings-feature')], ['pi-settings', $('#settings-feature')],
 ]);
@@ -50,7 +50,6 @@ if (requestedFeature) {
 const state = {
   activeFeature: initialFeature,
   fileFeature: initialFeatureName === 'pi-files' ? 'pi-files' : initialFeatureName === 'files' ? 'files' : sessionStorage.getItem('friday-files-scope') === 'pi' ? 'pi-files' : 'files',
-  repoFeature: initialFeatureName === 'pi-repos' ? 'pi-repos' : initialFeatureName === 'repos' ? 'repos' : sessionStorage.getItem('friday-repos-scope') === 'pi' ? 'pi-repos' : 'repos',
   activeModel: '',
   activeThinkingLevel: 'off',
   agentBusy: false,
@@ -1226,7 +1225,7 @@ function renderSettings(data) {
   }
 }
 
-function renderRepos(list, repos, scope) {
+function renderRepos(list, repos) {
   list.replaceChildren();
   if (!repos.length) {
     const empty = document.createElement('div'); empty.className = 'repo-empty';
@@ -1262,14 +1261,14 @@ function renderRepos(list, repos, scope) {
       pull.disabled = true;
       pull.textContent = 'Pulling…';
       try {
-        await apiJson(scope === 'pi' ? '/api/pi/repos/pull' : '/api/repos/pull', {
+        await apiJson('/api/repos/pull', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: repo.name }),
         });
         toast(`Synced ${repo.name}`);
       } catch (error) {
         if (!isAbort(error)) toast(error.message, 'error');
       } finally {
-        try { await loadRepos(scope); }
+        try { await loadRepos(); }
         catch (error) { if (!isAbort(error)) toast(error.message, 'error'); }
       }
     });
@@ -1278,11 +1277,10 @@ function renderRepos(list, repos, scope) {
   }
 }
 
-async function loadRepos(scope = state.repoFeature === 'pi-repos' ? 'pi' : 'friday') {
-  const key = scope === 'pi' ? 'pi-repos' : 'repos';
-  const data = await apiJson(scope === 'pi' ? '/api/pi/repos' : '/api/repos', {}, key);
-  if ((state.repoFeature === 'pi-repos') !== (scope === 'pi')) return;
-  renderRepos($('#repo-list'), data.repos || [], scope);
+async function loadRepos() {
+  const data = await apiJson('/api/repos', {}, 'repos');
+  if (state.activeFeature !== 'repos') return;
+  renderRepos($('#repo-list'), data.repos || []);
 }
 
 async function loadNotes() {
@@ -1778,7 +1776,7 @@ async function loadSettings() {
   renderSettings({ ...pi, fridayChat: friday.fridayChat, ...system });
   await Promise.all([
     loadProviderAuth('friday'), loadProviderAuth('pi'),
-    loadSyncSettings('friday'), loadSyncSettings('pi'),
+    loadSyncSettings('friday'),
   ]);
 
   const githubStatus = $('#github-cli-status');
@@ -2136,8 +2134,7 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
 
 function updateTopbar(name = state.activeFeature) {
   const labels = { dashboard: 'Dashboard', friday: 'Friday Agent', pi: 'Pi Agent', notes: 'Notes', finances: 'Finances', settings: 'System' };
-  const label = name === 'files' || name === 'pi-files' ? `Files · ${name === 'files' ? 'Friday' : 'Pi'}`
-    : name === 'repos' || name === 'pi-repos' ? `Repositories · ${name === 'repos' ? 'Friday' : 'Pi'}` : labels[name] || 'Workspace';
+  const label = name === 'files' || name === 'pi-files' ? `Files · ${name === 'files' ? 'Friday' : 'Pi'}` : labels[name] || 'Workspace';
   $('#topbar-page').textContent = label;
 }
 
@@ -2153,14 +2150,9 @@ function syncScopeSelectors() {
     const selected = button.dataset.fileScope === state.fileFeature;
     button.classList.toggle('selected', selected); button.setAttribute('aria-pressed', String(selected));
   }
-  for (const button of document.querySelectorAll('[data-repo-scope]')) {
-    const selected = button.dataset.repoScope === (state.repoFeature === 'pi-repos' ? 'pi' : 'friday');
-    button.classList.toggle('selected', selected); button.setAttribute('aria-pressed', String(selected));
-  }
-  const piRepos = state.repoFeature === 'pi-repos';
-  $('#repo-page-title').textContent = piRepos ? 'Pi repositories' : 'Friday repositories';
-  $('#repo-page-description').textContent = `${piRepos ? 'Pi' : 'Friday'} workspace repositories.`;
-  $('#clone-repo-url').setAttribute('aria-label', `${piRepos ? 'Pi' : 'Friday'} repository Git URL`);
+  $('#repo-page-title').textContent = 'Repositories';
+  $('#repo-page-description').textContent = 'Friday workspace projects.';
+  $('#clone-repo-url').setAttribute('aria-label', 'Repository Git URL');
 }
 
 async function loadFridayDirectory() {
@@ -2174,8 +2166,6 @@ async function setFeature(name) {
   if (name === 'friday-settings' || name === 'pi-settings') name = 'settings';
   if (name === 'files') name = state.fileFeature;
   else if (name === 'pi-files') state.fileFeature = 'pi-files';
-  if (name === 'repos') name = state.repoFeature;
-  else if (name === 'pi-repos') state.repoFeature = 'pi-repos';
   if (name === state.activeFeature && ['files', 'pi-files'].includes(name) && !elements.fileEditorLayout.hidden) return;
   if (['files', 'pi-files'].includes(state.activeFeature) && !['files', 'pi-files'].includes(name) && !confirmDiscardFileChanges()) return;
   if (!featureViews.has(name)) return;
@@ -2185,10 +2175,9 @@ async function setFeature(name) {
     clearTimeout(dashboardTemperatureTimer);
   }
   sessionStorage.setItem('friday-files-scope', state.fileFeature === 'pi-files' ? 'pi' : 'friday');
-  sessionStorage.setItem('friday-repos-scope', state.repoFeature === 'pi-repos' ? 'pi' : 'friday');
   syncScopeSelectors(); updateTopbar(name);
   closeDrawer();
-  const primaryName = name === 'pi-files' ? 'files' : name === 'pi-repos' ? 'repos' : name;
+  const primaryName = name === 'pi-files' ? 'files' : name;
   for (const button of featureButtons) {
     const active = button.dataset.feature === primaryName; button.classList.toggle('active', active);
     if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
@@ -2197,7 +2186,7 @@ async function setFeature(name) {
     const visible = view === $('#dashboard-feature') ? name === 'dashboard'
       : view === $('#settings-feature') ? name === 'settings'
       : view === $('#files-feature') ? ['files', 'pi-files'].includes(name)
-        : view === $('#repos-feature') ? ['repos', 'pi-repos'].includes(name)
+        : view === $('#repos-feature') ? name === 'repos'
           : view === $('#pi-feature') ? name === 'pi'
             : view === $('#notes-feature') ? name === 'notes'
               : view === $('#finances-feature') ? name === 'finances' : name === 'friday';
@@ -2207,7 +2196,7 @@ async function setFeature(name) {
   $('#system-devices-view').hidden = false;
   try {
     if (name === 'friday') await Promise.all([fridayChat.start(), loadFridayPiConversations(), loadFridayDirectory()]);
-    else if (!['dashboard', 'repos', 'pi-repos', 'notes', 'files', 'pi-files', 'finances', 'settings'].includes(name)) await initializePi();
+    else if (!['dashboard', 'repos', 'notes', 'files', 'pi-files', 'finances', 'settings'].includes(name)) await initializePi();
     if (name === 'files' || name === 'pi-files') {
       elements.fileTitle.textContent = 'File preview';
       elements.fileMeta.textContent = 'Select a text file to preview it.';
@@ -2219,7 +2208,7 @@ async function setFeature(name) {
     }
     if (name === 'settings') await loadSettings(name);
     if (name === 'dashboard') await loadDashboard();
-    if (name === 'repos' || name === 'pi-repos') await loadRepos(name === 'pi-repos' ? 'pi' : 'friday');
+    if (name === 'repos') await loadRepos();
     if (name === 'notes') await loadNotes();
     if (name === 'finances') await loadFinances();
   } catch (error) {
@@ -2360,11 +2349,6 @@ void refreshFridaySessions().catch((error) => toast(error.message, 'error'));
 
 for (const button of featureButtons) button.addEventListener('click', () => void setFeature(button.dataset.feature));
 for (const button of document.querySelectorAll('[data-file-scope]')) button.addEventListener('click', () => selectFileScope(button.dataset.fileScope));
-for (const button of document.querySelectorAll('[data-repo-scope]')) button.addEventListener('click', () => {
-  if ($('#clone-repo-form').dataset.busy) return;
-  state.repoFeature = button.dataset.repoScope === 'pi' ? 'pi-repos' : 'repos';
-  void setFeature(state.repoFeature);
-});
 for (const button of document.querySelectorAll('[data-open-drawer]')) button.addEventListener('click', () => openDrawer(button.dataset.openDrawer));
 for (const button of document.querySelectorAll('[data-close-drawer]')) button.addEventListener('click', closeDrawer);
 elements.drawerBackdrop.addEventListener('click', closeDrawer);
@@ -2665,23 +2649,20 @@ function attachCloneForm(formId, progressId) {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (submit.disabled) return;
-    const scope = state.repoFeature === 'pi-repos' ? 'pi' : 'friday';
     const url = input.value;
     form.dataset.busy = 'true';
     input.disabled = submit.disabled = true;
-    document.querySelectorAll('[data-repo-scope]').forEach((button) => { button.disabled = true; });
     progress.hidden = false;
     try {
-      await apiJson(scope === 'pi' ? '/api/pi/repos' : '/api/repos', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
+      await apiJson('/api/repos', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
       input.value = '';
-      await loadRepos(scope);
+      await loadRepos();
       toast('Repository cloned');
     } catch (error) {
       toast(error.message, 'error');
     } finally {
       delete form.dataset.busy;
       input.disabled = submit.disabled = false;
-      document.querySelectorAll('[data-repo-scope]').forEach((button) => { button.disabled = false; });
       progress.hidden = true;
     }
   });

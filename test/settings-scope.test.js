@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -20,6 +20,9 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   await writeFile(join(fakeBin, 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
   await mkdir(join(home, 'friday', 'config'), { recursive: true });
   await writeFile(join(home, 'friday', 'config', 'config.json'), JSON.stringify({ workspace: join(home, '.pi') }));
+  const legacyPiSyncConfig = join(home, '.pi', 'agent', 'friday-sync.json');
+  await mkdir(join(home, '.pi', 'agent'), { recursive: true });
+  await writeFile(legacyPiSyncConfig, JSON.stringify({ owner: 'old-owner', repo: 'old-pi-repo' }));
   await mkdir(join(home, 'friday', 'repos', 'legacy-friday', '.git'), { recursive: true });
   await mkdir(join(home, '.pi', 'repos', 'legacy-pi', '.git'), { recursive: true });
   await writeFile(piCommand, `#!/bin/sh\ntouch "${marker}"\nexit 1\n`, { mode: 0o700 });
@@ -66,7 +69,8 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   assert.equal((appHtml.match(/data-feature="files"/g) || []).length, 1, 'Files has one navigation entry');
   assert.equal((appHtml.match(/data-feature="repos"/g) || []).length, 1, 'Repositories has one navigation entry');
   assert.match(appHtml, /data-file-scope="files"[\s\S]*data-file-scope="pi-files"/);
-  assert.match(appHtml, /data-repo-scope="friday"[\s\S]*data-repo-scope="pi"/);
+  assert.doesNotMatch(appHtml, /data-repo-scope=/);
+  assert.doesNotMatch(appHtml, /data-sync="pi"/);
   assert.doesNotMatch(appHtml, /id="pi-repos-feature"|id="pi-repo-list"|id="clone-pi-repo-form"/);
   assert.match(appHtml, /<details open class="settings-group friday-settings-group">/);
   assert.ok(appHtml.indexOf('data-feature="dashboard"') < appHtml.indexOf('Friday Agent'));
@@ -76,7 +80,11 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   const settingsRenderer = appJs.slice(appJs.indexOf('function renderSettings'), appJs.indexOf('function renderDashboardCard'));
   assert.doesNotMatch(settingsRenderer, /Current session|Pi command|Thinking|\['Model'/);
   assert.deepEqual((await (await request('/api/repos')).json()).repos.map(({ name }) => name), ['legacy-friday']);
-  assert.deepEqual((await (await request('/api/pi/repos')).json()).repos.map(({ name }) => name), ['legacy-pi']);
+  assert.equal((await request('/api/pi/repos')).status, 404);
+  assert.equal((await request('/api/pi/repos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: 'https://github.com/example/repo.git' }) })).status, 404);
+  assert.equal((await request('/api/pi/repos/pull', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'legacy-pi' }) })).status, 404);
+  assert.ok((await stat(join(home, '.pi', 'repos', 'legacy-pi', '.git'))).isDirectory());
+  await assert.rejects(stat(join(home, '.pi', 'workspace', 'repos')));
   const restart = await request('/api/system/restart', { method: 'POST' });
   assert.equal(restart.status, 409, 'manual server instances must not terminate without a systemd restart policy');
 
@@ -89,7 +97,6 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   });
   assert.equal(login.status, 200);
   assert.doesNotMatch(await login.text(), /friday-server-test-secret/);
-  const { readFile, stat } = await import('node:fs/promises');
   const fridayAuthFile = join(home, 'friday', 'config', 'auth.json');
   assert.match(await readFile(fridayAuthFile, 'utf8'), /friday-server-test-secret/);
   assert.equal((await stat(fridayAuthFile)).mode & 0o077, 0);
@@ -161,12 +168,12 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   const fridaySyncStart = await saveSync('friday', 'owner', 'friday-private');
   assert.equal(fridaySyncStart.status, 200);
   assert.equal((await fridaySyncStart.json()).status, 'Syncing…', 'saving a target starts automatic sync');
-  assert.equal((await saveSync('pi', 'owner', 'pi-private')).status, 200);
+  assert.equal((await saveSync('pi', 'owner', 'pi-private')).status, 404);
   assert.equal((await (await request('/api/friday/sync/settings')).json()).repo, 'friday-private');
-  assert.equal((await (await request('/api/pi/sync/settings')).json()).repo, 'pi-private');
+  assert.equal((await request('/api/pi/sync/settings')).status, 404);
   assert.equal((await stat(join(home, 'friday', 'config', 'github-sync.json'))).mode & 0o077, 0);
-  assert.equal((await stat(join(home, '.pi', 'agent', 'friday-sync.json'))).mode & 0o077, 0);
-  assert.equal((await saveSync('pi', '../owner', 'invalid')).status, 400);
+  assert.equal(await readFile(legacyPiSyncConfig, 'utf8'), JSON.stringify({ owner: 'old-owner', repo: 'old-pi-repo' }));
+  assert.equal((await saveSync('pi', '../owner', 'invalid')).status, 404);
   for (const path of ['/api/friday/settings', '/api/system/settings']) {
     const response = await request(path);
     assert.equal(response.status, 200, `${path} should be available without Pi`);
@@ -177,7 +184,7 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
 
   const piSettings = await request('/api/pi/settings');
   assert.equal(piSettings.status, 200);
-  assert.equal((await piSettings.json()).workspace, join(home, '.pi', 'workspace'));
+  assert.equal((await piSettings.json()).workspace, join(home, 'friday', 'workspace'));
   assert.equal(await import('node:fs/promises').then(({ access }) => access(marker).then(() => true, () => false)), true,
     'Pi settings may inspect the installed Pi command');
 });

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, readFile, lstat, rm, cp, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,7 +16,7 @@ test('scheduled sync delay aligns with the next wall-clock quarter-hour', () => 
   for (const [now, expected] of cases) assert.equal(millisecondsUntilNextQuarterHour(now), expected);
 });
 
-test('sync includes settings, credentials, sessions and binary data, excluding only repos, node_modules and symlinks', async () => {
+test('sync excludes auth.json files while including settings, sessions, and binary data', async () => {
   const root = await mkdtemp(join(tmpdir(), 'github-sync-test-'));
   const source = join(root, 'source');
   const repo = join(source, 'project');
@@ -24,6 +25,8 @@ test('sync includes settings, credentials, sessions and binary data, excluding o
     await writeFile(join(source, 'notes.md'), 'safe note');
     await writeFile(join(repo, 'tracked.txt'), 'managed repo');
     await writeFile(join(source, 'auth.json'), '{"token":"provider-secret"}');
+    await mkdir(join(source, 'config'));
+    await writeFile(join(source, 'config', 'auth.json'), '{"token":"nested-secret"}');
     await writeFile(join(source, 'settings.json'), '{"private":true}');
     await writeFile(join(source, 'models.json'), '{"models":[]}');
     await writeFile(join(source, '.env'), 'SECRET=abc');
@@ -44,16 +47,17 @@ test('sync includes settings, credentials, sessions and binary data, excluding o
       validate: async ({ owner, repo: name }) => owner === 'me' && name === 'private',
       prepare: async ({ path }) => { await mkdir(path, { recursive: true }); await writeFile(join(path, 'old.txt'), 'old'); },
       commitAndPush: async ({ path, copied }) => {
-        assert.equal(copied, 8);
-        for (const file of ['auth.json', 'settings.json', 'models.json', 'sessions/conversation.jsonl', 'memory/context.bin', 'large.dat']) {
+        assert.equal(copied, 7);
+        for (const file of ['settings.json', 'models.json', '.env', 'sessions/conversation.jsonl', 'memory/context.bin', 'large.dat', 'notes.md']) {
           assert.deepEqual(await readFile(join(path, 'source', file)), await readFile(join(source, file)));
         }
+        for (const file of ['auth.json', 'config/auth.json']) await assert.rejects(lstat(join(path, 'source', file)));
         assert.equal(await readFile(join(path, 'old.txt'), 'utf8'), 'old');
         for (const file of ['repos', 'node_modules', 'project', 'linked-dir', 'outside-link']) await assert.rejects(lstat(join(path, 'source', file)));
         return { changed: true, pushed: false, copied };
       }
     } });
-    assert.deepEqual(result, { changed: true, pushed: false, copied: 8, pulled: 0 });
+    assert.deepEqual(result, { changed: true, pushed: false, copied: 7, pulled: 0 });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -82,11 +86,14 @@ test('sync pushes a scoped snapshot without deleting unrelated private-repo file
   await git('git', ['init', '--bare', '--initial-branch=main', remote]);
   await git('git', ['init', '-b', 'main', seed]);
   await writeFile(join(seed, 'README.md'), 'keep me');
+  await mkdir(join(seed, '.friday'));
+  await writeFile(join(seed, '.friday', 'auth.json'), 'existing remote secret');
   await git('git', ['-C', seed, 'add', '.']);
   await git('git', ['-C', seed, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'seed']);
   await git('git', ['-C', seed, 'remote', 'add', 'origin', remote]);
   await git('git', ['-C', seed, 'push', 'origin', 'main']);
   await writeFile(join(source, 'note.md'), 'safe note');
+  await writeFile(join(source, 'auth.json'), 'new local secret');
   const fakeGh = join(root, 'gh');
   await writeFile(fakeGh, `#!/bin/sh\ncase "$1 $2" in\n  "auth status") exit 0 ;;\n  "repo view") printf '%s\\n' '{"nameWithOwner":"me/private","isPrivate":true}' ;;\n  "repo clone") exec git clone '${remote}' "$4" ;;\n  *) exit 2 ;;\nesac\n`, { mode: 0o755 });
   const options = { directory: source, owner: 'me', repo: 'private', gh: fakeGh };
@@ -95,6 +102,8 @@ test('sync pushes a scoped snapshot without deleting unrelated private-repo file
   await git('git', ['clone', remote, checkout]);
   assert.equal(await readFile(join(checkout, 'README.md'), 'utf8'), 'keep me');
   assert.equal(await readFile(join(checkout, '.friday', 'note.md'), 'utf8'), 'safe note');
+  assert.equal(await readFile(join(checkout, '.friday', 'auth.json'), 'utf8'), 'existing remote secret');
+  assert.equal(await readFile(join(source, 'auth.json'), 'utf8'), 'new local secret');
   assert.deepEqual(await syncGitHubSnapshot(options), { changed: false, pushed: false, copied: 1, pulled: 0 });
 });
 
@@ -136,6 +145,50 @@ test('sync pulls remote changes, pushes local changes, and merges distinct paths
   assert.equal(await readFile(join(source, 'remote-only.txt'), 'utf8'), 'remote v2');
   assert.equal(await readFile(join(remote, 'remote-only.txt'), 'utf8'), 'remote v2');
   assert.equal(pushed, 2);
+});
+
+test('auth.json files are never synced, including entries from an older baseline', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'github-sync-auth-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source');
+  const remote = join(root, 'remote', '.friday');
+  const stateFile = join(root, 'state', 'baseline.json');
+  await mkdir(join(source, 'config'), { recursive: true });
+  await mkdir(join(source, 'remote-only'), { recursive: true });
+  await mkdir(join(remote, 'config'), { recursive: true });
+  await mkdir(join(remote, 'remote-only'), { recursive: true });
+  await writeFile(join(source, 'auth.json'), 'local-auth');
+  await writeFile(join(source, 'config', 'auth.json'), 'local-nested-auth');
+  await writeFile(join(source, 'safe.txt'), 'new local data');
+  await writeFile(join(source, 'state.txt'), 'local update');
+  await writeFile(join(remote, 'state.txt'), 'baseline');
+  await writeFile(join(remote, 'auth.json'), 'existing remote-auth');
+  await writeFile(join(remote, 'config', 'auth.json'), 'existing nested remote-auth');
+  await writeFile(join(remote, 'remote-only', 'auth.json'), 'remote-only auth');
+  await mkdir(join(root, 'state'), { recursive: true });
+  const authPaths = ['auth.json', 'config/auth.json', 'remote-only/auth.json'];
+  const files = Object.fromEntries(authPaths.map((path) => [path, { hash: 'a'.repeat(64), executable: false }]));
+  files['state.txt'] = { hash: createHash('sha256').update('baseline').digest('hex'), executable: false };
+  await writeFile(stateFile, JSON.stringify({ owner: 'me', repo: 'private', files }));
+  const backend = {
+    validate: async () => true,
+    prepare: async ({ path }) => { await mkdir(path, { recursive: true }); await cp(remote, join(path, '.friday'), { recursive: true }); },
+    commitAndPush: async ({ path, copied }) => {
+      assert.equal(copied, 2);
+      await rm(join(root, 'remote'), { recursive: true, force: true });
+      await cp(join(path, '.friday'), remote, { recursive: true });
+      return { changed: true, pushed: true };
+    },
+  };
+  const result = await syncGitHubSnapshot({ directory: source, snapshotName: '.friday', owner: 'me', repo: 'private', stateFile, backend });
+  assert.equal(result.pulled, 0);
+  assert.equal(await readFile(join(source, 'auth.json'), 'utf8'), 'local-auth');
+  assert.equal(await readFile(join(source, 'config', 'auth.json'), 'utf8'), 'local-nested-auth');
+  assert.equal(await readFile(join(source, 'safe.txt'), 'utf8'), 'new local data');
+  assert.equal(await readFile(join(remote, 'state.txt'), 'utf8'), 'local update');
+  assert.equal(await readFile(join(remote, 'auth.json'), 'utf8'), 'existing remote-auth');
+  assert.equal(await readFile(join(remote, 'config', 'auth.json'), 'utf8'), 'existing nested remote-auth');
+  assert.equal(await readFile(join(remote, 'remote-only', 'auth.json'), 'utf8'), 'remote-only auth');
 });
 
 test('sync excludes its own config file on both sides to avoid self-conflicts', async (t) => {

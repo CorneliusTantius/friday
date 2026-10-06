@@ -23,7 +23,7 @@ function validTarget(owner, repo) {
 }
 
 function safeRelativePath(path) {
-  return typeof path === 'string' && path.length > 0 && !path.includes('\\') && !path.includes('\0') && path.split('/').every((part) => part && part !== '.' && part !== '..' && part !== '.git' && !forbiddenDirectories.has(part));
+  return typeof path === 'string' && path.length > 0 && basename(path) !== 'auth.json' && !path.includes('\\') && !path.includes('\0') && path.split('/').every((part) => part && part !== '.' && part !== '..' && part !== '.git' && !forbiddenDirectories.has(part));
 }
 
 function describe(data, mode) {
@@ -38,6 +38,7 @@ function validateBaseline(value, owner, repo) {
   if (!value || value.owner !== owner || value.repo !== repo || !value.files || typeof value.files !== 'object' || Array.isArray(value.files)) return null;
   const files = new Map();
   for (const [path, entry] of Object.entries(value.files)) {
+    if (basename(path) === 'auth.json') continue;
     if (!safeRelativePath(path) || !entry || !/^[a-f0-9]{64}$/.test(entry.hash) || typeof entry.executable !== 'boolean') return null;
     files.set(path, { hash: entry.hash, executable: entry.executable });
   }

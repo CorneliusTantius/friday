@@ -228,11 +228,7 @@
         </section>
         <section id="repos-feature" class="feature-page repositories-page" hidden>
           <header class="feature-header page-header">
-            <div><span class="eyebrow">Your space / source control</span><h1 id="repo-page-title">Repositories</h1><p id="repo-page-description">Friday-managed projects.</p></div>
-            <div class="segmented scope-selector" role="group" aria-label="Repository scope">
-              <button type="button" data-repo-scope="friday" aria-pressed="true">Friday</button>
-              <button type="button" data-repo-scope="pi" aria-pressed="false">Pi</button>
-            </div>
+            <div><span class="eyebrow">Your space / source control</span><h1 id="repo-page-title">Repositories</h1><p id="repo-page-description">Friday workspace projects.</p></div>
           </header>
           <form id="clone-repo-form" class="repo-form"><label for="clone-repo-url">Git URL</label><input id="clone-repo-url" type="url" required placeholder="https://github.com/owner/repo.git"><button type="submit">Clone repository</button></form>
           <div id="repo-clone-progress" class="clone-progress" role="status" hidden><progress aria-label="Repository clone in progress"></progress><span>Cloning repository…</span></div>
@@ -286,7 +282,7 @@
               <div class="settings-group-content">
                 <div id="friday-settings-list" class="settings-list"></div>
                 <section class="auth-panel" data-auth-provider="friday" aria-label="Friday provider authentication"></section>
-                <section class="github-sync" data-sync="friday"><h3>GitHub sync</h3><form><label>Owner <input name="owner" required autocomplete="off"></label><label>Repository <input name="repo" required autocomplete="off"></label><button class="secondary" type="submit">Save</button><button class="secondary" type="button" data-sync-run>Sync now</button></form><p class="sync-status" role="status" aria-live="polite"></p><p class="sync-help">Syncs ~/.friday/ to a private GitHub repository (created if missing), including settings, credentials, and sessions. Repositories, memory/, node_modules, .git metadata, and symlinks are excluded. Secrets and conversation history are included—anyone with repo access can read them.</p></section>
+                <section class="github-sync" data-sync="friday"><h3>GitHub sync</h3><form><label>Owner <input name="owner" required autocomplete="off"></label><label>Repository <input name="repo" required autocomplete="off"></label><button class="secondary" type="submit">Save</button><button class="secondary" type="button" data-sync-run>Sync now</button></form><p class="sync-status" role="status" aria-live="polite"></p><p class="sync-help">Syncs ~/.friday/ to one private GitHub repository (created if missing). Files named auth.json, repositories, memory/, node_modules, .git metadata, and symlinks are excluded. Other settings and conversation history may contain sensitive data; existing remote auth.json copies are not removed.</p></section>
               </div>
             </details>
             <details open class="settings-group pi-settings-group">
@@ -294,7 +290,6 @@
               <div class="settings-group-content">
                 <div id="settings-list" class="settings-list"></div>
                 <section class="auth-panel" data-auth-provider="pi" aria-label="Pi provider authentication"></section>
-                <section class="github-sync" data-sync="pi"><h3>GitHub sync</h3><form><label>Owner <input name="owner" required autocomplete="off"></label><label>Repository <input name="repo" required autocomplete="off"></label><button class="secondary" type="submit">Save</button><button class="secondary" type="button" data-sync-run>Sync now</button></form><p class="sync-status" role="status" aria-live="polite"></p><p class="sync-help">Syncs ~/.pi/ including settings, credentials, sessions and memory to a private GitHub repository (created if missing). Repositories, node_modules, .git metadata and symlinks are excluded. Secrets and conversation history are included—anyone with repo access can read them.</p></section>
                 <div class="settings-subsection"><h3 id="extensions-heading">Installed Pi extensions</h3><p>Configured packages available to Pi.</p><div id="extensions-list" class="extensions-list"></div></div>
               </div>
             </details>

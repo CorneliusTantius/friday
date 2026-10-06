@@ -5,11 +5,13 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadConfig, migrateStorage } from '../src/config.js';
 
-test('Pi workspace defaults to .pi or the configured agent directory parent', async (t) => {
+test('Pi workspace defaults to Friday workspace independently of Pi state paths', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'friday-default-workspace-'));
   t.after(() => rm(home, { recursive: true, force: true }));
-  assert.equal((await loadConfig({ home, env: {} })).workspace, join(home, '.pi', 'workspace'));
-  assert.equal((await loadConfig({ home, env: { PI_CODING_AGENT_DIR: join(home, 'custom', 'agent') } })).workspace, join(home, 'custom', 'workspace'));
+  const workspace = join(home, '.friday', 'workspace');
+  assert.equal((await loadConfig({ home, env: {} })).workspace, workspace);
+  assert.equal((await loadConfig({ home, env: { PI_CODING_AGENT_DIR: join(home, 'custom', 'agent') } })).workspace, workspace);
+  assert.equal((await loadConfig({ home, env: { FRIDAY_HOME: join(home, 'custom-friday') } })).workspace, join(home, 'custom-friday', 'workspace'));
 });
 
 test('config precedence is defaults, JSON, then environment', async (t) => {

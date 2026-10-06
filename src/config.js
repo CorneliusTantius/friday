@@ -38,7 +38,7 @@ function validateConfig(value, label = 'Config') {
 
 export async function loadConfig({ home = homedir(), env = process.env, defaults } = {}) {
   const paths = fridayPaths(home, env);
-  defaults ??= { workspace: resolve(join(env.PI_CODING_AGENT_DIR ? dirname(env.PI_CODING_AGENT_DIR) : join(home, '.pi'), 'workspace')) };
+  defaults ??= { workspace: paths.workspaceDir };
   let stored = {};
   try {
     stored = validateConfig(JSON.parse(await readFile(paths.configFile, 'utf8')));
