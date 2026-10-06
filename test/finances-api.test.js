@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createAppClient } from '../test-support/app-client.js';
+import { createAppClient, testAppPassword } from '../test-support/app-client.js';
 
 const serverPath = new URL('../src/server.js', import.meta.url).pathname;
 
@@ -15,7 +15,7 @@ test('financial tracker API supports persistent transaction CRUD and serves its 
   const port = 20000 + Math.floor(Math.random() * 30000);
   const child = spawn(process.execPath, [serverPath], {
     cwd: home,
-    env: { ...process.env, HOME: home, FRIDAY_HOME: join(home, '.friday'), PORT: String(port) },
+    env: { ...process.env, FRIDAY_APP_PASSWORD: testAppPassword, HOME: home, FRIDAY_HOME: join(home, '.friday'), PORT: String(port) },
     stdio: 'ignore',
   });
   t.after(async () => {

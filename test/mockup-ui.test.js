@@ -8,17 +8,23 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
 const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 const chat = await readFile(new URL('../public/friday-chat.js', import.meta.url), 'utf8');
+const socials = await readFile(new URL('../public/socials.js', import.meta.url), 'utf8');
 const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
 const login = await readFile(new URL('../public/login.html', import.meta.url), 'utf8');
 
 test('public workspace UI contract has every feature, form, and shell integration', () => {
-  for (const id of ['friday-feature','pi-feature','files-feature','dashboard-feature','repos-feature','notes-feature','finances-feature','settings-feature','friday-form','chat-form','file-save','finance-form','clone-repo-form','workspace-sidebar','assistant-rail','shell-command-dialog','shell-command-input']) {
+  for (const id of ['friday-feature','pi-feature','files-feature','dashboard-feature','repos-feature','notes-feature','finances-feature','socials-feature','settings-feature','friday-form','chat-form','file-save','finance-form','clone-repo-form','workspace-sidebar','assistant-rail','shell-command-dialog','shell-command-input']) {
     assert.equal((html.match(new RegExp(`\\bid=["']${id}["']`, 'g')) || []).length, 1, `expected one #${id}`);
   }
   assert.match(html, /data-shell-drawer="assistant"/);
   assert.match(html, /data-shell-drawer="sidebar"/);
   assert.match(app, /initializeWorkspaceShell/);
   assert.match(app, /createFridayChat/);
+  assert.match(app, /\['socials', \$\('#socials-feature'\)\]/);
+  assert.match(html, /data-feature="socials"/);
+  assert.match(socials, /api\/socials\/gmail\/messages/);
+  assert.doesNotMatch(socials, /message\.snippet/);
+  assert.match(socials, /api\/socials\/gmail\/status/);
   assert.match(chat, /apiJson\('\/api\/friday\/chat'/);
   for (const route of ['/styles.css', '/app.js']) assert.ok(html.includes(`"${route}"`));
   assert.ok(app.includes("import('./friday-chat.js')"));

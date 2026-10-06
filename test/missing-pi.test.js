@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createAppClient } from '../test-support/app-client.js';
+import { createAppClient, testAppPassword } from '../test-support/app-client.js';
 
 const serverPath = new URL('../src/server.js', import.meta.url).pathname;
 
@@ -21,7 +21,7 @@ test('missing Pi gives actionable 404 without blocking notes', { timeout: 15000 
   await writeFile(legacyPiRepoFile, 'leave existing Pi files in place');
   const port = 20000 + Math.floor(Math.random() * 30000);
   const child = spawn(process.execPath, [serverPath], {
-    cwd: home, env: { ...process.env, FRIDAY_HOME: join(home, 'friday'), PI_CODING_AGENT_DIR: join(home, '.pi', 'agent'), PI_COMMAND: join(home, 'no-pi'), PORT: String(port) }, stdio: 'ignore',
+    cwd: home, env: { ...process.env, FRIDAY_APP_PASSWORD: testAppPassword, FRIDAY_HOME: join(home, 'friday'), PI_CODING_AGENT_DIR: join(home, '.pi', 'agent'), PI_COMMAND: join(home, 'no-pi'), PORT: String(port) }, stdio: 'ignore',
   });
   t.after(async () => {
     child.kill('SIGTERM');

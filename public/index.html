@@ -38,6 +38,7 @@
             <button class="feature" type="button" data-feature="repos" aria-label="Repositories"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-10Z"/><path d="M3.5 10h17"/></svg><span>Repositories</span></button>
             <button class="feature" type="button" data-feature="notes" aria-label="Friday notes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l4 4V20a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5.5a2 2 0 0 1 2-2Z"/><path d="M14 4v5h5M8 13h8M8 17h8"/></svg><span>Notes</span></button>
             <button class="feature" type="button" data-feature="finances" aria-label="Financial tracker"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 5-7"/></svg><span>Finances</span></button>
+            <button class="feature" type="button" data-feature="socials" aria-label="Socials"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v13H4z"/><path d="m4.5 7 7.5 6 7.5-6"/></svg><span>Socials</span></button>
           </div>
           <div class="nav-group workspace-nav-group workspace-system-group">
             <span class="nav-group-title workspace-nav-heading">System</span>
@@ -267,6 +268,15 @@
             <div id="finance-status" class="feature-notice" role="status" aria-live="polite"></div><div id="finance-list" class="finance-list" aria-label="Financial entries"></div>
           </section>
         </section>
+        <section id="socials-feature" class="feature-page socials-page" hidden>
+          <header class="feature-header page-header"><div><span class="eyebrow">Your space</span><h1>Socials</h1><p>Connect services Friday can access on your behalf.</p></div></header>
+          <section class="socials-card" aria-labelledby="gmail-heading">
+            <div class="socials-card-heading"><div><span class="socials-provider-mark" aria-hidden="true">G</span><div><h2 id="gmail-heading">Gmail</h2><p id="gmail-status" role="status" aria-live="polite">Checking connection…</p></div></div><div class="socials-actions"><button id="gmail-connect" type="button">Connect Gmail</button><button id="gmail-refresh" class="secondary" type="button" hidden>Refresh inbox</button><button id="gmail-disconnect" class="secondary danger-button" type="button" hidden>Disconnect</button></div></div>
+            <p class="socials-privacy">Read-only access to Inbox headers and unread status. Friday fetches metadata only when you open or refresh this page; it does not request message bodies, send email, or store message history.</p>
+            <div id="gmail-message-list" class="gmail-message-list" aria-label="Inbox messages"></div>
+            <button id="gmail-next-page" class="secondary" type="button" hidden>Load more</button>
+          </section>
+        </section>
         <section id="settings-feature" class="feature-page" hidden>
           <header class="feature-header page-header">
             <div>
@@ -331,5 +341,6 @@
     <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
     <div id="announcement" class="sr-only" aria-live="polite" aria-atomic="true"></div>
     <script src="/app.js" type="module"></script>
+    <script src="/socials.js" type="module"></script>
   </body>
 </html>

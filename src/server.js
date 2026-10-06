@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -20,6 +20,7 @@ import { listAgentFiles, readAgentFile, writeAgentFile } from './agent-files.js'
 import { millisecondsUntilNextQuarterHour, syncGitHubSnapshot, validateGitHubSyncTarget } from './github-sync.js';
 import { createFinanceStore } from './finances.js';
 import { createHostTemperatureMonitor } from './host-temperature.js';
+import { createGmailIntegration } from './gmail.js';
 import { assertPiSessionDeletable, assertPiSessionDeleteAuthorized, deletePiSessionWithPolicy } from './pi-session-delete-policy.js';
 
 const host = process.env.HOST || '127.0.0.1';
@@ -28,6 +29,7 @@ const paths = fridayPaths();
 const repositories = createRepositoryStore({ directory: paths.reposDir });
 const finances = createFinanceStore({ file: join(paths.dataDir, 'finances.json') });
 const hostTemperature = createHostTemperatureMonitor();
+const gmail = createGmailIntegration({ file: join(paths.dataDir, 'socials', 'gmail', 'auth.json') });
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'));
 const piWorkspaceDir = join(dirname(agentDir), 'workspace');
 const fridayAuth = createProviderAuth({ agentDir: paths.configDir });
@@ -67,10 +69,14 @@ const eventHeartbeatMs = 15_000;
 const runtimeViewerTtlMs = 60_000;
 const runtimeIdleTtlMs = 15 * 60_000;
 const runtimeCleanupIntervalMs = 60_000;
-// Change this before exposing Friday to an untrusted network.
-const appPassword = 'Cornel123';
-const appPasswordDigest = createHash('sha256').update(appPassword).digest();
+const appPassword = process.env.FRIDAY_APP_PASSWORD || '';
+if (!appPassword) {
+  throw new Error('Set FRIDAY_APP_PASSWORD to a non-empty value before starting Friday');
+}
+const appPasswordSalt = randomBytes(16);
+const appPasswordDigest = scryptSync(appPassword, appPasswordSalt, 32);
 const appSessionCookie = '__Host-friday-session';
+const gmailFlowCookie = '__Host-friday-gmail-flow';
 const appSessions = new Map();
 const failedLogins = new Map();
 const appSessionIdleTtlMs = 12 * 60 * 60_000;
@@ -88,9 +94,13 @@ class RequestError extends Error {
   }
 }
 
+function cookieValue(request, name) {
+  const prefix = `${name}=`;
+  return request.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(prefix))?.slice(prefix.length) || null;
+}
+
 function appSessionId(request) {
-  const cookie = request.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${appSessionCookie}=`));
-  return cookie?.slice(appSessionCookie.length + 1) || null;
+  return cookieValue(request, appSessionCookie);
 }
 
 function isAppAuthenticated(request) {
@@ -106,8 +116,8 @@ function isAppAuthenticated(request) {
 }
 
 function passwordMatches(value) {
-  if (typeof value !== 'string' || value.length > 256) return false;
-  const digest = createHash('sha256').update(value).digest();
+  if (typeof value !== 'string' || !value) return false;
+  const digest = scryptSync(value, appPasswordSalt, 32);
   return timingSafeEqual(digest, appPasswordDigest);
 }
 
@@ -1241,6 +1251,27 @@ async function handleRequest(request, response) {
     await serveStatic(pathname, response);
     return;
   }
+  if (request.method === 'GET' && pathname === '/api/socials/gmail/callback') {
+    const state = url.searchParams.get('state');
+    const browserState = cookieValue(request, gmailFlowCookie);
+    let status = 200;
+    let message = 'Gmail is connected. Return to Friday to view your Inbox.';
+    if (url.searchParams.has('error')) {
+      gmail.cancel({ state, browserState });
+      status = 400;
+      message = 'Google authorization was declined or failed. Return to Friday and try again.';
+    } else {
+      try { await gmail.complete({ code: url.searchParams.get('code'), state, browserState }); }
+      catch (error) {
+        status = error.status || 400;
+        message = 'Could not finish Gmail authorization. Return to Friday and try again.';
+      }
+    }
+    response.setHeader('Set-Cookie', `${gmailFlowCookie}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`);
+    response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gmail — Friday</title><main style="font:1rem system-ui;max-width:36rem;margin:10vh auto;padding:1rem"><h1>Friday Socials</h1><p>${message}</p><a href="/?feature=socials">Return to Friday</a></main></html>`);
+    return;
+  }
   if (request.method === 'POST' && pathname === '/api/login') {
     const body = await readJson(request);
     const attempt = loginRateLimit(request);
@@ -1279,6 +1310,37 @@ async function handleRequest(request, response) {
     if (pathname.startsWith('/api/')) sendJson(response, 401, { error: 'Login required' });
     else redirect(response, '/login');
     return;
+  }
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) && request.headers.origin) {
+    let origin;
+    try { origin = new URL(request.headers.origin); }
+    catch { throw new RequestError('Invalid request origin', 403); }
+    if (!['http:', 'https:'].includes(origin.protocol) || origin.host !== request.headers.host) {
+      throw new RequestError('Cross-origin request rejected', 403);
+    }
+  }
+
+  if (pathname.startsWith('/api/socials/gmail/')) {
+    if (request.method === 'GET' && pathname === '/api/socials/gmail/status') {
+      sendJson(response, 200, await gmail.status());
+      return;
+    }
+    if (request.method === 'POST' && pathname === '/api/socials/gmail/connect') {
+      const result = await gmail.begin();
+      const state = new URL(result.authorizationUrl).searchParams.get('state');
+      response.setHeader('Set-Cookie', `${gmailFlowCookie}=${state}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Lax`);
+      sendJson(response, 200, result);
+      return;
+    }
+    if (request.method === 'GET' && pathname === '/api/socials/gmail/messages') {
+      sendJson(response, 200, await gmail.listInbox({ pageToken: url.searchParams.get('pageToken') || undefined }));
+      return;
+    }
+    if (request.method === 'POST' && pathname === '/api/socials/gmail/disconnect') {
+      sendJson(response, 200, await gmail.disconnect());
+      return;
+    }
+    throw new RequestError('Not found', 404);
   }
 
   if (request.method === 'GET' && pathname === '/pi-not-installed') {

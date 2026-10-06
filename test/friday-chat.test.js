@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createAppClient } from '../test-support/app-client.js';
+import { createAppClient, testAppPassword } from '../test-support/app-client.js';
 
 const root = new URL('../', import.meta.url).pathname;
 
@@ -62,7 +62,7 @@ rl.on('line', line => {
 });
 `, { mode: 0o755 });
   const child = spawn(process.execPath, [join(root, 'src/server.js')], {
-    cwd: dir, env: { ...process.env, HOME: dir, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: fakePi, PI_ARGS_LOG: join(dir, 'pi-args.jsonl'), FRIDAY_HOME: join(dir, 'home'),
+    cwd: dir, env: { ...process.env, FRIDAY_APP_PASSWORD: testAppPassword, HOME: dir, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: fakePi, PI_ARGS_LOG: join(dir, 'pi-args.jsonl'), FRIDAY_HOME: join(dir, 'home'),
       PI_CODING_AGENT_DIR: join(dir, 'agent'), PI_CODING_AGENT_SESSION_DIR: join(dir, 'sessions'),
       FRIDAY_CHAT_DIR: join(dir, 'friday') }, stdio: 'ignore',
   });
@@ -307,7 +307,7 @@ test('Friday SDK resumes the latest saved Friday transcript after restart', { ti
   const client = createAppClient(base);
   const start = () => spawn(process.execPath, [join(root, 'src/server.js')], {
     cwd: dir,
-    env: { ...process.env, HOME: dir, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: join(dir, 'missing-pi'), FRIDAY_HOME: fridayDir, PI_CODING_AGENT_DIR: join(dir, 'agent') },
+    env: { ...process.env, FRIDAY_APP_PASSWORD: testAppPassword, HOME: dir, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: join(dir, 'missing-pi'), FRIDAY_HOME: fridayDir, PI_CODING_AGENT_DIR: join(dir, 'agent') },
     stdio: 'ignore',
   });
   let child;
@@ -335,7 +335,7 @@ test('Friday chat runs from Friday workspace and stores sessions separately in d
   const { FRIDAY_CHAT_DIR: _unused, ...env } = process.env;
   const child = spawn(process.execPath, [join(root, 'src/server.js')], {
     cwd: dir,
-    env: { ...env, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: '/bin/true', FRIDAY_HOME: join(dir, 'home'), PI_CODING_AGENT_DIR: join(dir, 'agent') },
+    env: { ...env, FRIDAY_APP_PASSWORD: testAppPassword, HOST: '127.0.0.1', PORT: String(port), PI_COMMAND: '/bin/true', FRIDAY_HOME: join(dir, 'home'), PI_CODING_AGENT_DIR: join(dir, 'agent') },
     stdio: 'ignore',
   });
   t.after(async () => {

@@ -35,7 +35,7 @@ const featureViews = new Map([
   ['pi', $('#pi-feature')],
   ['files', $('#files-feature')], ['pi-files', $('#files-feature')],
   ['repos', $('#repos-feature')], ['notes', $('#notes-feature')],
-  ['finances', $('#finances-feature')],
+  ['finances', $('#finances-feature')], ['socials', $('#socials-feature')],
   ['dashboard', $('#dashboard-feature')], ['settings', $('#settings-feature')], ['friday-settings', $('#settings-feature')], ['pi-settings', $('#settings-feature')],
 ]);
 const url = new URL(window.location.href);
@@ -2133,7 +2133,7 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
 }
 
 function updateTopbar(name = state.activeFeature) {
-  const labels = { dashboard: 'Dashboard', friday: 'Friday Agent', pi: 'Pi Agent', notes: 'Notes', finances: 'Finances', settings: 'System' };
+  const labels = { dashboard: 'Dashboard', friday: 'Friday Agent', pi: 'Pi Agent', notes: 'Notes', finances: 'Finances', socials: 'Socials', settings: 'System' };
   const label = name === 'files' || name === 'pi-files' ? `Files · ${name === 'files' ? 'Friday' : 'Pi'}` : labels[name] || 'Workspace';
   $('#topbar-page').textContent = label;
 }
@@ -2189,14 +2189,15 @@ async function setFeature(name) {
         : view === $('#repos-feature') ? name === 'repos'
           : view === $('#pi-feature') ? name === 'pi'
             : view === $('#notes-feature') ? name === 'notes'
-              : view === $('#finances-feature') ? name === 'finances' : name === 'friday';
+              : view === $('#finances-feature') ? name === 'finances'
+                : view === $('#socials-feature') ? name === 'socials' : name === 'friday';
     view.hidden = !visible;
   }
   workspaceShell.updateFeature(name);
   $('#system-devices-view').hidden = false;
   try {
     if (name === 'friday') await Promise.all([fridayChat.start(), loadFridayPiConversations(), loadFridayDirectory()]);
-    else if (!['dashboard', 'repos', 'notes', 'files', 'pi-files', 'finances', 'settings'].includes(name)) await initializePi();
+    else if (!['dashboard', 'repos', 'notes', 'files', 'pi-files', 'finances', 'socials', 'settings'].includes(name)) await initializePi();
     if (name === 'files' || name === 'pi-files') {
       elements.fileTitle.textContent = 'File preview';
       elements.fileMeta.textContent = 'Select a text file to preview it.';

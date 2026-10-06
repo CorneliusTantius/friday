@@ -21,8 +21,30 @@ SYSTEMCTL_BIN="/usr/bin/systemctl"
 [[ -x "$CURL_BIN" && -x "$SYSTEMCTL_BIN" ]] || die "Install curl and systemd first."
 [[ "$APP_DIR$SERVICE_HOME$NODE_BIN" != *[[:space:]]* ]] || die "Repo, home, and Node paths must not contain spaces."
 
+APP_ENV_DIR="$SERVICE_HOME/.config/friday"
+APP_ENV_FILE="$APP_ENV_DIR/app.env"
+PROJECT_ENV_FILE="$APP_DIR/.env"
+NODE_ENV_FILE_OPTION=""
+ENVIRONMENT_FILE_LINE=""
 "$NODE_BIN" -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 19)) process.exit(1)' \
   || die "Friday requires Node.js 22.19 or newer."
+
+if [[ -f "$PROJECT_ENV_FILE" ]]; then
+  [[ ! -L "$PROJECT_ENV_FILE" ]] || die "$PROJECT_ENV_FILE must not be a symlink."
+  chmod 0600 "$PROJECT_ENV_FILE"
+  env -u FRIDAY_APP_PASSWORD "$NODE_BIN" --env-file="$PROJECT_ENV_FILE" -e 'const value = process.env.FRIDAY_APP_PASSWORD || ""; if (!value) process.exit(1)' \
+    || die "Set a non-empty FRIDAY_APP_PASSWORD in $PROJECT_ENV_FILE."
+  NODE_ENV_FILE_OPTION="--env-file=$PROJECT_ENV_FILE"
+else
+  install -d -m 0700 "$APP_ENV_DIR"
+  if [[ ! -s "$APP_ENV_FILE" ]]; then
+    APP_PASSWORD=$("$NODE_BIN" -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')
+    (umask 077; printf 'FRIDAY_APP_PASSWORD=%s\n' "$APP_PASSWORD" > "$APP_ENV_FILE")
+  fi
+  chmod 0600 "$APP_ENV_FILE"
+  grep -Eq '^FRIDAY_APP_PASSWORD=.+$' "$APP_ENV_FILE" || die "Set a non-empty FRIDAY_APP_PASSWORD in $APP_ENV_FILE."
+  ENVIRONMENT_FILE_LINE="EnvironmentFile=$APP_ENV_FILE"
+fi
 
 if "$CURL_BIN" --fail --silent --max-time 2 http://127.0.0.1:3000/healthz >/dev/null 2>&1; then
   if ! sudo "$SYSTEMCTL_BIN" is-active --quiet friday.service; then
@@ -54,8 +76,9 @@ Environment=FRIDAY_HOME=$SERVICE_HOME/.friday
 Environment=PI_CODING_AGENT_DIR=$SERVICE_HOME/.pi/agent
 Environment=HOST=127.0.0.1
 Environment=PORT=3000
+$ENVIRONMENT_FILE_LINE
 Environment="PATH=$PATH"
-ExecStart=$NODE_BIN $APP_DIR/src/server.js
+ExecStart=$NODE_BIN $NODE_ENV_FILE_OPTION $APP_DIR/src/server.js
 Restart=always
 RestartSec=10s
 TimeoutStopSec=30s
@@ -124,4 +147,8 @@ echo "Friday restarts every 10 seconds after a process exit, with no retry limit
 echo "The health timer checks /healthz every 2 minutes and restarts Friday if it stops responding."
 echo "Logs: sudo journalctl -u friday -f"
 echo "Keep the laptop powered and disable suspend/lid-close sleep; systemd cannot recover while it is asleep or off."
-echo "Friday runs with the permissions of $SERVICE_USER. Change the hard-coded app password before remote access."
+if [[ -n "$NODE_ENV_FILE_OPTION" ]]; then
+  echo "Friday runs with the permissions of $SERVICE_USER. App credentials are loaded from $PROJECT_ENV_FILE."
+else
+  echo "Friday runs with the permissions of $SERVICE_USER. App password is stored in $APP_ENV_FILE; retrieve it locally to sign in."
+fi

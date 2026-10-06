@@ -6,16 +6,30 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createAppClient } from '../test-support/app-client.js';
+import { createAppClient, testAppPassword } from '../test-support/app-client.js';
 
 const serverPath = new URL('../src/server.js', import.meta.url).pathname;
+
+test('Friday refuses to start without a non-empty app password', async (t) => {
+  const child = spawn(process.execPath, [serverPath], {
+    env: { ...process.env, FRIDAY_APP_PASSWORD: '' },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  t.after(() => child.kill('SIGTERM'));
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const [code] = await once(child, 'exit');
+  assert.notEqual(code, 0);
+  assert.match(stderr, /Set FRIDAY_APP_PASSWORD to a non-empty value/);
+});
 
 test('password login protects the app with a memory-only session cookie', { timeout: 15000 }, async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'friday-login-'));
   const port = 20000 + Math.floor(Math.random() * 30000);
   const child = spawn(process.execPath, [serverPath], {
     cwd: home,
-    env: { ...process.env, HOME: home, FRIDAY_HOME: join(home, '.friday'), PI_CODING_AGENT_DIR: join(home, '.pi', 'agent'), PORT: String(port) },
+    env: { ...process.env, FRIDAY_APP_PASSWORD: testAppPassword, HOME: home, FRIDAY_HOME: join(home, '.friday'), PI_CODING_AGENT_DIR: join(home, '.pi', 'agent'), PORT: String(port) },
     stdio: 'ignore',
   });
   t.after(async () => {
@@ -46,6 +60,7 @@ test('password login protects the app with a memory-only session cookie', { time
   assert.deepEqual(await health.json(), { status: 'ok' });
   assert.equal((await fetch(`${base}/api/status`)).status, 401);
   assert.equal((await fetch(`${base}/api/system/temperature`)).status, 401);
+  assert.equal((await fetch(`${base}/api/socials/gmail/status`)).status, 401);
   const protectedPage = await fetch(`${base}/`, { redirect: 'manual' });
   assert.equal(protectedPage.status, 303);
   assert.equal(protectedPage.headers.get('location'), '/login');
@@ -63,6 +78,12 @@ test('password login protects the app with a memory-only session cookie', { time
   assert.match(setCookie, /SameSite=Strict/);
   assert.doesNotMatch(setCookie, /Max-Age|Expires=/);
   assert.equal((await client.request('/')).status, 200);
+  const gmailStatus = await client.request('/api/socials/gmail/status');
+  assert.deepEqual(await gmailStatus.json(), { configured: false, connected: false, email: null, scope: null });
+  const crossOriginConnect = await client.request('/api/socials/gmail/connect', { method: 'POST', headers: { Origin: 'https://attacker.example' } });
+  assert.equal(crossOriginConnect.status, 403);
+  const unconfiguredConnect = await client.request('/api/socials/gmail/connect', { method: 'POST' });
+  assert.equal(unconfiguredConnect.status, 503);
   const temperatureResponse = await client.request('/api/system/temperature');
   assert.equal(temperatureResponse.status, 200);
   const temperature = await temperatureResponse.json();

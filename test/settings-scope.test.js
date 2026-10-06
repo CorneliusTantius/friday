@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createAppClient } from '../test-support/app-client.js';
+import { createAppClient, testAppPassword } from '../test-support/app-client.js';
 
 const serverPath = new URL('../src/server.js', import.meta.url).pathname;
 
@@ -29,7 +29,7 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   const child = spawn(process.execPath, [serverPath], {
     cwd: home,
     env: {
-      ...process.env,
+      ...process.env, FRIDAY_APP_PASSWORD: testAppPassword,
       HOME: home,
       FRIDAY_HOME: join(home, 'friday'),
       PI_CODING_AGENT_DIR: join(home, '.pi', 'agent'),

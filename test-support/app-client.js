@@ -1,7 +1,9 @@
+export const testAppPassword = 'Cornel123';
+
 export function createAppClient(base, timeoutMs = 3000) {
   let cookie = '';
   return {
-    async login(password = 'Cornel123') {
+    async login(password = testAppPassword) {
       const response = await fetch(`${base}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
