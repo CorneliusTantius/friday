@@ -79,7 +79,13 @@ export class PiSession extends EventEmitter {
   }
 
   get hasActiveWork() {
-    return Boolean(this.operation || this.startPromise || this.pending.size);
+    return Boolean(
+      this.operation
+      || this.startPromise
+      || this.pending.size
+      || this.promptQueue.length
+      || this.processingPromptQueue
+    );
   }
 
   get workspace() {

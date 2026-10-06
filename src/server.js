@@ -48,6 +48,7 @@ const fridayChatDir = process.env.FRIDAY_CHAT_DIR ? resolve(process.env.FRIDAY_C
 const fridaySessionDir = process.env.FRIDAY_CHAT_DIR ? join(fridayChatDir, 'sessions') : paths.dataDir;
 const publicRoot = join(projectRoot, 'public');
 const piSessions = new Map();
+const piRequestEntries = new WeakMap();
 const piRunOpenings = new Map();
 const piRunOperations = new Map();
 const deletingPiRuns = new Set();
@@ -220,6 +221,7 @@ async function cleanupIdleRuntimes(now = Date.now()) {
     if (
       now - entry.lastUsed <= runtimeIdleTtlMs
       || entry.pi.hasActiveWork
+      || entry.requests > 0
       || runtimeHasViewers(runtimeId)
     ) continue;
 
@@ -233,6 +235,7 @@ function createPiRuntime(runtimeId, cwd = preferredWorkspace) {
     const idle = [...piSessions.entries()]
       .filter(([runtimeId, candidate]) => (
         !candidate.pi.hasActiveWork
+        && candidate.requests === 0
         && !runtimeHasViewers(runtimeId)
       ))
       .sort(([, a], [, b]) => a.lastUsed - b.lastUsed)[0];
@@ -247,6 +250,7 @@ function createPiRuntime(runtimeId, cwd = preferredWorkspace) {
   const entry = {
     pi: new PiSession({ cwd, command: piCommand }),
     lastUsed: Date.now(),
+    requests: 0,
   };
   piSessions.set(runtimeId, entry);
   return entry.pi;
@@ -260,8 +264,17 @@ function piForRequest(request) {
     entry = piSessions.get(clientId);
   }
   entry.lastUsed = Date.now();
+  entry.requests += 1;
+  piRequestEntries.set(request, entry);
   touchRuntimeViewer(clientId, viewerIdFor(request), entry.lastUsed);
   return entry.pi;
+}
+
+function releasePiRequest(request) {
+  const entry = piRequestEntries.get(request);
+  if (!entry) return;
+  piRequestEntries.delete(request);
+  entry.requests = Math.max(0, entry.requests - 1);
 }
 
 async function resetFridayAfterAuth() {
@@ -1794,15 +1807,17 @@ async function handleRequest(request, response) {
 }
 
 const server = createServer((request, response) => {
-  handleRequest(request, response).catch((error) => {
-    const missingPi = error.code === 'ENOENT' && error.path === piCommand;
-    const status = missingPi ? 404 : error.status || (error.message.includes('already responding') ? 409 : 500);
-    if (!response.headersSent) {
-      sendJson(response, status, { error: missingPi ? 'Pi is not installed. Install the Pi CLI from https://pi.dev and ensure pi is on PATH, or set PI_COMMAND.' : error.message });
-    } else {
-      response.destroy(error);
-    }
-  });
+  handleRequest(request, response)
+    .catch((error) => {
+      const missingPi = error.code === 'ENOENT' && error.path === piCommand;
+      const status = missingPi ? 404 : error.status || (error.message.includes('already responding') ? 409 : 500);
+      if (!response.headersSent) {
+        sendJson(response, status, { error: missingPi ? 'Pi is not installed. Install the Pi CLI from https://pi.dev and ensure pi is on PATH, or set PI_COMMAND.' : error.message });
+      } else {
+        response.destroy(error);
+      }
+    })
+    .finally(() => releasePiRequest(request));
 });
 
 server.requestTimeout = 30_000;
