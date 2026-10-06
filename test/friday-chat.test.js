@@ -69,9 +69,7 @@ rl.on('line', line => {
   const base = `http://127.0.0.1:${port}`;
   const client = createAppClient(base, 5000);
   const request = client.request;
-  let eventReader;
   t.after(async () => {
-    eventReader?.cancel().catch(() => {});
     child.kill('SIGTERM');
     await Promise.race([once(child, 'exit'), delay(2000)]);
     await rm(dir, { recursive: true, force: true });
@@ -124,6 +122,39 @@ rl.on('line', line => {
   const fridayPiConversations = await (await request('/api/friday/pi-conversations')).json();
   assert.deepEqual(fridayPiConversations.sessions.map(({ id }) => id).sort(), ['legacy-flat', 'selected-workspace']);
   assert.deepEqual(fridayPiConversations.sessions.map(({ runId }) => runId).sort(), listedSessions.sessions.map(({ runId }) => runId).sort(), 'Friday panel sees the same stable run IDs');
+  const selectedPiConversation = fridayPiConversations.sessions.find(({ id }) => id === 'selected-workspace');
+  assert.equal(selectedPiConversation.running, false, 'a saved session without an open runtime is reported as saved');
+  assert.equal(selectedPiConversation.opening, false);
+  const selectedPiResponse = await request('/api/session/select', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Friday-Session': 'friday-pi-status-test' },
+    body: JSON.stringify({ cwd: piStatus.workspace, path: selectedPiConversation.path }),
+  });
+  assert.equal(selectedPiResponse.status, 200);
+  const refreshedPiConversations = await (await request('/api/friday/pi-conversations')).json();
+  const openedPiConversation = refreshedPiConversations.sessions.find(({ id }) => id === 'selected-workspace');
+  assert.equal(openedPiConversation.runId, selectedPiConversation.runId);
+  assert.equal(openedPiConversation.running, true, 'a server-opened but idle Pi session is reported as open');
+  assert.equal(openedPiConversation.busy, false, 'idle open status is distinct from a running prompt');
+  assert.equal(openedPiConversation.queuedPrompts, 0);
+  const piStatusHeaders = { 'Content-Type': 'application/json', 'X-Friday-Session': 'friday-pi-status-test' };
+  const piLongChat = request('/api/chat', {
+    method: 'POST', headers: piStatusHeaders, body: JSON.stringify({ message: 'long-running test' }),
+  });
+  let piBusy = false;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    piBusy = (await (await request('/api/status', { headers: piStatusHeaders })).json()).busy;
+    if (piBusy) break;
+    await delay(20);
+  }
+  assert.equal(piBusy, true, 'the selected Pi runtime reports busy while generating');
+  const busyPiConversations = await (await request('/api/friday/pi-conversations')).json();
+  const busyPiConversation = busyPiConversations.sessions.find(({ id }) => id === 'selected-workspace');
+  assert.equal(busyPiConversation.running, true);
+  assert.equal(busyPiConversation.busy, true, 'the Pi conversation list distinguishes generating from open/idle');
+  const piAbortResponse = await request('/api/abort', { method: 'POST', headers: piStatusHeaders });
+  assert.equal(piAbortResponse.status, 200);
+  assert.equal((await piAbortResponse.json()).aborted, true);
+  assert.equal((await piLongChat).status, 200);
   const settings = await (await request('/api/settings')).json();
   assert.equal(settings.fridayChat.directory, join(dir, 'friday'));
   assert.equal(settings.fridayChat.sessionsDirectory, join(dir, 'friday', 'sessions'));
@@ -190,55 +221,10 @@ rl.on('line', line => {
   const compactHistory = await (await request('/api/history', { headers: compactHeaders })).json();
   assert.ok(compactHistory.messages.some((message) => message.role === 'compaction' && message.content === 'The earlier implementation plan and decisions.'));
 
-  const codingResponse = await request('/api/events/token', { method: 'POST' });
-  const fridayResponse = await request('/api/friday/events/token', { method: 'POST' });
-  assert.equal(codingResponse.status, 200);
-  assert.equal(fridayResponse.status, 200);
-  const { token: codingToken } = await codingResponse.json();
-  const { token: fridayToken } = await fridayResponse.json();
-  const open = async (token) => {
-    const response = await request(`/api/events?token=${encodeURIComponent(token)}`);
-    assert.equal(response.status, 200);
-    return response.body.getReader();
-  };
-  const fridayReader = await open(fridayToken);
-  const codingReader = await open(codingToken);
-  eventReader = fridayReader;
-  const firstRuntime = async (reader) => {
-    let data = '';
-    while (!data.includes('event: runtime')) {
-      const { value, done } = await reader.read();
-      assert.equal(done, false);
-      data += new TextDecoder().decode(value);
-    }
-    return data.split('\\n\\n').find((part) => part.includes('event: runtime'));
-  };
-  const [fridayEvent, codingEvent] = await Promise.race([
-    Promise.all([firstRuntime(fridayReader), firstRuntime(codingReader)]),
-    delay(3000).then(() => { throw new Error('SSE event timeout'); }),
-  ]);
-  assert.notEqual(fridayEvent, codingEvent);
-  assert.match(fridayEvent, /sessionPath.*friday/);
-  // Coding runtime events must not leak to Friday Chat's event stream.
-  const fridayRead = fridayReader.read();
-  const codingEvents = (async () => {
-    let data = '';
-    while (!data.includes('"kind":"status"')) {
-      const { value, done } = await codingReader.read();
-      assert.equal(done, false);
-      data += new TextDecoder().decode(value);
-    }
-    return data;
-  })();
-  const changeCodingModel = await request('/api/model', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ provider: 'fake', modelId: 'alternate' }),
-  });
-  assert.equal(changeCodingModel.status, 200);
-  assert.match(await Promise.race([codingEvents, delay(2000).then(() => { throw new Error('Coding status event timeout'); })]), /model change/);
-  const fridayEventResult = await Promise.race([fridayRead.then(() => 'event'), delay(150).then(() => 'quiet')]);
-  assert.equal(fridayEventResult, 'quiet', 'Friday SSE should not receive coding runtime events');
-  await codingReader.cancel();
+  const fridayEventToken = await request('/api/friday/events/token', { method: 'POST' });
+  const piEventToken = await request('/api/events/token', { method: 'POST' });
+  assert.equal(fridayEventToken.status, 404, 'Friday updates use polling instead of SSE');
+  assert.equal(piEventToken.status, 404, 'Pi agent updates use polling instead of SSE');
 
   const codingLongChat = request('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'long-running test' }) });
   let codingBusy = false;

@@ -56,16 +56,11 @@ const piRunOperations = new Map();
 const deletingPiRuns = new Set();
 let fridayPi;
 let fridayInit;
-const fridayRuntimeId = '$friday'; // Not a valid X-Friday-Session value.
-const eventTokens = new Map();
-const eventConnections = new Set();
 const runtimeViewers = new Map();
 const sessionMutations = new Set();
 const execFileAsync = promisify(execFile);
 const piCommand = process.env.PI_COMMAND || 'pi';
 const maxPiSessions = 32;
-const eventTokenTtlMs = 30_000;
-const eventHeartbeatMs = 15_000;
 const runtimeViewerTtlMs = 60_000;
 const runtimeIdleTtlMs = 15 * 60_000;
 const runtimeCleanupIntervalMs = 60_000;
@@ -194,33 +189,19 @@ function pruneRuntimeViewers(now = Date.now()) {
 
 function runtimeHasViewers(runtimeId) {
   pruneRuntimeViewers();
-  const viewers = runtimeViewers.get(runtimeId);
-  return Boolean(viewers?.size) || [...eventConnections].some(
-    (connection) => connection.runtimeId === runtimeId,
-  );
+  return Boolean(runtimeViewers.get(runtimeId)?.size);
 }
 
 function runtimeHasOtherViewers(runtimeId, viewerId) {
   pruneRuntimeViewers();
   const viewers = runtimeViewers.get(runtimeId);
-  if ([...(viewers?.keys() || [])].some((candidate) => candidate !== viewerId)) return true;
-  return [...eventConnections].some(
-    (connection) => connection.runtimeId === runtimeId && connection.viewerId !== viewerId,
-  );
+  return [...(viewers?.keys() || [])].some((candidate) => candidate !== viewerId);
 }
 
 async function retireRuntime(runtimeId, entry) {
   if (piSessions.get(runtimeId) !== entry) return;
   piSessions.delete(runtimeId);
   runtimeViewers.delete(runtimeId);
-  for (const [token, record] of eventTokens) {
-    if (record.runtimeId === runtimeId) eventTokens.delete(token);
-  }
-  for (const connection of [...eventConnections]) {
-    if (connection.runtimeId !== runtimeId) continue;
-    connection.cleanup();
-    connection.response.end();
-  }
   await entry.pi.stop();
 }
 
@@ -292,9 +273,6 @@ async function resetFridayAfterAuth() {
   if (fridayPi.isBusy) throw new RequestError('Friday is busy; retry after the current reply', 409);
   const previous = fridayPi;
   fridayPi = null;
-  for (const connection of eventConnections) {
-    if (connection.runtimeId === fridayRuntimeId) connection.response.end();
-  }
   await previous.stop();
 }
 
@@ -326,121 +304,6 @@ async function getFridayPi() {
   }
   return fridayInit;
 }
-
-function createEventToken(request, runtimeId = clientIdFor(request), pi = null) {
-  const entry = pi ? { pi } : piSessions.get(runtimeId);
-  if (!entry) {
-    throw new RequestError('Runtime was not found', 404);
-  }
-
-  const now = Date.now();
-  for (const [token, record] of eventTokens) {
-    if (record.expiresAt <= now) eventTokens.delete(token);
-  }
-
-  const token = randomUUID();
-  eventTokens.set(token, {
-    runtimeId,
-    viewerId: viewerIdFor(request),
-    pi: entry.pi,
-    expiresAt: now + eventTokenTtlMs,
-  });
-  return token;
-}
-
-function writeEvent(response, event, data) {
-  response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-}
-
-function serveEventStream(request, response, url) {
-  const token = url.searchParams.get('token');
-  const record = token ? eventTokens.get(token) : null;
-  if (token) eventTokens.delete(token);
-  const entry = record?.runtimeId === fridayRuntimeId
-    ? { pi: fridayPi }
-    : piSessions.get(record?.runtimeId);
-  if (!record || record.expiresAt <= Date.now() || !entry || entry.pi !== record.pi) {
-    sendJson(response, 401, { error: 'Event token is invalid or expired' });
-    return;
-  }
-
-  const pi = record.pi;
-  response.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-store, no-transform',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  response.flushHeaders?.();
-  response.write('retry: 3000\n\n');
-
-  let closed = false;
-  const send = (kind, extra = {}) => {
-    if (closed || response.destroyed || response.writableEnded) return;
-    writeEvent(response, 'runtime', {
-      kind,
-      busy: pi.isBusy,
-      canAbort: pi.canAbort,
-      sessionPath: pi.currentSessionPath,
-      ...extra,
-    });
-  };
-  const onActivity = (event) => send('activity', { activity: event.type || 'event' });
-  const onStatus = (status) => send('status', {
-    busy: status.busy,
-    operation: status.operation,
-    sessionPath: status.sessionPath,
-  });
-  const onExit = () => send('exit', { busy: false });
-  const onRpcError = () => send('error');
-  const connection = {
-    response,
-    runtimeId: record.runtimeId,
-    viewerId: record.viewerId,
-  };
-  const cleanup = () => {
-    if (closed) return;
-    closed = true;
-    pi.off('event', onActivity);
-    pi.off('status', onStatus);
-    pi.off('exit', onExit);
-    pi.off('rpc_error', onRpcError);
-    eventConnections.delete(connection);
-  };
-  connection.cleanup = cleanup;
-
-  pi.on('event', onActivity);
-  pi.on('status', onStatus);
-  pi.on('exit', onExit);
-  pi.on('rpc_error', onRpcError);
-  eventConnections.add(connection);
-  response.once('close', cleanup);
-  response.once('error', cleanup);
-  request.once('aborted', cleanup);
-  send('ready');
-}
-
-const eventHeartbeat = setInterval(() => {
-  const now = Date.now();
-  for (const [token, record] of eventTokens) {
-    if (record.expiresAt <= now) eventTokens.delete(token);
-  }
-  pruneRuntimeViewers(now);
-  for (const connection of eventConnections) {
-    const { response } = connection;
-    touchRuntimeViewer(connection.runtimeId, connection.viewerId, now);
-    if (response.destroyed || response.writableEnded) {
-      connection.cleanup();
-    } else {
-      try {
-        response.write(': heartbeat\n\n');
-      } catch {
-        connection.cleanup();
-      }
-    }
-  }
-}, eventHeartbeatMs);
-eventHeartbeat.unref();
 
 const runtimeCleanupTimer = setInterval(() => {
   void cleanupIdleRuntimes();
@@ -793,11 +656,13 @@ async function sessionsWithRunIds(workspace) {
     .filter(([, entry]) => entry.pi.workspace === workspace && entry.pi.currentSessionPath)
     .map(([runtimeId, entry]) => [entry.pi.currentSessionPath, { runtimeId, pi: entry.pi }]));
   return sessions.map((session, index) => {
+    const runId = runIds[index];
     const runtime = runtimeByPath.get(session.path);
     return {
       ...session,
-      runId: runIds[index],
+      runId,
       runtimeId: runtime?.runtimeId || null,
+      opening: piRunOpenings.has(runId),
       running: runtime?.pi.isRunning || false,
       busy: runtime?.pi.isBusy || false,
       queuedPrompts: runtime?.pi.promptQueue?.length || 0,
@@ -899,6 +764,7 @@ async function getPiRunStatus(runId) {
     name: run.name || 'Pi conversation',
     workspace: run.workspace,
     exists,
+    opening: piRunOpenings.has(run.id),
     running: runtime?.pi.isRunning || false,
     busy: runtime?.pi.isBusy || false,
     queuedPrompts: runtime?.pi.promptQueue?.length || 0,
@@ -1137,10 +1003,6 @@ async function handleFridayRequest(request, response, pathname) {
       console.error(`Friday daily log write failed: ${error.message}`);
     }
     sendJson(response, 200, { role: 'assistant', content: reply });
-    return;
-  }
-  if (request.method === 'POST' && pathname === '/api/friday/events/token') {
-    sendJson(response, 200, { token: createEventToken(request, fridayRuntimeId, pi) });
     return;
   }
   sendJson(response, 404, { error: 'Not found' });
@@ -1552,10 +1414,6 @@ async function handleRequest(request, response) {
     return;
   }
 
-  if (request.method === 'GET' && pathname === '/api/events') {
-    serveEventStream(request, response, url);
-    return;
-  }
   if (request.method === 'GET' && await serveStatic(pathname, response)) return;
   if (pathname === '/api/pi/repos' || pathname === '/api/pi/repos/pull') throw new RequestError('Not found', 404);
 
@@ -1573,11 +1431,6 @@ async function handleRequest(request, response) {
       canAbort: pi.canAbort,
       contextUsage: await currentContextUsage(pi),
     });
-    return;
-  }
-
-  if (request.method === 'POST' && pathname === '/api/events/token') {
-    sendJson(response, 200, { token: createEventToken(request) });
     return;
   }
 
@@ -1960,13 +1813,7 @@ const shutdown = async (signal, forceConnections = false) => {
   console.log(`${signal} received; shutting down`);
   if (usageTimer) clearInterval(usageTimer);
   if (githubSyncTimer) clearTimeout(githubSyncTimer);
-  clearInterval(eventHeartbeat);
   clearInterval(runtimeCleanupTimer);
-  eventTokens.clear();
-  for (const connection of [...eventConnections]) {
-    connection.cleanup();
-    connection.response.end();
-  }
 
   const serverClosed = new Promise((resolve) => server.close(resolve));
   if (forceConnections) server.closeAllConnections?.();

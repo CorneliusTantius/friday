@@ -39,14 +39,13 @@ npm run dev
 - `GET /api/friday/pi-conversations` — list Pi conversations with stable run IDs and runtime status
 - `GET /api/friday/models`, `POST /api/friday/model` — list and select Friday's model
 - `GET /api/friday/thinking-levels`, `POST /api/friday/thinking-level` — list and select Friday's thinking level
-- `POST /api/friday/events/token` — scoped SSE token for Friday Chat
-- `POST /api/events/token` and `GET /api/events?token=...` — scoped real-time runtime events over SSE
 - `GET /api/models` — available Pi models
 - `POST /api/model` with `{ "provider": "...", "modelId": "..." }` — change the current model
 - `GET /api/thinking-levels` and `POST /api/thinking-level` — read or change Pi's thinking level
 - `GET /api/friday/files` and `GET /api/friday/files/content?path=...` — browse and preview files under `~/.friday/`; `PUT /api/friday/files/content?path=...` saves safe JSON
 - `GET /api/pi/files` and `GET /api/pi/files/content?path=...` — browse and preview files under `~/.pi/` (the parent of `PI_CODING_AGENT_DIR` when overridden); `PUT /api/pi/files/content?path=...` saves safe JSON; Pi's coding workspace remains independently selected
 - `POST /api/system/restart` — authenticated restart request when Friday is running as a systemd service with automatic restart enabled
+
 - `GET /api/devices` — read-only Tailscale device status
 - `GET /api/friday/settings`, `GET /api/pi/settings`, `GET /api/system/settings` — settings scoped to Friday Chat, coding Pi, and the server; Friday/System settings do not launch coding Pi
 - `GET /api/system/github` — whether `gh` is installed and authenticated, without returning credentials
@@ -64,6 +63,8 @@ npm run dev
 - `POST /api/session/select` with `{ "cwd": "...", "path": "..." }` — open a saved session
 - `POST /api/session/rename` with `{ "cwd": "...", "path": "...", "name": "..." }` — rename a saved session
 - `POST /api/session/delete` with `{ "cwd": "...", "path": "..." }` — delete a saved session; active sessions must be idle and not open on another device
+
+Friday and Pi agent views use visibility-aware polling (2 seconds while busy, 15 seconds while idle); Friday's saved-session and Pi-session lists poll separately while visible. Agent SSE endpoints are not enabled.
 
 
 ## GitHub snapshots

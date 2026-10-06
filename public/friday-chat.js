@@ -1,4 +1,4 @@
-export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory }) {
+export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, onEnter }) {
   const messages = document.querySelector('#friday-messages');
   const form = document.querySelector('#friday-form');
   const input = document.querySelector('#friday-message');
@@ -47,15 +47,12 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory }) 
   let currentModel = '';
   let currentThinking = 'off';
   let started = false;
-  let source = null;
-  let reconnectTimer = null;
-  let refreshTimer = null;
-  let fallbackTimer = null;
-  let syncing = false;
+  let pollTimer = null;
+  let syncPromise = null;
   let needsSync = false;
-  let connectionVersion = 0;
   let lifecycleVersion = 0;
   let reachable = false;
+  let scrollToLatestOnVisibleRender = false;
 
   function updateControls() {
     input.disabled = loading || busy || configuring;
@@ -124,6 +121,12 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory }) 
 
   function nearBottom() {
     return messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
+  }
+
+  function scrollToLatest() {
+    if (!messages.isConnected || !messages.getClientRects().length) return false;
+    messages.scrollTop = messages.scrollHeight;
+    return true;
   }
 
   function makeMessage(message) {
@@ -201,7 +204,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory }) 
   }
 
   function render() {
-    const stick = nearBottom();
+    const stick = scrollToLatestOnVisibleRender || nearBottom();
     const blocks = historyBlocks();
     if (!blocks.length) {
       if (!messages.querySelector('.welcome')) {
@@ -214,6 +217,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory }) 
         welcome.append(title, copy);
         messages.replaceChildren(welcome);
       }
+      if (scrollToLatestOnVisibleRender && scrollToLatest()) scrollToLatestOnVisibleRender = false;
       return;
     }
 
@@ -229,116 +233,100 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory }) 
     });
     for (let index = blocks.length; index < current.length; index += 1) current[index].remove();
     if (stick) messages.scrollTop = messages.scrollHeight;
+    if (scrollToLatestOnVisibleRender && scrollToLatest()) scrollToLatestOnVisibleRender = false;
   }
 
-  async function sync({ withStatus = false } = {}) {
-    if (syncing) {
+  function sync(options = {}) {
+    if (syncPromise) {
       needsSync = true;
-      return;
+      return syncPromise;
     }
-    syncing = true;
-    const version = lifecycleVersion;
-    try {
-      const [data, runtime] = await Promise.all([
-        apiJson('/api/friday/history'),
-        withStatus ? apiJson('/api/friday/status') : null,
-      ]);
-      if (!started || version !== lifecycleVersion) return;
-      reachable = true;
-      const previousReply = [...history].reverse().find((item) => item.role === 'assistant')?.content;
-      history = data.messages;
-      const latestReply = [...history].reverse().find((item) => item.role === 'assistant')?.content;
-      if (!loading && latestReply && latestReply !== previousReply) {
-        announcement.textContent = `Friday: ${latestReply}`;
-      }
-      const userMessages = history.filter((item) => item.role === 'user');
-      if (optimistic && userMessages.length > optimistic.after && userMessages[optimistic.after]?.content === optimistic.content) {
-        optimistic = null;
-      }
-      if (runtime) {
-        busy = runtime.busy;
-        canAbort = runtime.canAbort === true;
-        applyState(runtime);
-        renderContextUsage(runtime.contextUsage);
-      }
-      render();
-      updateControls();
-    } finally {
-      syncing = false;
-      if (needsSync && started) {
-        needsSync = false;
-        void sync({ withStatus: true }).catch(() => scheduleFallback());
-      }
-    }
-  }
 
-  function queueRefresh(delay = 500) {
-    if (refreshTimer || !started) return;
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null;
-      void sync({ withStatus: true }).catch(() => {
-        reachable = false;
-        updateControls();
-        if (source?.readyState === 1) queueRefresh(3_000);
-        else scheduleFallback();
-      });
-    }, delay);
-  }
-
-  function scheduleFallback() {
-    clearTimeout(fallbackTimer);
-    if (!started || source?.readyState === 1) return;
-    fallbackTimer = setTimeout(async () => {
-      try { await sync({ withStatus: true }); }
-      catch { reachable = false; updateControls(); }
-      scheduleFallback();
-    }, busy ? 3_000 : 30_000);
-  }
-
-  function connect() {
-    if (!started || !('EventSource' in window)) {
-      scheduleFallback();
-      return;
-    }
-    const version = ++connectionVersion;
-    source?.close();
-    source = null;
-    clearTimeout(reconnectTimer);
-    void apiJson('/api/friday/events/token', { method: 'POST' }).then(({ token }) => {
-      if (!started || version !== connectionVersion) return;
-      const stream = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
-      source = stream;
-      stream.onopen = () => {
-        if (source !== stream) return;
-        clearTimeout(fallbackTimer);
-        void sync({ withStatus: true }).catch(() => queueRefresh(3_000));
-      };
-      stream.addEventListener('runtime', (event) => {
-        if (source !== stream) return;
-        try {
-          const data = JSON.parse(event.data);
-          busy = data.busy === true;
-          canAbort = data.canAbort === true;
-          updateControls();
-          if (data.kind !== 'ready') queueRefresh();
-          if (data.kind === 'status' && ['model change', 'thinking level change'].includes(data.operation)) {
-            void loadOptions().catch(() => {}); // A later status event retries after the operation finishes.
+    syncPromise = (async () => {
+      let nextOptions = options;
+      let result;
+      try {
+        do {
+          needsSync = false;
+          try { result = await syncOnce(nextOptions); }
+          catch (error) {
+            if (!needsSync) throw error;
           }
-        } catch { /* Ignore malformed notifications; history remains authoritative. */ }
-      });
-      stream.onerror = () => {
-        if (source !== stream) return;
-        stream.close();
-        source = null;
-        scheduleFallback();
-        reconnectTimer = setTimeout(connect, 3_000);
-      };
-    }).catch(() => {
-      if (version !== connectionVersion || !started) return;
-      scheduleFallback();
-      reconnectTimer = setTimeout(connect, 3_000);
-    });
+          nextOptions = { withStatus: true };
+        } while (needsSync && started);
+        return result;
+      } finally {
+        syncPromise = null;
+        needsSync = false;
+      }
+    })();
+    return syncPromise;
   }
+
+  async function syncOnce({ withStatus = false } = {}) {
+    const version = lifecycleVersion;
+    const [data, runtime] = await Promise.all([
+      apiJson('/api/friday/history'),
+      withStatus ? apiJson('/api/friday/status') : null,
+    ]);
+    if (!started || version !== lifecycleVersion) return;
+    reachable = true;
+    const previousReply = [...history].reverse().find((item) => item.role === 'assistant')?.content;
+    history = data.messages;
+    const latestReply = [...history].reverse().find((item) => item.role === 'assistant')?.content;
+    if (!loading && latestReply && latestReply !== previousReply) {
+      announcement.textContent = `Friday: ${latestReply}`;
+    }
+    const userMessages = history.filter((item) => item.role === 'user');
+    if (optimistic && userMessages.length > optimistic.after && userMessages[optimistic.after]?.content === optimistic.content) {
+      optimistic = null;
+    }
+    if (runtime) {
+      busy = runtime.busy;
+      canAbort = runtime.canAbort === true;
+      applyState(runtime);
+      renderContextUsage(runtime.contextUsage);
+    }
+    render();
+    updateControls();
+  }
+
+  function isVisible() {
+    return document.visibilityState !== 'hidden' && messages.isConnected && messages.getClientRects().length > 0;
+  }
+
+  function stopPolling() {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+
+  function schedulePoll(delay = busy ? 2_000 : 15_000) {
+    stopPolling();
+    if (!started || !isVisible()) return;
+    pollTimer = setTimeout(() => void poll(), delay);
+  }
+
+  async function poll() {
+    if (!started || !isVisible()) return;
+    try {
+      await sync({ withStatus: true });
+      schedulePoll();
+    } catch {
+      reachable = false;
+      updateControls();
+      schedulePoll(5_000);
+    }
+  }
+
+  function onVisibilityChange() {
+    if (!isVisible()) {
+      stopPolling();
+      return;
+    }
+    void poll();
+  }
+
+  document.addEventListener('visibilitychange', onVisibilityChange);
 
   async function start() {
     if (started) return;
@@ -350,7 +338,6 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory }) 
       await sync({ withStatus: true });
     } catch (error) {
       toast(error.message, 'error');
-      scheduleFallback();
     }
     try {
       await loadOptions();
@@ -359,8 +346,18 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory }) 
     } finally {
       loading = false;
       updateControls();
-      connect();
+      schedulePoll();
     }
+  }
+
+  function enterView() {
+    scrollToLatestOnVisibleRender = true;
+    if (scrollToLatest()) scrollToLatestOnVisibleRender = false;
+    requestAnimationFrame(() => {
+      if (scrollToLatest()) scrollToLatestOnVisibleRender = false;
+    });
+    const transcript = started ? sync({ withStatus: true }) : start();
+    return Promise.all([transcript, onEnter?.()]).finally(() => schedulePoll());
   }
 
   function refreshTranscript() {
@@ -370,13 +367,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory }) 
   function stop() {
     started = false;
     lifecycleVersion += 1;
-    connectionVersion += 1;
-    source?.close();
-    source = null;
-    clearTimeout(reconnectTimer);
-    clearTimeout(refreshTimer);
-    clearTimeout(fallbackTimer);
-    reconnectTimer = refreshTimer = fallbackTimer = null;
+    stopPolling();
   }
 
   model.addEventListener('change', async () => {
@@ -434,9 +425,10 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory }) 
       if (!isAbort(error)) toast(error.message, 'error');
     } finally {
       try { await sync({ withStatus: true }); }
-      catch { reachable = false; scheduleFallback(); }
+      catch { reachable = false; }
       stopping = false;
       updateControls();
+      schedulePoll();
     }
   }
 
@@ -480,17 +472,12 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory }) 
       toast(error.message, 'error');
     } finally {
       try { await sync({ withStatus: true }); }
-      catch {
-        reachable = false;
-        updateControls();
-        if (source?.readyState === 1) queueRefresh(3_000);
-        else scheduleFallback();
-      }
-      if (!source || source.readyState !== 1) scheduleFallback();
+      catch { reachable = false; updateControls(); }
+      schedulePoll();
       onHistory?.();
       input.focus();
     }
   });
 
-  return { start, stop, refreshTranscript };
+  return { start, stop, pause: stopPolling, refreshTranscript, enterView };
 }

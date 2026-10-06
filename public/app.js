@@ -73,14 +73,8 @@ let suggestionTimer;
 let suggestionSequence = 0;
 let pollTimer = null;
 let pollInFlight = false;
-const activePollInterval = 3_000;
-const idlePollInterval = 30_000;
-let eventSource = null;
-let eventReconnectTimer = null;
-let eventRefreshTimer = null;
-let eventNeedsFullRefresh = false;
-let eventConnected = false;
-let eventConnectAttempt = 0;
+const activePollInterval = 2_000;
+const idlePollInterval = 15_000;
 
 const createClientId = () => globalThis.crypto?.randomUUID?.() || `friday-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const clientSessionId = sessionStorage.getItem('friday-session-id') || createClientId();
@@ -684,161 +678,47 @@ function stopPolling() {
   pollTimer = null;
 }
 
-function closeEventStream() {
-  eventConnectAttempt += 1;
-  if (eventReconnectTimer) clearTimeout(eventReconnectTimer);
-  if (eventRefreshTimer) clearTimeout(eventRefreshTimer);
-  eventReconnectTimer = null;
-  eventRefreshTimer = null;
-  eventNeedsFullRefresh = false;
-  eventConnected = false;
-  cancelRequest('event-token');
-  if (eventSource) eventSource.close();
-  eventSource = null;
-}
-
-function scheduleEventRefresh(full = false) {
-  eventNeedsFullRefresh ||= full;
-  if (eventRefreshTimer || !eventConnected) return;
-  const context = state.contextVersion;
-  eventRefreshTimer = setTimeout(async () => {
-    eventRefreshTimer = null;
-    if (!eventConnected || context !== state.contextVersion) return;
-    if (requests.has('history')) {
-      scheduleEventRefresh(eventNeedsFullRefresh);
-      return;
-    }
-
-    const fullRefresh = eventNeedsFullRefresh;
-    eventNeedsFullRefresh = false;
-    try {
-      await loadHistory({ limit: fullRefresh ? null : 10 });
-      if (fullRefresh) {
-        await loadSessions(elements.workspace.value, { quiet: true });
-        renderPiContextUsage((await apiJson('/api/status', {}, 'poll-status')).contextUsage);
-      }
-    } catch (error) {
-      if (!isAbort(error)) {
-        closeEventStream();
-        startPolling();
-        scheduleEventReconnect();
-      }
-    }
-  }, 300);
-}
-
-function scheduleEventReconnect(delay = 3_000) {
-  if (!('EventSource' in window) || eventReconnectTimer) return;
-  eventReconnectTimer = setTimeout(() => {
-    eventReconnectTimer = null;
-    void connectEventStream();
-  }, delay);
-}
-
-async function connectEventStream() {
-  if (!('EventSource' in window)) {
-    startPolling();
-    return;
-  }
-
-  const context = state.contextVersion;
-  const attempt = ++eventConnectAttempt;
-  if (eventReconnectTimer) clearTimeout(eventReconnectTimer);
-  eventReconnectTimer = null;
-  if (eventSource) eventSource.close();
-  eventSource = null;
-  eventConnected = false;
-
-  try {
-    const { token } = await apiJson('/api/events/token', { method: 'POST' }, 'event-token');
-    if (attempt !== eventConnectAttempt || context !== state.contextVersion) return;
-
-    const source = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
-    eventSource = source;
-    source.onopen = () => {
-      if (eventSource !== source || context !== state.contextVersion) return;
-      eventConnected = true;
-      stopPolling();
-      setConnection(true);
-      scheduleEventRefresh(true);
-    };
-    source.addEventListener('runtime', (event) => {
-      if (eventSource !== source || context !== state.contextVersion) return;
-      if (!eventConnected) {
-        eventConnected = true;
-        stopPolling();
-        setConnection(true);
-      }
-      let data;
-      try {
-        data = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      if (data.sessionPath && state.currentSessionPath && data.sessionPath !== state.currentSessionPath) return;
-      setAgentBusy(data.busy === true, data.canAbort === true);
-      scheduleEventRefresh(data.kind !== 'activity' || data.busy !== true || data.activity === 'session_info_changed');
-    });
-    source.onerror = () => {
-      if (eventSource !== source) return;
-      source.close();
-      eventSource = null;
-      eventConnected = false;
-      startPolling();
-      scheduleEventReconnect();
-    };
-  } catch (error) {
-    if (attempt !== eventConnectAttempt || context !== state.contextVersion || isAbort(error)) return;
-    startPolling();
-    scheduleEventReconnect();
-  }
+function piViewVisible() {
+  return document.visibilityState !== 'hidden'
+    && state.activeFeature === 'pi'
+    && elements.messages.isConnected
+    && elements.messages.getClientRects().length > 0;
 }
 
 function schedulePoll(delay = state.agentBusy ? activePollInterval : idlePollInterval) {
   stopPolling();
-  if (eventConnected) return;
+  if (!piInitialized || !piViewVisible() || state.locks.has('session') || state.locks.has('workspace') || state.locks.has('session-management')) return;
   pollTimer = setTimeout(() => void pollHistory(), delay);
 }
 
 async function pollHistory() {
-  if (pollInFlight) { schedulePoll(); return; }
+  if (!piViewVisible() || state.locks.has('session') || state.locks.has('workspace') || state.locks.has('session-management')) {
+    stopPolling();
+    return;
+  }
+  if (pollInFlight) { schedulePoll(500); return; }
   const context = state.contextVersion;
-  const wasBusy = state.agentBusy;
   pollInFlight = true;
   try {
     const data = await apiJson('/api/status', {}, 'poll-status');
-    if (context !== state.contextVersion) {
-      schedulePoll();
-      return;
-    }
+    if (context !== state.contextVersion) return;
     setConnection(true);
     setAgentBusy(data.busy, data.canAbort === true);
     renderPiContextUsage(data.contextUsage);
-
-    if (data.busy) {
-      await loadHistory({ limit: 10 });
-    } else {
-      if (wasBusy) await loadHistory();
-      await loadSessions(elements.workspace.value, { quiet: true });
-    }
-
-    if (context !== state.contextVersion) {
-      schedulePoll();
-      return;
-    }
-    schedulePoll();
+    await Promise.all([
+      loadHistory({ limit: data.busy ? 10 : null }),
+      loadSessions(elements.workspace.value, { quiet: true }),
+    ]);
   } catch (error) {
-    if (context === state.contextVersion) {
-      if (!isAbort(error)) setConnection(false);
-      schedulePoll(state.agentBusy ? 5_000 : idlePollInterval);
-    }
+    if (context === state.contextVersion && !isAbort(error)) setConnection(false);
   } finally {
     pollInFlight = false;
+    if (context === state.contextVersion) schedulePoll(state.agentBusy ? activePollInterval : idlePollInterval);
   }
 }
 
-function startPolling() {
-  schedulePoll(500);
+function startPolling(delay = 0) {
+  schedulePoll(delay);
 }
 
 function setWorkspaceSuggestions(items) {
@@ -859,7 +739,8 @@ async function loadWorkspaceSuggestions(prefix = '') {
 }
 
 function sessionState(item) {
-  if (item.busy) return { label: 'Working', className: 'working' };
+  if (item.busy) return { label: `Working${item.queuedPrompts ? ` · ${item.queuedPrompts} queued` : ''}`, className: 'working' };
+  if (item.queuedPrompts) return { label: `${item.queuedPrompts} queued`, className: 'working' };
   if (item.running) return { label: 'Open', className: 'running' };
   return { label: 'Saved', className: 'saved' };
 }
@@ -965,7 +846,6 @@ async function loadSessions(cwd = elements.workspace.value, { quiet = false } = 
 }
 
 function attachRuntime(runtimeId) {
-  closeEventStream();
   sessionStorage.setItem('friday-session-id', runtimeId);
   window.location.assign('/?feature=pi');
 }
@@ -975,7 +855,7 @@ async function openSession(sessionPath) {
   closeDrawer();
   lock('session', true);
   const context = ++state.contextVersion;
-  closeEventStream();
+  stopPolling();
   cancelRequest('history');
   try {
     const data = await apiJson('/api/session/select', {
@@ -993,8 +873,7 @@ async function openSession(sessionPath) {
     if (!isAbort(error)) toast(error.message, 'error');
   } finally {
     lock('session', false);
-    schedulePoll();
-    void connectEventStream();
+    schedulePoll(0);
     elements.input.focus();
   }
 }
@@ -1802,12 +1681,13 @@ async function loadSettings() {
 
 const fridayChat = fridayChatModule
   ? fridayChatModule.createFridayChat({ apiJson, renderMarkdown, toast, onHistory: () => {
-      void refreshFridaySessions().catch((error) => toast(error.message, 'error'));
-      void loadFridayPiConversations().catch((error) => toast(error.message, 'error'));
-    } })
+      void refreshFridayAgentViewData().catch((error) => toast(error.message, 'error'));
+    }, onEnter: refreshFridayAgentViewData })
   : {
       start() { $('#friday-status').textContent = 'Restart Friday server to enable chat'; },
       stop() {},
+      pause() {},
+      enterView() { return Promise.resolve(); },
     };
 
 const money = (rupiah) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(rupiah);
@@ -2112,7 +1992,7 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
   });
   for (const query of [narrowSidebar, narrowAssistant]) query.addEventListener('change', () => { close(false); sync(); });
   return {
-    openAssistant() { open(assistant); },
+    openAssistant() { open(assistant); void fridayChat.enterView().catch((error) => toast(error.message, 'error')); },
     updateFeature(name) {
       close(false);
       shell.dataset.feature = name;
@@ -2162,7 +2042,7 @@ async function loadFridayDirectory() {
   input.title = input.value;
 }
 
-async function setFeature(name) {
+async function setFeature(name, { startPiPolling = true } = {}) {
   if (name === 'friday-settings' || name === 'pi-settings') name = 'settings';
   if (name === 'files') name = state.fileFeature;
   else if (name === 'pi-files') state.fileFeature = 'pi-files';
@@ -2170,6 +2050,12 @@ async function setFeature(name) {
   if (['files', 'pi-files'].includes(state.activeFeature) && !['files', 'pi-files'].includes(name) && !confirmDiscardFileChanges()) return;
   if (!featureViews.has(name)) return;
   state.activeFeature = name;
+  if (name !== 'pi') stopPolling();
+  if (name !== 'friday') {
+    fridayChat.pause();
+    stopFridayPiConversationPolling();
+    stopFridaySessionListPolling();
+  }
   if (name !== 'dashboard') {
     clearInterval(dashboardClockTimer);
     clearTimeout(dashboardTemperatureTimer);
@@ -2194,10 +2080,14 @@ async function setFeature(name) {
     view.hidden = !visible;
   }
   workspaceShell.updateFeature(name);
+  const fridayEntry = name === 'friday' ? fridayChat.enterView() : null;
   $('#system-devices-view').hidden = false;
   try {
-    if (name === 'friday') await Promise.all([fridayChat.start(), loadFridayPiConversations(), loadFridayDirectory()]);
-    else if (!['dashboard', 'repos', 'notes', 'files', 'pi-files', 'finances', 'socials', 'settings'].includes(name)) await initializePi();
+    if (name === 'friday') await Promise.all([fridayChat.start(), fridayEntry, loadFridayDirectory()]);
+    else if (name === 'pi') {
+      await initializePi();
+      if (startPiPolling) startPolling(0);
+    }
     if (name === 'files' || name === 'pi-files') {
       elements.fileTitle.textContent = 'File preview';
       elements.fileMeta.textContent = 'Select a text file to preview it.';
@@ -2238,35 +2128,81 @@ function resizeComposer() {
   updateControls();
 }
 
-async function loadFridayPiConversations() {
-  const list = elements.fridayPiSessionList;
-  if (!list) return;
-  const { sessions = [] } = await apiJson('/api/friday/pi-conversations', {}, 'friday-pi-conversations');
-  list.replaceChildren();
-  if (!sessions.length) {
-    const empty = document.createElement('div'); empty.className = 'empty-state'; empty.textContent = 'No Pi conversations yet'; list.append(empty); return;
+let fridayPiConversationSync = null;
+let fridayPiConversationRefreshAgain = false;
+function loadFridayPiConversations() {
+  if (fridayPiConversationSync) {
+    fridayPiConversationRefreshAgain = true;
+    return fridayPiConversationSync;
   }
-  for (const session of sessions) {
-    const item = document.createElement('article'); item.className = 'session-item friday-session-item';
-    const open = document.createElement('button'); open.type = 'button'; open.className = 'session-open friday-session-open';
-    open.title = session.preview || session.name;
-    const title = document.createElement('span'); title.className = 'session-title'; title.textContent = session.name || 'Untitled Pi conversation';
-    const details = document.createElement('span'); details.className = 'session-details';
-    const meta = document.createElement('span'); meta.className = 'session-meta'; meta.textContent = `${formatDate(session.modified)} · ${session.messageCount} msg`;
-    const status = document.createElement('span');
-    status.className = `session-state ${session.busy || session.queuedPrompts ? 'working' : session.running ? 'running' : 'saved'}`;
-    status.textContent = session.busy ? 'Working' : session.queuedPrompts ? `${session.queuedPrompts} queued` : session.running ? 'Open' : 'Saved';
-    details.append(meta, status); open.append(title, details);
-    open.addEventListener('click', () => void openPiConversationFromFriday(session));
-    item.append(open); list.append(item);
+  const list = elements.fridayPiSessionList;
+  if (!list) return Promise.resolve();
+  fridayPiConversationSync = (async () => {
+    try {
+      let latestSessions = [];
+      do {
+        fridayPiConversationRefreshAgain = false;
+        const { sessions = [] } = await apiJson('/api/friday/pi-conversations', {}, 'friday-pi-conversations');
+        latestSessions = sessions;
+        list.replaceChildren();
+        if (!sessions.length) {
+          const empty = document.createElement('div'); empty.className = 'empty-state'; empty.textContent = 'No Pi conversations yet'; list.append(empty); continue;
+        }
+        for (const session of sessions) {
+          const item = document.createElement('article'); item.className = 'session-item friday-session-item';
+          const open = document.createElement('button'); open.type = 'button'; open.className = 'session-open friday-session-open';
+          open.title = session.preview || session.name;
+          const title = document.createElement('span'); title.className = 'session-title'; title.textContent = session.name || 'Untitled Pi conversation';
+          const details = document.createElement('span'); details.className = 'session-details';
+          const meta = document.createElement('span'); meta.className = 'session-meta'; meta.textContent = `${formatDate(session.modified)} · ${session.messageCount} msg`;
+          const status = document.createElement('span');
+          status.className = `session-state ${session.opening || session.busy || session.queuedPrompts ? 'working' : session.running ? 'running' : 'saved'}`;
+          status.textContent = session.opening ? 'Opening' : session.busy ? `Working${session.queuedPrompts ? ` · ${session.queuedPrompts} queued` : ''}` : session.queuedPrompts ? `${session.queuedPrompts} queued` : session.running ? 'Open' : 'Saved';
+          details.append(meta, status); open.append(title, details);
+          open.addEventListener('click', () => void openPiConversationFromFriday(session));
+          item.append(open); list.append(item);
+        }
+      } while (fridayPiConversationRefreshAgain);
+      return latestSessions;
+    } finally {
+      fridayPiConversationSync = null;
+      fridayPiConversationRefreshAgain = false;
+    }
+  })();
+  return fridayPiConversationSync;
+}
+
+let fridayPiConversationPollTimer = null;
+function stopFridayPiConversationPolling() {
+  clearTimeout(fridayPiConversationPollTimer);
+  fridayPiConversationPollTimer = null;
+}
+
+function scheduleFridayPiConversationPolling(sessions = []) {
+  stopFridayPiConversationPolling();
+  if (state.activeFeature !== 'friday' || document.visibilityState === 'hidden') return;
+  const active = sessions.some((session) => session.opening || session.busy || session.queuedPrompts);
+  fridayPiConversationPollTimer = setTimeout(() => {
+    void refreshFridayPiConversations().catch(() => {});
+  }, active ? 2_000 : 5_000);
+}
+
+async function refreshFridayPiConversations() {
+  try {
+    const sessions = await loadFridayPiConversations();
+    scheduleFridayPiConversationPolling(sessions);
+    return sessions;
+  } catch (error) {
+    scheduleFridayPiConversationPolling();
+    throw error;
   }
 }
 
 async function openPiConversationFromFriday(session) {
   if (state.locks.has('session')) return;
-  closeDrawer(); lock('session', true);
+  closeDrawer(); lock('session', true); stopPolling();
   const context = ++state.contextVersion;
-  closeEventStream(); cancelRequest('history');
+  cancelRequest('history');
   try {
     const data = await apiJson('/api/session/select', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2275,23 +2211,46 @@ async function openPiConversationFromFriday(session) {
     if (context !== state.contextVersion) return;
     if (data.runtimeId && data.runtimeId !== sessionStorage.getItem('friday-session-id')) { attachRuntime(data.runtimeId); return; }
     const wasInitialized = piInitialized;
-    await setFeature('pi');
     if (wasInitialized) {
       elements.workspace.value = data.workspace; state.workspace = data.workspace; state.currentSessionPath = data.sessionPath;
+      state.history = []; state.historyTotal = 0;
+    }
+    await setFeature('pi', { startPiPolling: false });
+    if (wasInitialized) {
       await Promise.all([loadHistory({ forceScroll: true }), loadModels(), loadThinkingLevels(), loadSessions(data.workspace, { quiet: true })]);
       const status = await apiJson('/api/status');
-      setAgentBusy(status.busy, status.busyOperation);
+      setAgentBusy(status.busy, status.canAbort === true);
       renderPiContextUsage(status.contextUsage);
-      if (status.busy) startPolling(); else schedulePoll(1200);
-      void connectEventStream();
     }
   } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); }
-  finally { lock('session', false); }
+  finally { lock('session', false); schedulePoll(0); }
 }
 
 const fridaySessionList = $('#friday-session-list');
 let activeFridaySession = null;
-async function refreshFridaySessions() {
+let fridaySessionsSync = null;
+let fridaySessionsRefreshAgain = false;
+function refreshFridaySessions() {
+  if (fridaySessionsSync) {
+    fridaySessionsRefreshAgain = true;
+    return fridaySessionsSync;
+  }
+  fridaySessionsSync = (async () => {
+    try {
+      do {
+        fridaySessionsRefreshAgain = false;
+        await refreshFridaySessionsOnce();
+      } while (fridaySessionsRefreshAgain);
+    } finally {
+      fridaySessionsSync = null;
+      fridaySessionsRefreshAgain = false;
+      scheduleFridaySessionListPolling();
+    }
+  })();
+  return fridaySessionsSync;
+}
+
+async function refreshFridaySessionsOnce() {
   const data = await apiJson('/api/friday/sessions');
   if (!Array.isArray(data) && data.currentSession) activeFridaySession = String(data.currentSession);
   const sessions = Array.isArray(data) ? data : data.sessions || [];
@@ -2310,7 +2269,7 @@ async function refreshFridaySessions() {
     open.addEventListener('click', async () => {
       try {
         await apiJson(`/api/friday/sessions/${encodeURIComponent(id)}/open`, { method: 'POST' });
-        activeFridaySession = id; await fridayChat.refreshTranscript(); await refreshFridaySessions(); closeDrawer();
+        activeFridaySession = id; await fridayChat.enterView(); closeDrawer();
       } catch (error) { toast(error.message, 'error'); }
     });
     const actions = document.createElement('div'); actions.className = 'session-actions friday-session-actions';
@@ -2333,6 +2292,25 @@ async function refreshFridaySessions() {
   }
   if (!sessions.length) { const empty = document.createElement('div'); empty.className = 'empty-state'; empty.textContent = 'No conversations yet'; fridaySessionList.append(empty); }
 }
+
+let fridaySessionListPollTimer = null;
+function stopFridaySessionListPolling() {
+  clearTimeout(fridaySessionListPollTimer);
+  fridaySessionListPollTimer = null;
+}
+
+function scheduleFridaySessionListPolling() {
+  stopFridaySessionListPolling();
+  if (state.activeFeature !== 'friday' || document.visibilityState === 'hidden') return;
+  fridaySessionListPollTimer = setTimeout(() => {
+    void refreshFridaySessions().catch(() => {});
+  }, 15_000);
+}
+
+async function refreshFridayAgentViewData() {
+  await Promise.all([refreshFridaySessions(), refreshFridayPiConversations()]);
+}
+
 $('#friday-refresh-sessions').addEventListener('click', () => void refreshFridaySessions().catch((error) => toast(error.message, 'error')));
 elements.fridayPiSessionsRefresh.addEventListener('click', () => void loadFridayPiConversations().catch((error) => toast(error.message, 'error')));
 elements.fridayPiSessionsToggle.addEventListener('click', () => void loadFridayPiConversations().catch((error) => toast(error.message, 'error')));
@@ -2356,25 +2334,42 @@ elements.drawerBackdrop.addEventListener('click', closeDrawer);
 window.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeDrawer(); });
 window.addEventListener('online', () => {
   setConnection(true);
-  if (piInitialized) void connectEventStream();
+  if (state.activeFeature === 'pi') startPolling(0);
+  if (state.activeFeature === 'friday') {
+    void fridayChat.enterView().catch((error) => toast(error.message, 'error'));
+  }
 });
 window.addEventListener('offline', () => {
-  closeEventStream();
   stopPolling();
+  stopFridayPiConversationPolling();
+  stopFridaySessionListPolling();
+  fridayChat.pause();
   setConnection(false);
 });
 window.addEventListener('pagehide', () => {
-  closeEventStream();
+  stopPolling();
+  stopFridayPiConversationPolling();
+  stopFridaySessionListPolling();
   fridayChat.stop();
 });
 window.addEventListener('pageshow', (event) => {
   if (!event.persisted) return;
-  if (piInitialized) void connectEventStream();
-  if (state.activeFeature === 'friday') void fridayChat.start();
+  if (state.activeFeature === 'pi' && piInitialized) startPolling(0);
+  if (state.activeFeature === 'friday') {
+    void fridayChat.start();
+    void fridayChat.enterView().catch((error) => toast(error.message, 'error'));
+  }
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && !state.initializing && !eventConnected) {
-    void connectEventStream();
+  if (document.visibilityState === 'hidden') {
+    stopPolling();
+    stopFridayPiConversationPolling();
+    stopFridaySessionListPolling();
+    fridayChat.pause();
+  } else if (state.activeFeature === 'pi' && piInitialized) {
+    startPolling(0);
+  } else if (state.activeFeature === 'friday') {
+    void refreshFridayAgentViewData().catch((error) => toast(error.message, 'error'));
   }
 });
 
@@ -2397,7 +2392,6 @@ elements.workspace.addEventListener('change', async () => {
   const requested = elements.workspace.value;
   lock('workspace', true);
   const context = ++state.contextVersion;
-  closeEventStream();
   stopPolling(); cancelRequest('history'); cancelRequest('files'); cancelRequest('file-preview');
   try {
     const data = await apiJson('/api/settings/workspace', {
@@ -2420,8 +2414,7 @@ elements.workspace.addEventListener('change', async () => {
     if (!isAbort(error)) { elements.workspace.value = state.workspace; toast(error.message, 'error'); }
   } finally {
     lock('workspace', false);
-    schedulePoll();
-    void connectEventStream();
+    schedulePoll(0);
   }
 });
 
@@ -2572,7 +2565,7 @@ elements.form.addEventListener('submit', async (event) => {
 
 elements.reset.addEventListener('click', async () => {
   if (!elements.workspace.value || state.locks.has('session')) return;
-  lock('session', true); ++state.contextVersion; closeEventStream(); stopPolling(); cancelRequest('history');
+  lock('session', true); ++state.contextVersion; stopPolling(); cancelRequest('history');
   try {
     const data = await apiJson('/api/session/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cwd: elements.workspace.value }) }, 'session-action');
     if (data.runtimeId && data.runtimeId !== sessionStorage.getItem('friday-session-id')) {
@@ -2586,8 +2579,7 @@ elements.reset.addEventListener('click', async () => {
   } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); }
   finally {
     lock('session', false);
-    schedulePoll();
-    void connectEventStream();
+    schedulePoll(0);
     elements.input.focus();
   }
 });
@@ -2608,9 +2600,6 @@ function initializePi() {
       renderPiContextUsage(current.contextUsage);
       setConnection(true);
       piInitialized = true;
-      if (current.busy) startPolling();
-      else schedulePoll(idlePollInterval);
-      void connectEventStream();
     } finally {
       state.initializing = false;
       updateControls();
