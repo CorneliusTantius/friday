@@ -20,6 +20,7 @@ import { listAgentFiles, readAgentFile, writeAgentFile } from './agent-files.js'
 import { millisecondsUntilNextQuarterHour, syncGitHubSnapshot, validateGitHubSyncTarget } from './github-sync.js';
 import { createFinanceStore } from './finances.js';
 import { createHostTemperatureMonitor } from './host-temperature.js';
+import { assertPiSessionDeletable, assertPiSessionDeleteAuthorized, deletePiSessionWithPolicy } from './pi-session-delete-policy.js';
 
 const host = process.env.HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.PORT || '3000', 10);
@@ -51,6 +52,7 @@ const publicRoot = join(projectRoot, 'public');
 const piSessions = new Map();
 const piRunOpenings = new Map();
 const piRunOperations = new Map();
+const deletingPiRuns = new Set();
 let fridayPi;
 let fridayInit;
 const fridayRuntimeId = '$friday'; // Not a valid X-Friday-Session value.
@@ -280,6 +282,7 @@ const piControl = {
   sendPrompt: enqueuePiPrompt,
   getRunStatus: getPiRunStatus,
   readConversation: readPiConversation,
+  deleteSession: deletePiConversation,
   stopRun: stopPiRun,
   waitForPrompt: waitForPiPrompt,
 };
@@ -782,6 +785,7 @@ async function sessionsWithRunIds(workspace) {
 }
 
 async function findRunRuntime(run) {
+  if (deletingPiRuns.has(run.id)) throw new RequestError('This Pi conversation is being deleted', 409);
   const session = await findSession(run.workspace, run.sessionPath);
   const active = () => [...piSessions.entries()].find(([, entry]) => entry.pi.currentSessionPath === session.path);
   let match = active();
@@ -828,6 +832,40 @@ async function readPiConversation({ runId, limit = 10 }) {
       content: message.content.length > 4000 ? `${message.content.slice(0, 4000)}… [truncated]` : message.content,
     })),
   };
+}
+
+async function deletePiConversation({ runId, conversationId, userMessage, previousAssistantMessage }) {
+  if (deletingPiRuns.has(runId)) throw new RequestError('This Pi conversation is already being deleted', 409);
+  deletingPiRuns.add(runId);
+  try {
+    let run = await piRunRegistry.getRun(runId);
+    if (!run) return null;
+    const listedSessions = await sessionsWithRunIds(run.workspace);
+    const listedSession = listedSessions.find((session) => session.runId === runId);
+    if (!listedSession) return null;
+    run = await piRunRegistry.getRun(runId) || run;
+    const otherRuns = listedSessions.map((session) => ({ id: session.runId, sessionId: session.id, name: session.name }));
+    assertPiSessionDeleteAuthorized({ userMessage, previousAssistantMessage, run, otherRuns });
+    const session = await findSession(run.workspace, run.sessionPath);
+    return await withPiRunOperation(run.id, async () => {
+      const linkedRun = await piRunRegistry.getLinkedRun(conversationId);
+      const runtimes = [...piSessions.values()].filter((entry) => entry.pi.currentSessionPath === session.path);
+      assertPiSessionDeletable({ runId: run.id, linkedRunId: linkedRun?.id, opening: piRunOpenings.has(run.id), runtimes });
+      await mutateSession(session, async (current) => {
+        const currentLink = await piRunRegistry.getLinkedRun(conversationId);
+        const currentRuntimes = [...piSessions.values()].filter((entry) => entry.pi.currentSessionPath === current.path);
+        await deletePiSessionWithPolicy({
+          runId: run.id, run, otherRuns, userMessage, previousAssistantMessage,
+          linkedRunId: currentLink?.id, opening: piRunOpenings.has(run.id), runtimes: currentRuntimes,
+          remove: () => unlink(current.path),
+        });
+      });
+      await piRunRegistry.deleteRun(run.id);
+      return { deleted: true, runId: run.id, name: run.name || 'Pi conversation' };
+    });
+  } finally {
+    deletingPiRuns.delete(runId);
+  }
 }
 
 async function getPiRunStatus(runId) {
@@ -887,6 +925,7 @@ async function enqueuePiPrompt({ conversationId, runId, prompt }) {
   if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 20_000) throw new RequestError('prompt must be between 1 and 20000 characters');
   let run = runId ? await piRunRegistry.getRun(runId) : await piRunRegistry.getLinkedRun(conversationId);
   if (runId && !run) throw new RequestError('Pi run was not found', 404);
+  if (run && deletingPiRuns.has(run.id)) throw new RequestError('This Pi conversation is being deleted', 409);
   if (run) {
     try { await findSession(run.workspace, run.sessionPath); }
     catch { throw new RequestError('The linked Pi conversation no longer exists; choose another conversation', 404); }
@@ -905,8 +944,9 @@ async function enqueuePiPrompt({ conversationId, runId, prompt }) {
     }
   }
 
-  await piRunRegistry.linkConversation(conversationId, run.id);
   return withPiRunOperation(run.id, async () => {
+    if (deletingPiRuns.has(run.id)) throw new RequestError('This Pi conversation is being deleted', 409);
+    await piRunRegistry.linkConversation(conversationId, run.id);
     let runtime;
     try { runtime = await findRunRuntime(run); }
     catch (error) {
@@ -1739,29 +1779,35 @@ async function handleRequest(request, response) {
     if (!selected) {
       throw new RequestError('session was not found in the selected workspace');
     }
-    const runId = await piRunRegistry.ensureRun({ workspace, sessionPath: selected.path, sessionId: selected.id, name: selected.name });
+    if (sessionMutations.has(selected.path)) throw new RequestError('This session is already being changed', 409);
+    sessionMutations.add(selected.path);
+    try {
+      const runId = await piRunRegistry.ensureRun({ workspace, sessionPath: selected.path, sessionId: selected.id, name: selected.name });
 
-    let selectedPi = pi;
-    let runtimeId = clientIdFor(request);
-    const sharedRuntime = runtimeHasOtherViewers(runtimeId, viewerIdFor(request));
-    const changingSharedSession = sharedRuntime && pi.currentSessionPath !== selected.path;
-    if (pi.isBusy || changingSharedSession) {
-      runtimeId = randomUUID();
-      selectedPi = createPiRuntime(runtimeId, workspace);
-    }
+      let selectedPi = pi;
+      let runtimeId = clientIdFor(request);
+      const sharedRuntime = runtimeHasOtherViewers(runtimeId, viewerIdFor(request));
+      const changingSharedSession = sharedRuntime && pi.currentSessionPath !== selected.path;
+      if (pi.isBusy || changingSharedSession) {
+        runtimeId = randomUUID();
+        selectedPi = createPiRuntime(runtimeId, workspace);
+      }
 
-    if (selectedPi.currentSessionPath !== selected.path || selectedPi.workspace !== workspace) {
-      await selectedPi.switchSession(selected.path, workspace);
+      if (selectedPi.currentSessionPath !== selected.path || selectedPi.workspace !== workspace) {
+        await selectedPi.switchSession(selected.path, workspace);
+      }
+      await persistWorkspace(workspace);
+      sendJson(response, 200, {
+        ok: true,
+        runtimeId,
+        runId,
+        workspace: selectedPi.workspace,
+        sessionPath: selectedPi.currentSessionPath,
+      });
+      return;
+    } finally {
+      sessionMutations.delete(selected.path);
     }
-    await persistWorkspace(workspace);
-    sendJson(response, 200, {
-      ok: true,
-      runtimeId,
-      runId,
-      workspace: selectedPi.workspace,
-      sessionPath: selectedPi.currentSessionPath,
-    });
-    return;
   }
 
   sendJson(response, 404, { error: 'Not found' });

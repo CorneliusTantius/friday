@@ -419,8 +419,8 @@ select:focus-visible { outline: none; }
 .device-card { display: grid; gap: .45rem; }
 .repo-card { min-width: 0; display: grid; gap: .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: rgba(255,255,255,.027); padding: 1rem; }
 .repo-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: .75rem; }
-.repo-heading strong { overflow: hidden; text-overflow: ellipsis; }
-.repo-branch { flex: 0 0 auto; border-radius: 99px; background: var(--accent-soft); color: #c4b5fd; padding: .2rem .55rem; font: 11px ui-monospace, monospace; }
+.repo-heading strong { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.repo-branch { min-width: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; border-radius: 99px; background: var(--accent-soft); color: #c4b5fd; padding: .2rem .55rem; font: 11px ui-monospace, monospace; }
 .repo-path, .repo-commit { color: var(--muted); font: 12px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; }
 .repo-pull { justify-self: start; }
 .repo-pull:disabled { cursor: not-allowed; filter: grayscale(1); opacity: .42; }

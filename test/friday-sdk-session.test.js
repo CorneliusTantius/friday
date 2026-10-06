@@ -16,6 +16,9 @@ test('Friday identity is explicit and multipurpose, not coding-only', () => {
   assert.match(fridaySystemPrompt, /one pi_wait_for_prompt call/);
   assert.match(fridaySystemPrompt, /Do not repeatedly call pi_run_status/);
   assert.match(fridaySystemPrompt, /Only call pi_stop_run when the user explicitly asks/);
+  assert.match(fridaySystemPrompt, /Call pi_delete_session only when the current user directly requests deletion/);
+  assert.match(fridaySystemPrompt, /Never infer approval/);
+  assert.match(fridaySystemPrompt, /Never delete the Pi conversation linked to the current Friday conversation/);
 });
 
 test('Friday history projects SDK messages and limits the tail', () => {
@@ -34,6 +37,26 @@ test('Friday history projects SDK messages and limits the tail', () => {
     { role: 'tool', content: 'file contents', toolCallId: 'call-2', toolName: 'read' },
     { role: 'assistant', content: 'answer' },
   ]);
+});
+
+test('SDK session periodically refreshes its model catalog and clears the timer on stop', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'friday-sdk-refresh-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let refreshes = 0;
+  let models = [{ provider: 'openai-codex', id: 'gpt-5' }];
+  const modelRuntime = { refresh: async () => { refreshes += 1; models = [...models, { provider: 'openai-codex', id: 'gpt-5-new' }]; }, getAvailableSnapshot: () => models };
+  const adapter = new FridaySdkSession({ cwd: root, agentDir: join(root, 'config'), dataDir: join(root, 'data'), modelRefreshIntervalMs: 5,
+    createModelRuntime: async () => modelRuntime,
+    createSession: async () => ({ session: { modelRuntime, messages: [], dispose() {} } }),
+  });
+  await adapter.start();
+  for (let attempt = 0; attempt < 20 && refreshes === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(refreshes > 0);
+  assert.deepEqual((await adapter.availableModels()).map((model) => model.id), ['gpt-5', 'gpt-5-new']);
+  await adapter.stop();
+  const stoppedAt = refreshes;
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(refreshes, stoppedAt);
 });
 
 test('SDK session aborts an active chat turn', async (t) => {
@@ -129,6 +152,7 @@ test('Friday SDK adds curated memory context and conversation-scoped Pi tools', 
   let options;
   let memoryRead = false;
   let queued;
+  let deleteContext;
   const adapter = new FridaySdkSession({
     cwd: root, agentDir: join(root, 'config'), dataDir: join(root, 'data'),
     createModelRuntime: async () => ({ getAvailableSnapshot: () => [] }),
@@ -139,26 +163,44 @@ test('Friday SDK adds curated memory context and conversation-scoped Pi tools', 
       waitForPrompt: async ({ runId, queueId }) => ({ runId, queueId, status: 'completed' }),
       getRunStatus: async () => ({ running: true }),
       readConversation: async ({ runId }) => ({ runId, messages: [] }),
+      deleteSession: async (value) => { deleteContext = value; return { deleted: true, runId: value.runId }; },
       stopRun: async () => ({ stopped: true }),
     },
     createSession: async (value) => {
       options = value;
       assert.match(value.resourceLoader.getSystemPrompt(), /Your identity is Friday: the user's multipurpose personal AI assistant/);
       assert.match(value.resourceLoader.getSystemPrompt(), /one pi_wait_for_prompt call/);
-      return { session: { sessionFile: value.sessionManager.getSessionFile(), messages: [], modelRuntime: value.modelRuntime, dispose() {} } };
+      assert.match(value.resourceLoader.getSystemPrompt(), /Never infer approval/);
+      const session = {
+        sessionFile: value.sessionManager.getSessionFile(), messages: [], modelRuntime: value.modelRuntime,
+        async prompt(message) {
+          session.messages.push({ role: 'user', content: message });
+          const deleteTool = value.customTools.find((tool) => tool.name === 'pi_delete_session');
+          await deleteTool.execute('tool-call', { runId: '123e4567-e89b-12d3-a456-426614174000' }, undefined, undefined, undefined);
+        },
+        dispose() {},
+      };
+      return { session };
     },
   });
   await adapter.start();
   assert.equal(memoryRead, true);
   assert.match(options.resourceLoader.getSystemPrompt(), /Your identity is Friday: the user's multipurpose personal AI assistant/);
   assert.match(options.resourceLoader.getSystemPrompt(), /one pi_wait_for_prompt call/);
-  assert.deepEqual(options.tools, ['bash', 'edit', 'read', 'write', 'pi_list_conversations', 'pi_send_prompt', 'pi_wait_for_prompt', 'pi_run_status', 'pi_read_conversation', 'pi_stop_run']);
-  assert.deepEqual(options.customTools.map((tool) => tool.name), ['pi_list_conversations', 'pi_send_prompt', 'pi_wait_for_prompt', 'pi_run_status', 'pi_read_conversation', 'pi_stop_run']);
+  assert.match(options.resourceLoader.getSystemPrompt(), /Never infer approval/);
+  assert.deepEqual(options.tools, ['bash', 'edit', 'read', 'write', 'pi_list_conversations', 'pi_send_prompt', 'pi_wait_for_prompt', 'pi_run_status', 'pi_read_conversation', 'pi_delete_session', 'pi_stop_run']);
+  assert.deepEqual(options.customTools.map((tool) => tool.name), ['pi_list_conversations', 'pi_send_prompt', 'pi_wait_for_prompt', 'pi_run_status', 'pi_read_conversation', 'pi_delete_session', 'pi_stop_run']);
   const sendTool = options.customTools.find((tool) => tool.name === 'pi_send_prompt');
   const result = await sendTool.execute('tool-call', { prompt: 'inspect this' }, undefined, undefined, undefined);
   assert.match(result.content[0].text, /queued.*run.*123e4567/i);
   assert.equal(queued.conversationId, adapter.currentSessionId);
   assert.equal(queued.prompt, 'inspect this');
+  const deleteRequest = 'Please delete Pi session “Build task”.';
+  await adapter.chat(deleteRequest);
+  assert.deepEqual(deleteContext, {
+    runId: '123e4567-e89b-12d3-a456-426614174000', conversationId: adapter.currentSessionId,
+    userMessage: deleteRequest, previousAssistantMessage: '',
+  });
   await adapter.stop();
 });
 

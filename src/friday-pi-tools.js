@@ -3,7 +3,7 @@ import { Type } from 'typebox';
 const UUID = Type.String({ format: 'uuid' });
 const result = (text) => ({ content: [{ type: 'text', text }] });
 
-export function createFridayPiTools({ listConversations, sendPrompt, getRunStatus, readConversation, stopRun, waitForPrompt, getConversationId }) {
+export function createFridayPiTools({ listConversations, sendPrompt, getRunStatus, readConversation, deleteSession, stopRun, waitForPrompt, getConversationId, getDeleteAuthorizationContext }) {
   return [
     {
       name: 'pi_list_conversations', label: 'List conversations',
@@ -59,6 +59,16 @@ export function createFridayPiTools({ listConversations, sendPrompt, getRunStatu
       async execute(_id, { runId, limit }) {
         const conversation = await readConversation({ runId, limit });
         return result(conversation == null ? 'Pi conversation not found.' : JSON.stringify(conversation));
+      },
+    },
+    {
+      name: 'pi_delete_session', label: 'Delete Pi session',
+      description: 'Permanently delete a saved Pi conversation. Only call after the current user explicitly requests deletion of this exact session by name or ID, or explicitly approves the preceding assistant confirmation after the task is complete. The server verifies the actual user turn and refuses current, open, active, or queued sessions.',
+      parameters: Type.Object({ runId: UUID }),
+      async execute(_id, { runId }) {
+        const context = await getDeleteAuthorizationContext();
+        const deleted = await deleteSession({ runId, conversationId: await getConversationId(), ...context });
+        return result(deleted == null ? 'Pi conversation not found.' : JSON.stringify(deleted));
       },
     },
     {

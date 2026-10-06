@@ -84,5 +84,18 @@ export function createPiRunRegistry({ file }) {
     },
     async getLinkedRun(conversationId) { validConversation(conversationId); await queue; await load(); const id = links.get(conversationId); return id ? runs.get(id) || null : null; },
     unlinkConversation(conversationId) { validConversation(conversationId); return mutate(() => links.delete(conversationId)); },
+    deleteRun(runId) {
+      validRun(runId);
+      return mutate(() => {
+        const run = runs.get(runId);
+        if (!run) return false;
+        runs.delete(runId);
+        bySession.delete(run.sessionPath);
+        for (const [conversationId, linkedRunId] of links) {
+          if (linkedRunId === runId) links.delete(conversationId);
+        }
+        return true;
+      });
+    },
   };
 }

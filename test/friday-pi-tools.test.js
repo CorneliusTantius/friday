@@ -8,17 +8,20 @@ const invoke = (tool, args, signal) => tool.execute('call', args, signal, undefi
 test('defines tools with schemas and queues prompts without waiting', async () => {
   const calls = [];
   const reads = [];
+  const deletions = [];
   let waitSignal;
   const tools = createFridayPiTools({
     listConversations: async () => [{ id: 'c1', name: 'Build task', runId: id, path: '/private/session.jsonl', preview: 'private message' }],
     sendPrompt: async (value) => { calls.push(value); return { runId: id, queueId: id, position: 2 }; },
     getRunStatus: async (runId) => ({ runId, state: 'running' }),
     readConversation: async (value) => { reads.push(value); return { runId: value.runId, messages: [{ role: 'assistant', content: 'Pi reply' }] }; },
+    deleteSession: async (value) => { deletions.push(value); return { deleted: true, runId: value.runId }; },
+    getDeleteAuthorizationContext: () => ({ userMessage: 'Please delete Pi session “Build task”.', previousAssistantMessage: '' }),
     stopRun: async (runId) => ({ runId, stopped: true }),
     waitForPrompt: async (value) => { waitSignal = value.signal; return { runId: value.runId, queueId: value.queueId, status: 'completed', result: 'done' }; },
     getConversationId: () => 'c1',
   });
-  assert.deepEqual(tools.map((tool) => tool.name), ['pi_list_conversations', 'pi_send_prompt', 'pi_wait_for_prompt', 'pi_run_status', 'pi_read_conversation', 'pi_stop_run']);
+  assert.deepEqual(tools.map((tool) => tool.name), ['pi_list_conversations', 'pi_send_prompt', 'pi_wait_for_prompt', 'pi_run_status', 'pi_read_conversation', 'pi_delete_session', 'pi_stop_run']);
   assert.deepEqual(await invoke(tools[0], {}), { content: [{ type: 'text', text: JSON.stringify([{ id: 'c1', name: 'Build task', runId: id }]) }] });
   const prompt = tools[1];
   assert.match(prompt.description, /queue.*without.*wait|return immediately.*does not wait/i);
@@ -40,6 +43,10 @@ test('defines tools with schemas and queues prompts without waiting', async () =
     content: [{ type: 'text', text: JSON.stringify({ runId: id, messages: [{ role: 'assistant', content: 'Pi reply' }] }) }],
   });
   assert.deepEqual(reads, [{ runId: id, limit: 5 }]);
-  assert.match(tools[5].description, /only use when the user explicitly asks/i);
-  assert.deepEqual(await invoke(tools[5], { runId: id }), { content: [{ type: 'text', text: JSON.stringify({ runId: id, stopped: true }) }] });
+  assert.match(tools[5].description, /current user explicitly requests deletion/i);
+  assert.match(tools[5].description, /server verifies the actual user turn/i);
+  assert.deepEqual(await invoke(tools[5], { runId: id }), { content: [{ type: 'text', text: JSON.stringify({ deleted: true, runId: id }) }] });
+  assert.deepEqual(deletions, [{ runId: id, conversationId: 'c1', userMessage: 'Please delete Pi session “Build task”.', previousAssistantMessage: '' }]);
+  assert.match(tools[6].description, /only use when the user explicitly asks/i);
+  assert.deepEqual(await invoke(tools[6], { runId: id }), { content: [{ type: 'text', text: JSON.stringify({ runId: id, stopped: true }) }] });
 });

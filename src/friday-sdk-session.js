@@ -34,7 +34,7 @@ export function fridayHistory(messages) {
 
 /** Friday-owned SDK-backed PiSession-compatible runtime. */
 export class FridaySdkSession extends EventEmitter {
-  constructor({ cwd, agentDir, dataDir, sessionManager, createSession = createAgentSession, createModelRuntime = ModelRuntime.create, model, thinkingLevel, memory, piControl } = {}) {
+  constructor({ cwd, agentDir, dataDir, sessionManager, createSession = createAgentSession, createModelRuntime = ModelRuntime.create, model, thinkingLevel, memory, piControl, modelRefreshIntervalMs = 15 * 60 * 1000 } = {}) {
     super();
     const root = resolve(process.env.FRIDAY_HOME || join(homedir(), '.friday'));
     this.cwd = cwd || join(root, 'data');
@@ -56,6 +56,9 @@ export class FridaySdkSession extends EventEmitter {
     this.unsubscribe = null;
     this.activePrompt = null;
     this.promptStarted = null;
+    this.activeUserMessage = null;
+    this.modelRefreshIntervalMs = modelRefreshIntervalMs;
+    this.modelRefreshTimer = null;
   }
 
   async start() {
@@ -89,6 +92,17 @@ export class FridaySdkSession extends EventEmitter {
         const customTools = this.piControl ? createFridayPiTools({
           ...this.piControl,
           getConversationId: () => this.sessionManager.getSessionId(),
+          getDeleteAuthorizationContext: () => {
+            const messages = this.session?.messages || [];
+            const currentUserIndex = messages.findLastIndex((item) => item.role === 'user' && textFromContent(item.content).trim() === this.activeUserMessage?.trim());
+            const previousAssistant = currentUserIndex < 0
+              ? null
+              : messages.slice(0, currentUserIndex).findLast((item) => item.role === 'assistant');
+            return {
+              userMessage: this.activeUserMessage,
+              previousAssistantMessage: textFromContent(previousAssistant?.content).trim(),
+            };
+          },
         }) : [];
         const resourceLoader = new DefaultResourceLoader({ cwd: this.cwd, agentDir: this.agentDir, settingsManager,
           systemPrompt,
@@ -105,6 +119,12 @@ export class FridaySdkSession extends EventEmitter {
           this.session = session;
           this.#applyState();
           this.unsubscribe = session.subscribe?.((event) => this.emit('event', event));
+          if (this.modelRefreshIntervalMs > 0 && session.modelRuntime?.refresh && !this.modelRefreshTimer) {
+            this.modelRefreshTimer = setInterval(() => {
+              session.modelRuntime.refresh().catch((error) => console.error(`Friday model refresh failed: ${error.message}`));
+            }, this.modelRefreshIntervalMs);
+            this.modelRefreshTimer.unref?.();
+          }
         })
         .finally(() => { this.initializing = null; });
     }
@@ -150,6 +170,7 @@ export class FridaySdkSession extends EventEmitter {
   async chat(message) {
     return this.#operate('chat', async () => {
       let signalPromptStarted;
+      this.activeUserMessage = message;
       this.promptStarted = new Promise((resolve) => { signalPromptStarted = resolve; });
       try {
         await this.start();
@@ -163,6 +184,7 @@ export class FridaySdkSession extends EventEmitter {
         signalPromptStarted();
         this.activePrompt = null;
         this.promptStarted = null;
+        this.activeUserMessage = null;
       }
     });
   }
@@ -320,6 +342,8 @@ export class FridaySdkSession extends EventEmitter {
   }
 
   async stop() {
+    if (this.modelRefreshTimer) clearInterval(this.modelRefreshTimer);
+    this.modelRefreshTimer = null;
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.#applyState();

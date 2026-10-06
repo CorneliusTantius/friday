@@ -43,6 +43,15 @@ test('dashboard presents host temperature with safe unavailable states and infre
   assert.match(app, /clearTimeout\(dashboardTemperatureTimer\)/);
 });
 
+test('dashboard refreshes agent busy state while visible', () => {
+  assert.match(app, /apiJson\('\/api\/friday\/status'\), apiJson\('\/api\/status'\)/);
+  assert.match(app, /dashboardStatusRefreshInterval = 3_000/);
+  assert.match(app, /data-dashboard-agent-status/);
+  assert.match(app, /data-dashboard-active-agents/);
+  assert.match(app, /request !== dashboardStatusRequest \|\| state\.activeFeature !== 'dashboard'/);
+  assert.match(app, /scheduleDashboardStatusRefresh\(\);/);
+});
+
 test('assistant rail and launch buttons hide in either full chat view', () => {
   assert.match(app, /\['friday', 'pi'\]\.includes\(getFeature\(\)\)/);
   assert.match(app, /assistant\.hidden = chatFeature/);

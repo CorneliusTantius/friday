@@ -1585,6 +1585,9 @@ function renderMemoryGraphCard(graph) {
 let dashboardLoadSequence = 0;
 let dashboardClockTimer;
 let dashboardTemperatureTimer;
+let dashboardStatusTimer;
+let dashboardStatusRequest = 0;
+const dashboardStatusRefreshInterval = 3_000;
 function renderDashboardTemperature(data) {
   const output = $('#dashboard-temperature');
   if (!output) return;
@@ -1612,8 +1615,39 @@ function scheduleDashboardTemperatureRefresh() {
     scheduleDashboardTemperatureRefresh();
   }, 60_000);
 }
+function updateDashboardAgentStatus(key, data) {
+  const status = document.querySelector(`[data-dashboard-agent-status="${key}"]`);
+  if (!status || !data) return;
+  status.textContent = data.busy ? 'Working'
+    : (key === 'friday' ? data.running : data.piRunning) === false ? 'Standby' : 'Ready';
+}
+function scheduleDashboardStatusRefresh() {
+  clearTimeout(dashboardStatusTimer);
+  dashboardStatusTimer = setTimeout(async () => {
+    if (state.activeFeature !== 'dashboard') return;
+    const request = ++dashboardStatusRequest;
+    try {
+      const results = await Promise.allSettled([
+        apiJson('/api/friday/status'), apiJson('/api/status'),
+      ]);
+      if (request !== dashboardStatusRequest || state.activeFeature !== 'dashboard') return;
+      const [friday, pi] = results.map((result) => result.status === 'fulfilled' ? result.value : null);
+      updateDashboardAgentStatus('friday', friday);
+      updateDashboardAgentStatus('pi', pi);
+      const activeAgents = document.querySelector('[data-dashboard-active-agents]');
+      const activeAgentsDetail = document.querySelector('[data-dashboard-active-agents-detail]');
+      if (activeAgents && friday && pi) {
+        activeAgents.textContent = String(Number(friday.running === true) + Number(pi.piRunning === true));
+        activeAgentsDetail.textContent = `Friday ${Number(friday.running === true)} running · Pi ${Number(pi.piRunning === true)} running`;
+      }
+    } catch {}
+    if (request === dashboardStatusRequest && state.activeFeature === 'dashboard') scheduleDashboardStatusRefresh();
+  }, dashboardStatusRefreshInterval);
+}
 async function loadDashboard() {
   clearTimeout(dashboardTemperatureTimer);
+  clearTimeout(dashboardStatusTimer);
+  dashboardStatusRequest += 1;
   const sequence = ++dashboardLoadSequence;
   const cards = $('#dashboard-cards');
   const results = await Promise.allSettled([
@@ -1654,6 +1688,10 @@ async function loadDashboard() {
   ];
   for (const item of metricItems) {
     const card = renderDashboardCard(...item);
+    if (item[0] === 'Active agents') {
+      card.querySelector('.dashboard-metric-value').dataset.dashboardActiveAgents = '';
+      card.querySelector('.dashboard-metric-detail').dataset.dashboardActiveAgentsDetail = '';
+    }
     if (item[0] === 'Monthly expenses' && item[1] !== 'Unavailable') {
       const value = setFinanceValue(card.querySelector('.dashboard-metric-value'), item[1]);
       const row = document.createElement('div'); row.className = 'dashboard-metric-value-row';
@@ -1670,7 +1708,7 @@ async function loadDashboard() {
     const row = document.createElement('div'); row.className = 'dashboard-agent-row';
     const avatar = document.createElement('span'); avatar.className = 'dashboard-agent-avatar'; avatar.textContent = label === 'Friday' ? 'F' : 'π';
     const name = document.createElement('strong'); name.textContent = label;
-    const stateText = document.createElement('span'); stateText.className = 'dashboard-status'; stateText.textContent = !data ? 'Unavailable' : data.busy ? 'Working' : (label === 'Friday' ? data.running : data.piRunning) === false ? 'Standby' : 'Ready';
+    const stateText = document.createElement('span'); stateText.className = 'dashboard-status'; stateText.dataset.dashboardAgentStatus = label.toLowerCase(); stateText.textContent = !data ? 'Unavailable' : data.busy ? 'Working' : (label === 'Friday' ? data.running : data.piRunning) === false ? 'Standby' : 'Ready';
     const info = document.createElement('small'); info.textContent = model;
     const pct = Number.isFinite(usage?.percent) ? usage.percent : Number.isFinite(usage?.tokens) && usage.contextWindow ? usage.tokens / usage.contextWindow * 100 : null;
     const progress = document.createElement('progress'); progress.max = 100; progress.value = pct === null ? 0 : Math.max(0, Math.min(100, pct)); progress.setAttribute('aria-label', `${label} context usage`); progress.setAttribute('aria-valuetext', pct === null ? 'Unavailable' : `${pct.toFixed(1)} percent`);
@@ -1727,6 +1765,7 @@ async function loadDashboard() {
   cards.replaceChildren(page);
   renderDashboardTemperature(temperature);
   scheduleDashboardTemperatureRefresh();
+  scheduleDashboardStatusRefresh();
 }
 
 async function loadSettings() {

@@ -34,6 +34,21 @@ test('batch ensures preserve IDs and persist in one update', async () => {
   assert.deepEqual(stored.runs.map(run => run.id), ids);
 });
 
+test('deleting a run removes its session mapping and Friday links', async () => {
+  const { file } = await setup();
+  const registry = createPiRunRegistry({ file });
+  const runId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/delete-me', sessionId: 'delete-me', name: 'Temporary' });
+  const otherRunId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/keep', sessionId: 'keep', name: 'Keep' });
+  await registry.linkConversation('friday-1', runId);
+  await registry.linkConversation('friday-2', runId);
+  assert.equal(await registry.deleteRun(runId), true);
+  assert.equal(await registry.getRun(runId), null);
+  assert.equal(await registry.getLinkedRun('friday-1'), null);
+  assert.equal(await registry.getLinkedRun('friday-2'), null);
+  assert.equal((await registry.getRun(otherRunId)).name, 'Keep');
+  assert.notEqual(await registry.ensureRun({ workspace: '/work', sessionPath: '/session/delete-me', sessionId: 'delete-me', name: 'Recreated' }), runId);
+});
+
 test('conversation links, validation, concurrent mutations and restrictive modes', async () => {
   const { dir, file } = await setup();
   const registry = createPiRunRegistry({ file });
