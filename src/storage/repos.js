@@ -68,10 +68,10 @@ export function createRepositoryStore({ directory = join(homedir(), '.friday', '
     }
   }
 
-  async function listRepositories() {
+  async function listRepositoryNames() {
     await mkdir(root, { recursive: true });
     const entries = await readdir(root, { withFileTypes: true });
-    const repositories = [];
+    const names = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const path = join(root, entry.name);
@@ -79,10 +79,18 @@ export function createRepositoryStore({ directory = join(homedir(), '.friday', '
         const resolved = await realpath(path);
         if (resolved !== root && !resolved.startsWith(root + '/') ) continue;
         const marker = await lstat(join(path, '.git'));
-        if (marker.isDirectory() || marker.isFile()) repositories.push({ name: entry.name, path, ...await repositoryStats(path) });
+        if (marker.isDirectory() || marker.isFile()) names.push(entry.name);
       } catch {}
     }
-    return repositories.sort((a, b) => a.name.localeCompare(b.name));
+    return names.sort((a, b) => a.localeCompare(b));
+  }
+
+  async function listRepositories() {
+    const names = await listRepositoryNames();
+    return Promise.all(names.map(async (name) => {
+      const path = join(root, name);
+      return { name, path, ...await repositoryStats(path) };
+    }));
   }
 
   async function pullRepository(name) {
@@ -163,7 +171,7 @@ export function createRepositoryStore({ directory = join(homedir(), '.friday', '
     }
   }
 
-  return { directory: root, listRepositories, pullRepository, cloneRepository };
+  return { directory: root, listRepositoryNames, listRepositories, pullRepository, cloneRepository };
 }
 
 export { repositoryName };

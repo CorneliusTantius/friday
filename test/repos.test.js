@@ -24,7 +24,9 @@ test('repository listing reports branch and working tree stats', async (t) => {
   await writeFile(join(repo, 'tracked'), 'unstaged');
   await writeFile(join(repo, 'new-file'), 'new');
 
-  const [result] = await createRepositoryStore({ directory: repos }).listRepositories();
+  const store = createRepositoryStore({ directory: repos });
+  assert.deepEqual(await store.listRepositoryNames(), ['sample']);
+  const [result] = await store.listRepositories();
   assert.equal(result.branch, 'main');
   assert.equal(result.staged, 1);
   assert.equal(result.unstaged, 1);
@@ -52,6 +54,7 @@ fs.mkdirSync(args[3] + '/.git');
   assert.deepEqual(await store.cloneRepository('https://example.com/team/project.git'), {
     name: 'project', path: join(repos, 'project'),
   });
+  assert.deepEqual(await store.listRepositoryNames(), ['project']);
   assert.deepEqual(await store.listRepositories(), [{ name: 'project', path: join(repos, 'project'), branch: null, staged: null, unstaged: null, untracked: null, ahead: null, behind: null, latestCommit: null }]);
   await assert.rejects(store.cloneRepository('https://example.com/team/project.git'), /already exists/);
   await assert.rejects(store.cloneRepository('--upload-pack=evil'), /Git URL/);

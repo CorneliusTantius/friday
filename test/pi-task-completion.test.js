@@ -20,21 +20,47 @@ test('terminal Pi success triggers an exact-task review, persists its report, an
   const { dir, registry, task } = await setup();
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   let reviews = 0;
+  const audit = [];
   const reviewQueue = createPiTaskReviewQueue({ review: async (job, event) => {
     reviews += 1;
     assert.equal(job.id, task.id);
     assert.equal(event.status, 'completed');
     assert.equal((await registry.getTask(job.id)).status, 'reviewing', 'Pi success alone is not final');
-    await registry.updateTask(job.id, { status: 'completed', summary: 'Verified the requested behavior and tests.' });
+    await registry.updateTask(job.id, { status: 'completed', summary: 'Verified the requested behavior and tests.', review: { stage: 'finished', finishedAt: new Date().toISOString() } });
   } });
-  const completion = createPiTaskCompletionHandler({ registry, reviewQueue });
-  await completion.handle(task.queueId, { id: task.queueId, status: 'completed', result: 'Pi output' });
+  const completion = createPiTaskCompletionHandler({ registry, reviewQueue, audit: (event, details) => audit.push({ event, ...details }) });
+  await completion.handle(task.queueId, { id: task.queueId, status: 'completed', result: 'private transcript and API key sk-secret' });
   await reviewQueue.waitFor(task.conversationId);
   assert.equal((await registry.getTask(task.id)).status, 'completed');
   assert.equal((await registry.getTask(task.id)).summary, 'Verified the requested behavior and tests.');
+  assert.equal((await registry.getTask(task.id)).review.stage, 'finished');
+  assert.ok(audit.some(({ event, taskId, runId, queueId }) => event === 'completion_received' && taskId === task.id && runId === task.runId && queueId === task.queueId));
+  assert.ok(audit.some(({ event, stage }) => event === 'review_queued' && stage === 'queued'));
+  assert.doesNotMatch(JSON.stringify(audit), /private transcript|sk-secret/);
   await completion.handle(task.queueId, { id: task.queueId, status: 'completed', result: 'duplicate' });
   await yieldTurn();
   assert.equal(reviews, 1, 'duplicate terminal events do not start another review');
+});
+
+test('duplicate terminal event cannot turn an active review back into queued state', async (t) => {
+  const { dir, registry, task } = await setup();
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  let release;
+  const reviewQueue = createPiTaskReviewQueue({ review: async () => new Promise((resolve) => { release = resolve; }) });
+  const audit = [];
+  const completion = createPiTaskCompletionHandler({ registry, reviewQueue, audit: (event, details) => audit.push({ event, ...details }) });
+  await completion.handle(task.queueId, { id: task.queueId, status: 'completed' });
+  await yieldTurn();
+  const activeReview = await registry.updateTask(task.id, {
+    status: 'reviewing', review: { stage: 'active', startedAt: new Date().toISOString() },
+  });
+  await completion.handle(task.queueId, { id: task.queueId, status: 'completed' });
+  const saved = await registry.getTask(task.id);
+  assert.equal(saved.review.stage, 'active');
+  assert.equal(saved.review.startedAt, activeReview.review.startedAt);
+  assert.ok(audit.some(({ event }) => event === 'completion_duplicate'));
+  release();
+  await reviewQueue.waitFor(task.conversationId);
 });
 
 test('full review queue blocks the task as unverified rather than leaving it reviewing', async (t) => {
@@ -47,6 +73,8 @@ test('full review queue blocks the task as unverified rather than leaving it rev
   await completion.handle(task.queueId, { id: task.queueId, status: 'completed' });
   const saved = await registry.getTask(task.id);
   assert.equal(saved.status, 'blocked');
+  assert.equal(saved.review.stage, 'queue-full');
+  assert.equal(saved.review.errorCode, 'review_queue_full');
   assert.match(saved.detail, /remains unverified/);
 });
 

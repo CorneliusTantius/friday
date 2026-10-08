@@ -3,11 +3,12 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export const DEFAULT_STAFF_CAPACITY = 2;
+const STALE_COMPLETED_REVIEW_DETAIL = 'Pi finished; Friday is checking the result against the original request.';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const isClosedName = (name) => typeof name === 'string' && /^\[closed\](?:\s|$)/i.test(name.trim());
 
-export function createPiRunRegistry({ file }) {
+export function createPiRunRegistry({ file, onRecovery = () => {} }) {
   if (typeof file !== 'string' || !file) throw new TypeError('file is required');
   const filename = path.resolve(file);
   const runs = new Map();
@@ -24,7 +25,7 @@ export function createPiRunRegistry({ file }) {
     if (initialized) return;
     if (loading) return loading;
     loading = (async () => {
-      let interrupted = false;
+      const recovered = [];
       try {
         const data = JSON.parse(await fs.readFile(filename, 'utf8'));
         for (const run of data.runs || []) {
@@ -38,10 +39,16 @@ export function createPiRunRegistry({ file }) {
         for (const task of data.tasks || []) {
           if (!task || !UUID_RE.test(task.id) || !UUID_RE.test(task.runId) || typeof task.conversationId !== 'string' || !taskStatuses.has(task.status)) continue;
           if (['queued', 'running', 'reviewing'].includes(task.status)) {
-            interrupted = true;
+            const previousStatus = task.status;
             task.status = 'outcome-unknown';
-            task.detail = 'Friday restarted before the task was confirmed complete.';
+            task.detail = previousStatus === 'reviewing'
+              ? 'Friday restarted during review; outcome is unknown and Pi work was not replayed.'
+              : 'Friday restarted before the task was confirmed complete.';
+            if (previousStatus === 'reviewing') {
+              task.review = { ...task.review, stage: 'interrupted', interruptedAt: new Date().toISOString(), errorCode: 'process_restarted' };
+            }
             task.updatedAt = new Date().toISOString();
+            recovered.push({ taskId: task.id, runId: task.runId, queueId: task.queueId, previousStatus });
           }
           tasks.set(task.id, task);
         }
@@ -52,7 +59,10 @@ export function createPiRunRegistry({ file }) {
         if (error.code !== 'ENOENT') throw error;
       }
       initialized = true;
-      if (interrupted) await persist();
+      if (recovered.length) {
+        await persist();
+        for (const entry of recovered) onRecovery(entry);
+      }
     })();
     try {
       await loading;
@@ -66,13 +76,16 @@ export function createPiRunRegistry({ file }) {
   function validRun(id) {
     if (typeof id !== 'string' || !UUID_RE.test(id)) throw new TypeError('Invalid run ID');
   }
+  function snapshot() {
+    return { runs: [...runs.values()], links: [...links], tasks: [...tasks.values()], currentTasks: [...currentTasks] };
+  }
   async function persist() {
     const dir = path.dirname(filename);
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     await fs.chmod(dir, 0o700);
     const temporary = `${filename}.${randomUUID()}.tmp`;
     try {
-      await fs.writeFile(temporary, JSON.stringify({ runs: [...runs.values()], links: [...links], tasks: [...tasks.values()], currentTasks: [...currentTasks] }), { mode: 0o600 });
+      await fs.writeFile(temporary, JSON.stringify(snapshot()), { mode: 0o600 });
       await fs.rename(temporary, filename);
       await fs.chmod(filename, 0o600);
     } finally { await fs.rm(temporary, { force: true }); }
@@ -113,6 +126,17 @@ export function createPiRunRegistry({ file }) {
       return [...tasks.values()]
         .filter((task) => (conversationId === undefined || task.conversationId === conversationId) && (runId === undefined || task.runId === runId))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    },
+    updateRunRepositoryVisibility(runId, hiddenRepositories) {
+      validRun(runId);
+      if (!Array.isArray(hiddenRepositories) || hiddenRepositories.length > 500 || hiddenRepositories.some((name) => typeof name !== 'string' || !name.trim() || name.trim().length > 100)) throw new TypeError('Invalid repository visibility');
+      return mutate(() => {
+        const run = runs.get(runId);
+        if (!run) return null;
+        const updated = { ...run, hiddenRepositories: [...new Set(hiddenRepositories.map((name) => name.trim()))] };
+        runs.set(runId, updated);
+        return updated;
+      });
     },
     updateRunProfile(runId, profile) {
       validRun(runId);
@@ -173,8 +197,46 @@ export function createPiRunRegistry({ file }) {
       validConversation(conversationId);
       return mutate(() => currentTasks.delete(conversationId));
     },
-    updateTask(taskId, { status, detail, summary, queueId } = {}) {
+    clearStaleCompletedReviewDetails(backupFile) {
+      if (typeof backupFile !== 'string' || !backupFile || path.resolve(backupFile) === filename) throw new TypeError('A separate backup file is required');
+      const result = queue.then(async () => {
+        await load();
+        const matching = [...tasks.values()].filter((task) => task.status === 'completed' && task.detail === STALE_COMPLETED_REVIEW_DETAIL);
+        if (!matching.length) return { count: 0, taskIds: [], backupFile: null };
+        const original = await fs.readFile(filename, 'utf8');
+        if (original !== JSON.stringify(snapshot())) throw new Error('Registry changed outside this process; refusing cleanup');
+        await fs.writeFile(backupFile, original, { flag: 'wx', mode: 0o600 });
+        await fs.chmod(backupFile, 0o600);
+        const before = matching.map((task) => ({ task, detail: task.detail }));
+        for (const { task } of before) delete task.detail;
+        try {
+          await persist();
+          const saved = JSON.parse(await fs.readFile(filename, 'utf8'));
+          const savedById = new Map(saved.tasks.map((task) => [task.id, task]));
+          if (before.some(({ task }) => savedById.get(task.id)?.status !== 'completed' || savedById.get(task.id)?.detail === STALE_COMPLETED_REVIEW_DETAIL)) {
+            throw new Error('Registry cleanup verification failed');
+          }
+        } catch (error) {
+          for (const { task, detail } of before) task.detail = detail;
+          throw error;
+        }
+        return { count: matching.length, taskIds: matching.map((task) => task.id), backupFile };
+      });
+      queue = result.catch(() => {});
+      return result;
+    },
+    updateTask(taskId, { status, detail, summary, queueId, review } = {}) {
       if (!UUID_RE.test(taskId) || !taskStatuses.has(status)) throw new TypeError('Invalid task update');
+      if (review !== undefined) {
+        const allowed = new Set(['queued', 'active', 'finished', 'failed', 'queue-full', 'interrupted']);
+        const fields = new Set(['stage', 'queuedAt', 'startedAt', 'finishedAt', 'interruptedAt', 'errorCode']);
+        if (!review || typeof review !== 'object' || Array.isArray(review) || Object.keys(review).some((key) => !fields.has(key))) throw new TypeError('Invalid task review state');
+        if (!allowed.has(review.stage)) throw new TypeError('Invalid task review stage');
+        for (const key of ['queuedAt', 'startedAt', 'finishedAt', 'interruptedAt']) {
+          if (review[key] !== undefined && (typeof review[key] !== 'string' || !Number.isFinite(Date.parse(review[key])))) throw new TypeError('Invalid task review timestamp');
+        }
+        if (review.errorCode !== undefined && review.errorCode !== null && (typeof review.errorCode !== 'string' || !/^[a-z_]{1,48}$/.test(review.errorCode))) throw new TypeError('Invalid task review error code');
+      }
       if (queueId !== undefined && queueId !== null && !UUID_RE.test(queueId)) throw new TypeError('Invalid task queueId');
       for (const value of [detail, summary]) if (value !== undefined && (typeof value !== 'string' || value.length > 1000)) throw new TypeError('Invalid task detail');
       return mutate(() => {
@@ -193,6 +255,7 @@ export function createPiRunRegistry({ file }) {
         if (detail !== undefined) task.detail = detail;
         if (summary !== undefined) task.summary = summary;
         if (summary !== undefined && ['completed', 'blocked'].includes(status)) delete task.detail;
+        if (review !== undefined) task.review = { ...task.review, ...review };
         if (queueId !== undefined) task.queueId = queueId;
         task.updatedAt = new Date().toISOString();
         return task;

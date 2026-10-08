@@ -46,6 +46,10 @@ export function createPiTaskReviewQueue({ review, onError = (error) => console.e
       void drain();
       return 'queued';
     },
+    has(task) {
+      const key = `${task.runId}:${task.queueId}`;
+      return pending.has(key) || completed.has(key);
+    },
     async waitFor(conversationId) {
       const tail = tails.get(conversationId);
       if (tail) await tail;

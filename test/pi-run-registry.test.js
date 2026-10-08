@@ -67,6 +67,25 @@ test('new runs default to two; legacy missing capacity stays unstored and config
   assert.equal(persisted.runs.find(({ id }) => id === configuredRunId).capacity, 5);
 });
 
+test('repository visibility defaults to all, persists per run, and preserves staff profile metadata', async () => {
+  const { file } = await setup();
+  const registry = createPiRunRegistry({ file });
+  const firstRun = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/repo-a', sessionId: 'repo-a', name: 'Repo A' });
+  const secondRun = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/repo-b', sessionId: 'repo-b', name: 'Repo B' });
+  assert.equal((await registry.getRun(firstRun)).hiddenRepositories, undefined, 'legacy/unconfigured runs remain unstored and therefore default to all visible');
+  const unconfigured = JSON.parse(await fs.readFile(file, 'utf8'));
+  assert.ok(unconfigured.runs.every((run) => !Object.hasOwn(run, 'hiddenRepositories')), 'default listing does not rewrite a visibility value into old runs');
+  await registry.updateRunProfile(firstRun, { expertise: ['Node'], responsibilities: ['API'], repositories: ['affinity-repo'], capacity: 2 });
+  await registry.updateRunRepositoryVisibility(firstRun, ['hidden-repo']);
+
+  const restored = createPiRunRegistry({ file });
+  assert.deepEqual((await restored.getRun(firstRun)).hiddenRepositories, ['hidden-repo']);
+  assert.deepEqual((await restored.getRun(firstRun)).repositories, ['affinity-repo'], 'visibility changes do not rewrite profile affinity');
+  assert.equal((await restored.getRun(secondRun)).hiddenRepositories, undefined, 'visibility is isolated by run');
+  await restored.updateRunRepositoryVisibility(firstRun, []);
+  assert.deepEqual((await createPiRunRegistry({ file }).getRun(firstRun)).hiddenRepositories, [], 'rechecking all repos persists explicitly');
+});
+
 test('batch ensures preserve IDs and persist in one update', async () => {
   const { file } = await setup();
   const registry = createPiRunRegistry({ file });
@@ -102,15 +121,90 @@ test('task state and session-fit metadata persist, and interrupted work becomes 
   const runId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/task', sessionId: 'task-run', name: 'Billing API', domain: 'billing', purpose: 'maintain the billing service' });
   const task = await registry.createTask({ conversationId: 'friday-task-1', runId, queueId: '123e4567-e89b-12d3-a456-426614174001', label: 'Add invoice export' });
   assert.equal((await registry.getCurrentTask('friday-task-1')).status, 'queued');
-  await registry.updateTask(task.id, { status: 'reviewing' });
-  const restored = createPiRunRegistry({ file });
+  await registry.updateTask(task.id, { status: 'reviewing', review: { stage: 'active', startedAt: '2026-10-08T09:00:00.000Z' } });
+  const recoveries = [];
+  const restored = createPiRunRegistry({ file, onRecovery: (recovery) => recoveries.push(recovery) });
   assert.equal((await restored.getRun(runId)).domain, 'billing');
   const interrupted = await restored.getTask(task.id);
   assert.equal(interrupted.status, 'outcome-unknown');
   assert.match(interrupted.detail, /restarted/);
+  assert.equal(interrupted.review.stage, 'interrupted');
+  assert.equal(interrupted.review.errorCode, 'process_restarted');
+  assert.equal(recoveries[0].taskId, task.id);
+  assert.equal(recoveries[0].runId, runId);
+  assert.equal(recoveries[0].previousStatus, 'reviewing');
   assert.equal((await restored.getCurrentTask('friday-task-1')).id, task.id);
   await restored.clearCurrentTask('friday-task-1');
   assert.equal(await restored.getCurrentTask('friday-task-1'), null);
+});
+
+test('serialized cleanup backs up and clears only the exact stale detail on completed tasks', async (t) => {
+  const { dir, file } = await setup();
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const registry = createPiRunRegistry({ file });
+  const runId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/cleanup', sessionId: 'cleanup-run', name: 'Cleanup test' });
+  const create = (label) => registry.createTask({ conversationId: 'cleanup-conversation', runId, label });
+  const completed = await create('completed stale');
+  await registry.updateTask(completed.id, { status: 'running' });
+  await registry.updateTask(completed.id, { status: 'reviewing' });
+  await registry.updateTask(completed.id, { status: 'completed', summary: 'Verified result.' });
+  const stale = 'Pi finished; Friday is checking the result against the original request.';
+  await registry.updateTask(completed.id, { status: 'completed', detail: stale });
+  const completedDifferent = await create('completed different');
+  await registry.updateTask(completedDifferent.id, { status: 'running' });
+  await registry.updateTask(completedDifferent.id, { status: 'reviewing' });
+  await registry.updateTask(completedDifferent.id, { status: 'completed', summary: 'Keep this summary.' });
+  await registry.updateTask(completedDifferent.id, { status: 'completed', detail: 'Other detail.' });
+  const blocked = await create('blocked');
+  await registry.updateTask(blocked.id, { status: 'blocked', detail: stale });
+  const running = await create('running');
+  await registry.updateTask(running.id, { status: 'running', detail: stale });
+  const queued = await create('queued');
+  await registry.updateTask(queued.id, { status: 'queued', detail: stale });
+  const before = JSON.parse(await fs.readFile(file, 'utf8'));
+  const backupFile = path.join(dir, 'registry.backup.json');
+
+  const result = await registry.clearStaleCompletedReviewDetails(backupFile);
+
+  assert.deepEqual(result, { count: 1, taskIds: [completed.id], backupFile });
+  assert.deepEqual(JSON.parse(await fs.readFile(backupFile, 'utf8')), before);
+  const saved = JSON.parse(await fs.readFile(file, 'utf8'));
+  const expected = structuredClone(before);
+  delete expected.tasks.find((task) => task.id === completed.id).detail;
+  assert.deepEqual(saved, expected);
+  const tasks = new Map(saved.tasks.map((task) => [task.id, task]));
+  const originalCompleted = before.tasks.find((task) => task.id === completed.id);
+  assert.equal(tasks.get(completed.id).detail, undefined);
+  assert.equal(tasks.get(completed.id).status, originalCompleted.status);
+  assert.equal(tasks.get(completed.id).summary, originalCompleted.summary);
+  assert.equal(tasks.get(completed.id).updatedAt, originalCompleted.updatedAt);
+  assert.equal(tasks.get(completedDifferent.id).detail, 'Other detail.');
+  assert.equal(tasks.get(completedDifferent.id).summary, 'Keep this summary.');
+  assert.equal(tasks.get(blocked.id).detail, stale);
+  assert.equal(tasks.get(running.id).status, 'running');
+  assert.equal(tasks.get(running.id).detail, stale);
+  assert.equal(tasks.get(queued.id).status, 'queued');
+  assert.equal(tasks.get(queued.id).detail, stale);
+});
+
+test('cleanup refuses to overwrite registry data changed outside this process', async (t) => {
+  const { dir, file } = await setup();
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const registry = createPiRunRegistry({ file });
+  const runId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/concurrent-cleanup', name: 'Concurrent cleanup' });
+  const task = await registry.createTask({ conversationId: 'concurrent-cleanup', runId, label: 'Task' });
+  await registry.updateTask(task.id, { status: 'running' });
+  await registry.updateTask(task.id, { status: 'reviewing' });
+  await registry.updateTask(task.id, { status: 'completed', detail: 'Pi finished; Friday is checking the result against the original request.' });
+  const external = JSON.parse(await fs.readFile(file, 'utf8'));
+  external.tasks[0].summary = 'Concurrent update';
+  const externalContents = JSON.stringify(external);
+  await fs.writeFile(file, externalContents);
+  const backupFile = path.join(dir, 'must-not-create.json');
+
+  await assert.rejects(registry.clearStaleCompletedReviewDetails(backupFile), /Registry changed outside this process/);
+  assert.equal(await fs.readFile(file, 'utf8'), externalContents);
+  await assert.rejects(fs.access(backupFile), { code: 'ENOENT' });
 });
 
 test('delegated task state transitions persist with status-safe summaries', async () => {
@@ -120,7 +214,7 @@ test('delegated task state transitions persist with status-safe summaries', asyn
   const queueId = '123e4567-e89b-12d3-a456-426614174002';
   const task = await registry.createTask({ conversationId: 'friday-task-2', runId, queueId, label: 'Run tests' });
   await registry.updateTask(task.id, { status: 'running' });
-  await registry.updateTask(task.id, { status: 'reviewing', detail: 'Friday is checking the Pi result.' });
+  await registry.updateTask(task.id, { status: 'reviewing', detail: 'Pi finished; Friday is checking the result against the original request.' });
   await registry.updateTask(task.id, { status: 'completed', summary: 'Tests passed.' });
   const reported = await registry.getTaskForPrompt(runId, queueId);
   assert.equal(reported.status, 'completed');

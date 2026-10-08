@@ -81,17 +81,21 @@ export function createFridayPiTools({ listConversations, createSession, renameSe
   return [
     {
       name: 'pi_sessions', label: 'Pi sessions',
-      description: 'Read Pi conversations without changing them. Use action=list to inspect current-workspace sessions and their live status; action=status or action=read requires the exact runId from the list. Read returns at most 10 recent messages. A runId is never inferred.',
+      description: 'Read Pi conversations without changing them. Use action=list to inspect current-workspace sessions, their live status, and visibleRepositories (the app-provided repo context; not a filesystem sandbox). repositories is separate staff-fit metadata. action=status or action=read requires the exact runId from the list. Read returns at most 10 recent messages. A runId is never inferred.',
       parameters: sessionsParameters,
       async execute(_id, rawArgs) {
         const args = validateAction(sessionsActions, rawArgs, 'pi_sessions');
         if (args.action === 'list') {
           const conversations = await listConversations();
-          const visible = conversations.map(({ id, name, domain, purpose, modified, messageCount, runId, running, busy, queuedPrompts, expertise, responsibilities, repositories, capacity, workload, tasks }) => ({
-            id, name, domain, purpose, modified, messageCount, runId, running, busy, queuedPrompts,
-            expertise: expertise || [], responsibilities: responsibilities || [], repositories: repositories || [], capacity: capacity ?? DEFAULT_STAFF_CAPACITY,
-            workload: workload || { openTasks: 0 }, tasks: tasks || [],
-          }));
+          const visible = conversations.map(({ id, name, domain, purpose, modified, messageCount, runId, running, busy, queuedPrompts, expertise, responsibilities, repositories, visibleRepositories, capacity, workload, tasks }) => {
+            const visibleRepositoryList = Array.isArray(visibleRepositories) ? visibleRepositories : repositories || [];
+            return {
+              id, name, domain, purpose, modified, messageCount, runId, running, busy, queuedPrompts,
+              expertise: expertise || [], responsibilities: responsibilities || [], repositories: repositories || [],
+              visibleRepositories: visibleRepositoryList, capacity: capacity ?? DEFAULT_STAFF_CAPACITY,
+              workload: workload || { openTasks: 0 }, tasks: tasks || [],
+            };
+          });
           return result(JSON.stringify(visible));
         }
         if (args.action === 'status') {

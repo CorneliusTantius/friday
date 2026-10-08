@@ -9,7 +9,9 @@ import { fridaySystemPrompt } from '../src/friday/friday-system-prompt.js';
 test('Friday prompt establishes orchestration, exact-fit delegation, and safe Pi lifecycle', () => {
   assert.match(fridaySystemPrompt, /personal assistant and work orchestrator/);
   assert.match(fridaySystemPrompt, /delegate substantive project work/);
-  assert.match(fridaySystemPrompt, /select only a conversation whose expertise, responsibilities, repositories, domain, and recent context fit/);
+  assert.match(fridaySystemPrompt, /select only a conversation whose expertise, responsibilities, repositories \(staff-fit metadata\), visibleRepositories \(app-provided repository context\), domain, and recent context fit/);
+  assert.match(fridaySystemPrompt, /visibility does not rewrite the staff-fit profile/);
+  assert.match(fridaySystemPrompt, /not a filesystem sandbox/);
   assert.match(fridaySystemPrompt, /ask before creating or selecting another session/);
   assert.match(fridaySystemPrompt, /Rename only through action rename/);
   assert.match(fridaySystemPrompt, /explicit current-user request naming that exact session and name/);
@@ -147,6 +149,42 @@ test('SDK session lists, creates, opens, renames, and deletes conversations', as
   assert.notEqual(result.currentSession, first);
   assert.equal((await adapter.listSessions()).currentSession, result.currentSession);
   await adapter.stop();
+});
+
+test('reopening the current conversation reloads assistant output written by a review runtime', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'friday-sdk-reopen-review-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const makeAdapter = () => new FridaySdkSession({
+    cwd: root,
+    agentDir: join(root, 'config'),
+    dataDir: join(root, 'data'),
+    createModelRuntime: async () => ({}),
+    createSession: async ({ sessionManager }) => ({ session: {
+      sessionManager,
+      sessionFile: sessionManager.getSessionFile(),
+      messages: sessionManager.getEntries().filter((entry) => entry.type === 'message').map((entry) => entry.message),
+      modelRuntime: { getAvailableSnapshot: () => [] },
+      dispose() {},
+    } }),
+  });
+  const viewer = makeAdapter();
+  const conversationId = await viewer.newSession();
+  viewer.sessionManager.appendMessage({ role: 'user', content: 'Run the delegated task', timestamp: new Date().toISOString() });
+  const worker = await viewer.createReviewWorker(conversationId);
+  await worker.start();
+  await viewer.history(); // capture the viewer's initial on-disk version
+  worker.sessionManager.appendMessage({ role: 'assistant', content: 'Verified output after reopen.', timestamp: new Date().toISOString() });
+  await viewer.openSession(conversationId);
+  const reopened = await viewer.history();
+  assert.equal(reopened.filter((message) => message.content === 'Verified output after reopen.').length, 1);
+
+  worker.sessionManager.appendMessage({ role: 'assistant', content: 'Verified output after reconnect.', timestamp: new Date().toISOString() });
+  const refreshed = await viewer.history();
+  assert.equal(refreshed.filter((message) => message.content === 'Verified output after reopen.').length, 1);
+  assert.equal(refreshed.filter((message) => message.content === 'Verified output after reconnect.').length, 1);
+
+  await worker.stop();
+  await viewer.stop();
 });
 
 test('background review uses the exact saved conversation without switching the active one', async (t) => {

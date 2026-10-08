@@ -1,5 +1,6 @@
 import { formatPercent } from './dashboard-format.js';
 import { renderMarkdown as renderMarkdownDocument } from './markdown.js';
+import { createFridayPiSessionCards, fetchAndRenderCurrent } from './friday-pi-session-cards.js';
 
 const fridayChatModule = await import('./friday-chat.js').catch(() => null);
 
@@ -1992,87 +1993,50 @@ function resizeComposer() {
 
 let fridayPiConversationSync = null;
 let fridayPiConversationRefreshAgain = false;
+let fridayPiConversationDataRevision = 0;
+const fridayPiSessionCards = elements.fridayPiSessionList ? createFridayPiSessionCards({
+  container: elements.fridayPiSessionList,
+  formatDate,
+  onOpen: (session) => void openPiConversationFromFriday(session),
+  onSaveVisibility: async (session, hiddenRepositories) => {
+    fridayPiConversationDataRevision++;
+    try {
+      return await apiJson(`/api/friday/pi-conversations/${encodeURIComponent(session.runId)}/repository-visibility`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hiddenRepositories }),
+      }, 'friday-pi-conversations');
+    } finally { fridayPiConversationDataRevision++; }
+  },
+  onSaveProfile: async (session, profile) => {
+    fridayPiConversationDataRevision++;
+    try {
+      return await apiJson(`/api/friday/pi-conversations/${encodeURIComponent(session.runId)}/profile`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profile),
+      }, 'friday-pi-conversations');
+    } finally { fridayPiConversationDataRevision++; }
+  },
+  onRefresh: refreshFridayPiConversations,
+  toast,
+}) : null;
+
 function loadFridayPiConversations() {
   if (fridayPiConversationSync) {
     fridayPiConversationRefreshAgain = true;
     return fridayPiConversationSync;
   }
-  const list = elements.fridayPiSessionList;
-  if (!list) return Promise.resolve();
+  if (!fridayPiSessionCards) return Promise.resolve();
   fridayPiConversationSync = (async () => {
     try {
       let latestSessions = [];
       do {
         fridayPiConversationRefreshAgain = false;
-        const { sessions = [] } = await apiJson('/api/friday/pi-conversations', {}, 'friday-pi-conversations');
-        latestSessions = sessions;
-        list.replaceChildren();
-        if (!sessions.length) {
-          const empty = document.createElement('div'); empty.className = 'empty-state'; empty.textContent = 'No Pi conversations yet'; list.append(empty); continue;
-        }
-        for (const session of sessions) {
-          const item = document.createElement('article'); item.className = 'session-item friday-session-item';
-          const open = document.createElement('button'); open.type = 'button'; open.className = 'session-open friday-session-open';
-          open.title = session.preview || session.name;
-          const title = document.createElement('span'); title.className = 'session-title'; title.textContent = session.name || 'Untitled Pi conversation';
-          const details = document.createElement('span'); details.className = 'session-details';
-          const meta = document.createElement('span'); meta.className = 'session-meta'; meta.textContent = `${formatDate(session.modified)} · ${session.messageCount} msg`;
-          const status = document.createElement('span');
-          status.className = `session-state ${session.opening || session.busy || session.queuedPrompts ? 'working' : session.running ? 'running' : 'saved'}`;
-          status.textContent = session.opening ? 'Opening' : session.busy ? `Working${session.queuedPrompts ? ` · ${session.queuedPrompts} queued` : ''}` : session.queuedPrompts ? `${session.queuedPrompts} queued` : session.running ? 'Open' : 'Saved';
-          details.append(meta, status); open.append(title, details);
-          open.addEventListener('click', () => void openPiConversationFromFriday(session));
-          item.append(open);
-          const profile = document.createElement('div'); profile.className = 'friday-staff-summary';
-          const profileText = [
-            `Expertise: ${(session.expertise || []).join(', ') || 'not set'}`,
-            `Responsibilities: ${(session.responsibilities || []).join(', ') || 'not set'}`,
-            `Repositories: ${(session.repositories || []).join(', ') || 'not set'}`,
-            `Workload: ${session.workload?.openTasks || 0}/${session.capacity || 2}`,
-          ];
-          profile.textContent = profileText.join(' · ');
-          item.append(profile);
-          const openTasks = (session.tasks || []).filter((task) => ['queued', 'running', 'reviewing', 'outcome-unknown'].includes(task.status)).slice(0, 3);
-          if (openTasks.length) {
-            const taskList = document.createElement('ul'); taskList.className = 'friday-staff-tasks';
-            for (const task of openTasks) {
-              const row = document.createElement('li');
-              row.textContent = `${task.label}: ${task.status}${task.detail ? ` · ${task.detail}` : ''}`;
-              taskList.append(row);
-            }
-            item.append(taskList);
-          }
-          const editor = document.createElement('details'); editor.className = 'friday-staff-editor';
-          const editorSummary = document.createElement('summary'); editorSummary.textContent = 'Edit staff profile'; editor.append(editorSummary);
-          const form = document.createElement('form'); form.className = 'friday-staff-profile-form';
-          const addField = (labelText, value, name, multiline = false) => {
-            const label = document.createElement('label'); label.textContent = labelText;
-            const field = document.createElement(multiline ? 'textarea' : 'input');
-            if (!multiline) field.type = 'text';
-            field.name = name; field.value = (value || []).join('\n'); field.rows = 2; field.autocomplete = 'off';
-            label.append(field); form.append(label);
-          };
-          addField('Expertise (one per line)', session.expertise, 'expertise', true);
-          addField('Responsibilities (one per line)', session.responsibilities, 'responsibilities', true);
-          addField('Repositories (one per line)', session.repositories, 'repositories', true);
-          const capacityLabel = document.createElement('label'); capacityLabel.textContent = 'Task capacity';
-          const capacityInput = document.createElement('input'); capacityInput.type = 'number'; capacityInput.name = 'capacity'; capacityInput.min = '1'; capacityInput.max = '8'; capacityInput.value = String(session.capacity || 2); capacityLabel.append(capacityInput); form.append(capacityLabel);
-          const saveProfile = document.createElement('button'); saveProfile.type = 'submit'; saveProfile.className = 'button button-small'; saveProfile.textContent = 'Save profile'; form.append(saveProfile);
-          form.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            saveProfile.disabled = true;
-            try {
-              const values = (name) => String(new FormData(form).get(name) || '').split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
-              await apiJson(`/api/friday/pi-conversations/${encodeURIComponent(session.runId)}/profile`, {
-                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ expertise: values('expertise'), responsibilities: values('responsibilities'), repositories: values('repositories'), capacity: Number(capacityInput.value) }),
-              }, 'friday-pi-conversations');
-              toast('Pi staff profile saved');
-              await refreshFridayPiConversations();
-            } catch (error) { toast(error.message, 'error'); }
-            finally { saveProfile.disabled = false; }
-          });
-          editor.append(form); item.append(editor); list.append(item);
+        const rendered = await fetchAndRenderCurrent({
+          load: () => apiJson('/api/friday/pi-conversations', {}, 'friday-pi-conversations'),
+          currentRevision: () => fridayPiConversationDataRevision,
+          render: ({ sessions = [] }) => { latestSessions = sessions; fridayPiSessionCards.render(sessions); },
+        });
+        if (!rendered) {
+          fridayPiConversationRefreshAgain = true;
+          continue;
         }
       } while (fridayPiConversationRefreshAgain);
       return latestSessions;

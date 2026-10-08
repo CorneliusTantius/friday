@@ -116,7 +116,7 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   globalThis.clearTimeout = (id) => timers.delete(id);
   const ids = [
     'friday-messages', 'friday-form', 'friday-message', 'friday-send', 'friday-model',
-    'friday-thinking-level', 'friday-status', 'friday-context-usage', 'friday-context-progress',
+    'friday-thinking-level', 'friday-status', 'friday-task-board', 'friday-context-usage', 'friday-context-progress',
     'friday-context-label', 'friday-announcement',
   ];
   const elements = new Map(ids.map((id) => [id, new FakeElement(id)]));
@@ -179,7 +179,7 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
       if (historyOverride) { const response = historyOverride; historyOverride = null; return response; }
       return pendingHistory.shift()?.promise || historyResponse(path);
     }
-    if (path === '/api/friday/status') return { busy: fridayBusy, canAbort: fridayBusy, contextUsage: null, delegatedTask };
+    if (path === '/api/friday/status') return { busy: fridayBusy, canAbort: fridayBusy, contextUsage: null, delegatedTask, tasks: delegatedTask ? [delegatedTask] : [] };
     if (path === '/api/friday/models') return { models: [], current: null };
     if (path === '/api/friday/thinking-levels') return { levels: ['off'], current: 'off' };
     throw new Error(`Unexpected API request: ${path}`);
@@ -373,9 +373,21 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   delegatedTask = { status: 'running', label: 'Build billing API' };
   await chat.enterView();
   assert.equal(elements.get('friday-status').textContent, 'Pi is working: Build billing API');
-  delegatedTask = { status: 'reviewing', label: 'Build billing API' };
+  delegatedTask = { status: 'reviewing', label: 'Build billing API', review: { stage: 'queued', queuedAt: new Date(Date.now() - 65_000).toISOString() } };
   await chat.refreshTranscript();
   assert.equal(elements.get('friday-status').textContent, 'Friday is reviewing: Build billing API');
+  assert.match(elements.get('friday-status').title, /Review waiting · 1m/);
+  delegatedTask = { status: 'reviewing', label: 'Build billing API', review: { stage: 'active', startedAt: new Date(Date.now() - 5_000).toISOString() } };
+  await chat.refreshTranscript();
+  assert.match(elements.get('friday-status').title, /Review active · [0-9]+s/);
+  delegatedTask = {
+    id: 'task-completed', status: 'completed', label: 'Build billing API',
+    detail: 'Pi finished; Friday is checking the result against the original request.',
+    review: { stage: 'finished', finishedAt: new Date().toISOString() },
+  };
+  await chat.refreshTranscript();
+  assert.doesNotMatch(treeText(elements.get('friday-task-board')), /Pi finished; Friday is checking/);
+  assert.doesNotMatch(elements.get('friday-status').title, /Pi finished; Friday is checking/);
   assert.equal([...timers.values()][0].delay, 2_000, 'busy Friday conversations poll more frequently');
   chat.stop();
 });

@@ -17,6 +17,9 @@ test('Friday SDK runtime is isolated from the coding Pi runtime', { timeout: 30_
   await mkdir(join(dir, 'agent'), { recursive: true });
   await mkdir(join(dir, 'sessions'), { recursive: true });
   await mkdir(join(dir, 'friday'), { recursive: true });
+  const managedRepos = join(dir, 'home', 'workspace', 'repos');
+  await mkdir(join(managedRepos, 'repo-a', '.git'), { recursive: true });
+  await mkdir(join(managedRepos, 'repo-b', '.git'), { recursive: true });
   await writeFile(fakePi, `#!/usr/bin/env node
 const readline = require('node:readline');
 const fs = require('node:fs');
@@ -137,6 +140,9 @@ rl.on('line', line => {
   const selectedPiConversation = fridayPiConversations.sessions.find(({ id }) => id === 'selected-workspace');
   assert.equal(selectedPiConversation.running, false, 'a saved session without an open runtime is reported as saved');
   assert.equal(selectedPiConversation.opening, false);
+  assert.deepEqual(selectedPiConversation.availableRepositories, ['repo-a', 'repo-b']);
+  assert.deepEqual(selectedPiConversation.visibleRepositories, ['repo-a', 'repo-b'], 'unconfigured sessions default to all managed repositories visible');
+  assert.deepEqual(fridayPiConversations.sessions.find(({ id }) => id === 'legacy-flat').visibleRepositories, ['repo-a', 'repo-b'], 'legacy sessions are visible by default without a stored override');
   const profileResponse = await request(`/api/friday/pi-conversations/${selectedPiConversation.runId}/profile`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ expertise: ['Node.js'], responsibilities: ['API ownership'], repositories: ['friday'], capacity: 2 }),
@@ -149,6 +155,23 @@ rl.on('line', line => {
   assert.deepEqual(profiled.repositories, ['friday']);
   assert.equal(profiled.capacity, 2);
   assert.deepEqual(profiled.workload, { queued: 0, running: 0, reviewing: 0, unknown: 0, openTasks: 0 });
+  const visibilityUrl = `/api/friday/pi-conversations/${selectedPiConversation.runId}/repository-visibility`;
+  const hideRepo = await request(visibilityUrl, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hiddenRepositories: ['repo-b'] }),
+  });
+  assert.equal(hideRepo.status, 200);
+  const afterHide = await (await request('/api/friday/pi-conversations')).json();
+  const hiddenSession = afterHide.sessions.find(({ runId }) => runId === selectedPiConversation.runId);
+  assert.deepEqual(hiddenSession.visibleRepositories, ['repo-a']);
+  assert.deepEqual(hiddenSession.repositories, ['friday'], 'visibility saves do not change staff-fit profile metadata');
+  assert.deepEqual(afterHide.sessions.find(({ id }) => id === 'legacy-flat').visibleRepositories, ['repo-a', 'repo-b'], 'visibility is isolated to the exact run');
+  const recheckRepo = await request(visibilityUrl, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hiddenRepositories: [] }),
+  });
+  assert.equal(recheckRepo.status, 200);
+  const afterRecheck = await (await request('/api/friday/pi-conversations')).json();
+  assert.deepEqual(afterRecheck.sessions.find(({ runId }) => runId === selectedPiConversation.runId).visibleRepositories, ['repo-a', 'repo-b']);
+  assert.deepEqual(afterRecheck.sessions.find(({ runId }) => runId === selectedPiConversation.runId).repositories, ['friday']);
   const selectedPiResponse = await request('/api/session/select', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Friday-Session': 'friday-pi-status-test' },
     body: JSON.stringify({ cwd: piStatus.workspace, path: selectedPiConversation.path }),

@@ -3,7 +3,7 @@ import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager
 import { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { lstat, mkdir, unlink } from 'node:fs/promises';
+import { lstat, mkdir, stat, unlink } from 'node:fs/promises';
 import { fridaySystemPrompt } from './friday-system-prompt.js';
 import { createFridayPiTools } from './friday-pi-tools.js';
 import { createFridaySocialTools } from './friday-social-tools.js';
@@ -61,6 +61,7 @@ export class FridaySdkSession extends EventEmitter {
     this.socialControl = socialControl;
     this.piToolNames = piToolNames ? new Set(piToolNames) : null;
     this.reviewMode = reviewMode;
+    this.sessionFileVersion = null;
     this.model = model;
     this.thinkingLevel = thinkingLevel;
     this.modelConfigured = model !== undefined;
@@ -141,9 +142,10 @@ export class FridaySdkSession extends EventEmitter {
           sessionManager: manager, model: this.model, thinkingLevel: this.thinkingLevel,
         });
       })()
-        .then(({ session }) => {
+        .then(async ({ session }) => {
           this.session = session;
           this.#applyState();
+          this.sessionFileVersion = await this.#readSessionFileVersion();
           this.unsubscribe = session.subscribe?.((event) => this.emit('event', event));
           if (this.modelRefreshIntervalMs > 0 && session.modelRuntime?.refresh && !this.modelRefreshTimer) {
             this.modelRefreshTimer = setInterval(() => {
@@ -257,12 +259,16 @@ export class FridaySdkSession extends EventEmitter {
     if (this.session.isStreaming) {
       let settled;
       const complete = new Promise((resolve) => { settled = resolve; });
-      const unsubscribe = this.session.subscribe?.((update) => {
-        if (update.type === 'agent_settled') { unsubscribe?.(); settled(); }
-      });
+      let unsubscribe;
+      if (typeof this.session.waitForIdle !== 'function') {
+        unsubscribe = this.session.subscribe?.((update) => {
+          if (update.type === 'agent_settled') { unsubscribe?.(); settled(); }
+        });
+      }
+      const idle = typeof this.session.waitForIdle === 'function' ? this.session.waitForIdle() : complete;
       try {
         await this.session.sendCustomMessage(event, { triggerTurn: true, deliverAs: 'followUp' });
-        await complete;
+        await idle;
         return { queued: true };
       } finally {
         unsubscribe?.();
@@ -333,6 +339,18 @@ export class FridaySdkSession extends EventEmitter {
     return { currentSession: currentId, sessions: sessions.map((item) => this.#sessionSummary(item)) };
   }
 
+  async #readSessionFileVersion() {
+    const path = this.currentSessionPath;
+    if (!path) return null;
+    try {
+      const info = await stat(path);
+      return `${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+    } catch (error) {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+
   async #replaceSession(manager) {
     this.unsubscribe?.();
     this.unsubscribe = null;
@@ -359,7 +377,7 @@ export class FridaySdkSession extends EventEmitter {
       error.status = 404;
       throw error;
     }
-    if (this.sessionManager?.getSessionId() === id) return id;
+    if (this.sessionManager?.getSessionId() === id && this.operation) return id;
     return this.#operate('session', async () => this.#replaceSession(SessionManager.open(item.path, this.dataDir, this.cwd)));
   }
 
@@ -418,6 +436,19 @@ export class FridaySdkSession extends EventEmitter {
 
   async history(limit = null) {
     await this.start();
+    if (!this.operation && !this.reviewMode) {
+      const path = this.currentSessionPath;
+      const version = await this.#readSessionFileVersion();
+      if (path && version !== this.sessionFileVersion) {
+        await this.#operate('history refresh', async () => {
+          if (this.currentSessionPath !== path) return;
+          const latestVersion = await this.#readSessionFileVersion();
+          if (latestVersion !== this.sessionFileVersion) {
+            await this.#replaceSession(SessionManager.open(path, this.dataDir, this.cwd));
+          }
+        });
+      }
+    }
     const messages = fridayHistory(this.session.messages, this.currentSessionId);
     return Number.isInteger(limit) && limit > 0 ? messages.slice(-limit) : messages;
   }

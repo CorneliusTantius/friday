@@ -7,6 +7,7 @@ import { runBrowserCheck } from '../test-support/mockup-browser.cjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
 const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+const sessionCards = await readFile(new URL('../public/friday-pi-session-cards.js', import.meta.url), 'utf8');
 const chat = await readFile(new URL('../public/friday-chat.js', import.meta.url), 'utf8');
 const localCalendar = await readFile(new URL('../public/local-calendar.js', import.meta.url), 'utf8');
 const calendarView = await readFile(new URL('../public/calendar-view.js', import.meta.url), 'utf8');
@@ -31,11 +32,11 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(app, /onEnter: refreshFridayAgentViewData/);
   assert.match(app, /apiJson\('\/api\/friday\/pi-conversations'/);
   assert.match(html, /id="friday-task-board"[^>]*role="status"[^>]*aria-live="polite"/);
-  assert.match(app, /Edit staff profile/);
-  assert.match(app, /Expertise \(one per line\)/);
-  assert.match(app, /Responsibilities \(one per line\)/);
-  assert.match(app, /Repositories \(one per line\)/);
-  assert.match(app, /Workload: \$\{session\.workload\?\.openTasks/);
+  assert.match(sessionCards, /Edit staff profile/);
+  assert.match(sessionCards, /Expertise \(one per line\)/);
+  assert.match(sessionCards, /Responsibilities \(one per line\)/);
+  assert.match(sessionCards, /Repo affinity \(staff-fit metadata; one per line\)/);
+  assert.match(sessionCards, /Workload: \$\{session\.workload\?\.openTasks/);
   assert.match(chat, /Friday · Task update/);
   const pollRefresh = app.slice(app.indexOf('async function pollHistory'), app.indexOf('function startPolling'));
   assert.match(pollRefresh, /loadHistory\(\{ limit: data\.busy \? 10 : null \}\)/);
@@ -50,9 +51,9 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(chat, /function schedulePoll/);
   assert.match(chat, /document\.addEventListener\('visibilitychange'/);
   assert.doesNotMatch(chat, /EventSource|events\/token/);
-  assert.match(app, /session\.opening \? 'Opening'/);
-  assert.match(app, /session\.running \? 'Open' : 'Saved'/);
-  assert.match(app, /Working.*queued/);
+  assert.match(sessionCards, /session\.opening \? 'Opening'/);
+  assert.match(sessionCards, /session\.running \? 'Open' : 'Saved'/);
+  assert.match(sessionCards, /Working.*queued/);
   assert.match(app, /activeFridaySession = id; await fridayChat\.enterView\(\);/);
   assert.match(app, /openAssistant\(\) \{ open\(assistant\); void fridayChat\.enterView\(\)\.catch/);
   assert.match(app, /fridayChat\.enterView\(\)\.catch/);
@@ -111,6 +112,27 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(css, /:focus-visible\s*\{\s*outline:2px solid var\(--accent\)/);
   assert.match(css, /@media \(prefers-reduced-motion:reduce\)[\s\S]*\.feature:hover,button:active:not\(:disabled\) \{ transform:none !important; \}/);
   assert.match(css, /@keyframes view-fade \{ from \{ opacity:0; transform:translateY\(4px\)/);
+});
+
+test('Friday right sidebar uses 35% of desktop layout while retaining mobile drawers', () => {
+  assert.match(html, /id="friday-pi-sidebar"/);
+  assert.match(css, /\.friday-layout \{ grid-template-columns:220px minmax\(400px,1fr\) minmax\(320px,35%\); \}/);
+  assert.match(css, /@media \(max-width:1390px\)[\s\S]*\.friday-layout \{ grid-template-columns:210px minmax\(400px,1fr\) minmax\(320px,35%\); \}/);
+  const tablet = css.slice(css.indexOf('@media (max-width:1170px)'), css.indexOf('@media (max-width:1000px)'));
+  assert.match(tablet, /\.friday-layout \{ grid-template-columns:220px minmax\(0,1fr\); \}/);
+  assert.match(tablet, /\.friday-pi-sidebar \{ position:fixed;[\s\S]*width:min\(84vw,310px\)/);
+  const mobile = css.slice(css.indexOf('@media (max-width:800px)'));
+  assert.match(mobile, /\.friday-layout \{ display:block; \}/);
+});
+
+test('staff cards expose per-session repository visibility separately from repo affinity', () => {
+  assert.match(app, /createFridayPiSessionCards/);
+  assert.match(sessionCards, /Visible repositories/);
+  assert.match(sessionCards, /session\.availableRepositories/);
+  assert.match(sessionCards, /session\.visibleRepositories/);
+  assert.match(sessionCards, /friday-repo-visibility/);
+  assert.match(sessionCards, /not a filesystem sandbox/);
+  assert.match(sessionCards, /Repo affinity \(staff-fit metadata; one per line\)/);
 });
 
 test('settings start collapsed and Files and Notes expose accessible code/tree navigation', () => {

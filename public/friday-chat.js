@@ -84,31 +84,47 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
     if (model.disabled !== modelDisabled) model.disabled = modelDisabled;
     if (thinking.disabled !== thinkingDisabled) thinking.disabled = thinkingDisabled;
     const taskStages = { queued: 'Pi task queued', running: 'Pi is working', reviewing: 'Friday is reviewing', completed: 'Task complete', blocked: 'Task blocked', 'outcome-unknown': 'Task outcome unknown' };
+    const taskReview = delegatedTask ? reviewStatusText(delegatedTask) : '';
     const taskStatus = delegatedTask && taskStages[delegatedTask.status]
       ? `${taskStages[delegatedTask.status]}${delegatedTask.label ? `: ${delegatedTask.label}` : ''}`
       : null;
     const activeTaskStatus = delegatedTask && ['queued', 'running', 'reviewing', 'outcome-unknown'].includes(delegatedTask.status);
     const statusText = loading ? 'Connecting…' : busy ? taskStatus || 'Friday is coordinating…' : configuring ? 'Updating settings…' : activeTaskStatus ? taskStatus : reachable ? 'Ready' : 'Reconnecting…';
     if (status.textContent !== statusText) status.textContent = statusText;
+    const taskDetail = delegatedTask?.status === 'completed' ? delegatedTask.summary : delegatedTask?.summary || delegatedTask?.detail;
     const statusTitle = taskStatus
-      ? `${taskStatus}${delegatedTask.summary || delegatedTask.detail ? ` — ${delegatedTask.summary || delegatedTask.detail}` : ''}`
+      ? `${taskStatus}${taskReview ? ` · ${taskReview}` : ''}${taskDetail ? ` — ${taskDetail}` : ''}`
       : statusText;
     if (status.title !== statusTitle) status.title = statusTitle;
     renderTaskBoard();
   }
 
+  function reviewStatusText(task) {
+    const review = task.review;
+    const labels = { queued: 'Review waiting', active: 'Review active', finished: 'Review finished', failed: 'Review failed', 'queue-full': 'Review queue full', interrupted: 'Review interrupted' };
+    if (!review || !labels[review.stage]) return '';
+    const at = review.stage === 'queued' ? review.queuedAt
+      : review.stage === 'active' ? review.startedAt
+        : review.stage === 'interrupted' ? review.interruptedAt : review.finishedAt;
+    const elapsed = at ? Math.max(0, Math.floor((Date.now() - Date.parse(at)) / 1000)) : null;
+    const age = elapsed === null || !Number.isFinite(elapsed) ? '' : elapsed < 60 ? `${elapsed}s` : elapsed < 3600 ? `${Math.floor(elapsed / 60)}m` : `${Math.floor(elapsed / 3600)}h`;
+    return `${labels[review.stage]}${age ? ` · ${age}` : ''}${review.errorCode ? ` · ${review.errorCode}` : ''}`;
+  }
+
   function renderTaskBoard() {
     if (!taskBoard) return;
     const visible = delegatedTasks.slice(0, 8);
-    const revision = JSON.stringify(visible.map(({ id, label, status: taskStatus, summary, detail }) => [id, label, taskStatus, summary, detail]));
+    const revision = JSON.stringify(visible.map((task) => [task.id, task.label, task.status, task.summary, task.detail, task.review]));
     if (revision === taskBoardRevision) return;
     taskBoardRevision = revision;
     taskBoard.hidden = visible.length === 0;
     taskBoard.replaceChildren();
     for (const task of visible) {
       const row = document.createElement('div'); row.className = `friday-task-row ${task.status}`;
+      const review = reviewStatusText(task);
       const heading = document.createElement('strong'); heading.textContent = `${task.label || 'Pi task'} · ${task.status}`;
-      const detail = document.createElement('span'); detail.textContent = task.summary || task.detail || '';
+      const taskDetail = task.status === 'completed' ? task.summary : task.summary || task.detail;
+      const detail = document.createElement('span'); detail.textContent = [taskDetail, review].filter(Boolean).join(' · ');
       row.append(heading);
       if (detail.textContent) row.append(detail);
       taskBoard.append(row);

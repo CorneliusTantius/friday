@@ -61,7 +61,10 @@ const auditPiTaskLifecycle = (event, details = {}) => console.log(JSON.stringify
   ...details,
 }));
 const fridayMemory = createFridayMemory({ directory: join(paths.root, 'memory') });
-const piRunRegistry = createPiRunRegistry({ file: join(syncStateRoot, 'pi-runs.json') });
+const piRunRegistry = createPiRunRegistry({
+  file: join(syncStateRoot, 'pi-runs.json'),
+  onRecovery: (recovered) => auditPiTaskLifecycle('task_recovered_after_restart', recovered),
+});
 const syncState = { friday: { busy: false, error: null, promise: null } };
 const workspaceRoots = [resolve(homedir()), paths.workspaceDir, repositories.directory];
 let initialWorkspace = paths.workspaceDir;
@@ -268,7 +271,6 @@ const completionReviews = createPiTaskReviewQueue({
 const piTaskCompletion = createPiTaskCompletionHandler({
   registry: piRunRegistry,
   reviewQueue: completionReviews,
-  onError: (error) => console.error(`Could not update delegated Pi task status: ${error.message}`),
 });
 const updatePiTaskFromQueueEvent = piTaskCompletion.handle;
 
@@ -739,7 +741,7 @@ async function findSession(workspace, path) {
   return session;
 }
 
-async function sessionsWithRunIds(workspace) {
+async function sessionsWithRunIds(workspace, { includeRepositoryVisibility = false } = {}) {
   const sessions = await listSessions(workspace);
   const runIds = await piRunRegistry.ensureRuns(sessions.map(({ path, id, name }) => ({ workspace, sessionPath: path, sessionId: id, name })));
   const registeredRuns = await Promise.all(runIds.map((runId) => piRunRegistry.getRun(runId)));
@@ -767,9 +769,10 @@ async function sessionsWithRunIds(workspace) {
       expertise: run?.expertise || [],
       responsibilities: run?.responsibilities || [],
       repositories: run?.repositories || [],
+      ...(includeRepositoryVisibility ? { hiddenRepositories: run?.hiddenRepositories || [] } : {}),
       capacity: Number.isInteger(run?.capacity) ? run.capacity : DEFAULT_STAFF_CAPACITY,
       workload,
-      tasks: tasks.map(({ id, label, status, detail, createdAt, updatedAt, conversationId }) => ({ id, label, status, detail: detail || null, createdAt, updatedAt, conversationId })),
+      tasks: tasks.map(({ id, label, status, detail, createdAt, updatedAt, conversationId, review }) => ({ id, label, status, detail: detail || null, createdAt, updatedAt, conversationId, review: review || null })),
       runtimeId: runtime?.runtimeId || null,
       opening: piRunOpenings.has(runId),
       running: runtime?.pi.isRunning || false,
@@ -809,11 +812,34 @@ async function findRunRuntime(run) {
 }
 
 async function listPiConversations() {
-  return sessionsWithRunIds(preferredWorkspace);
+  const [sessions, availableRepositories] = await Promise.all([
+    sessionsWithRunIds(preferredWorkspace, { includeRepositoryVisibility: true }),
+    repositories.listRepositoryNames(),
+  ]);
+  return sessions.map(({ hiddenRepositories = [], ...session }) => {
+    const hidden = new Set(hiddenRepositories);
+    return {
+      ...session,
+      availableRepositories,
+      visibleRepositories: availableRepositories.filter((name) => !hidden.has(name)),
+    };
+  });
 }
 
 async function persistPiStaffProfile(runId, profile) {
   try { return await piRunRegistry.updateRunProfile(runId, profile); }
+  catch (error) { throw new RequestError(error.message); }
+}
+
+async function persistPiRepositoryVisibility(runId, hiddenRepositories) {
+  const run = await piRunRegistry.getRun(runId);
+  if (!run || run.workspace !== preferredWorkspace) return null;
+  if (!Array.isArray(hiddenRepositories)) throw new RequestError('hiddenRepositories must be an array');
+  const available = new Set(await repositories.listRepositoryNames());
+  if (hiddenRepositories.some((name) => typeof name !== 'string' || !available.has(name))) {
+    throw new RequestError('hiddenRepositories must contain managed repository names');
+  }
+  try { return await piRunRegistry.updateRunRepositoryVisibility(runId, hiddenRepositories); }
   catch (error) { throw new RequestError(error.message); }
 }
 
@@ -909,7 +935,17 @@ async function reportDelegatedTask({ taskId, status, summary, conversationId }) 
   if (task.status !== 'reviewing' && !(task.status === 'blocked' && status === 'blocked')) {
     throw new RequestError('Task must reach Pi review before it can be finalized', 409);
   }
-  return piRunRegistry.updateTask(taskId, { status, summary: summary.trim() });
+  const finishedAt = new Date().toISOString();
+  const updated = await piRunRegistry.updateTask(taskId, {
+    status,
+    summary: summary.trim(),
+    review: { ...task.review, stage: 'finished', finishedAt, errorCode: null },
+  });
+  auditPiTaskLifecycle('task_report_persisted', {
+    taskId: updated.id, runId: updated.runId, queueId: updated.queueId, status: updated.status,
+    stage: updated.review?.stage, finishedAt,
+  });
+  return updated;
 }
 
 async function readPiConversation({ runId, limit = 10, taskId, conversationId }) {
@@ -923,7 +959,13 @@ async function readPiConversation({ runId, limit = 10, taskId, conversationId })
     if (!task || task.runId !== runId || task.conversationId !== conversationId) throw new RequestError('Task does not belong to this exact Pi run and Friday conversation', 403);
     const queued = runtime.entry.pi.promptQueue?.some((item) => item.id === task.queueId);
     if (task.status === 'outcome-unknown' && !runtime.entry.pi.isBusy && !queued) {
-      task = await piRunRegistry.updateTask(task.id, { status: 'reviewing', detail: 'Manually reopened for exact-task review after the outcome became unknown; Pi was not replayed.' });
+      const startedAt = new Date().toISOString();
+      task = await piRunRegistry.updateTask(task.id, {
+        status: 'reviewing',
+        detail: 'Manually reopened for exact-task review after the outcome became unknown; Pi was not replayed.',
+        review: { ...task.review, stage: 'active', startedAt, errorCode: null },
+      });
+      auditPiTaskLifecycle('manual_review_started', { taskId: task.id, runId: task.runId, queueId: task.queueId, stage: 'active', startedAt });
     }
   }
   const messages = await runtime.entry.pi.history(limit);
@@ -931,7 +973,7 @@ async function readPiConversation({ runId, limit = 10, taskId, conversationId })
     runId: run.id,
     name: run.name || 'Pi conversation',
     busy: runtime.entry.pi.isBusy,
-    ...(task ? { task: { id: task.id, label: task.label, queueId: task.queueId, status: task.status, detail: task.detail || null } } : {}),
+    ...(task ? { task: { id: task.id, label: task.label, queueId: task.queueId, status: task.status, detail: task.detail || null, review: task.review || null } } : {}),
     messages: messages.map((message) => ({
       ...message,
       content: message.content.length > 4000 ? `${message.content.slice(0, 4000)}… [truncated]` : message.content,
@@ -1149,6 +1191,15 @@ async function handleFridayRequest(request, response, pathname) {
     sendJson(response, 200, await fridayMemory.graph());
     return;
   }
+  if (request.method === 'POST' && pathname === '/api/friday/tasks/cleanup-stale-completed-review-detail') {
+    const body = await readJson(request);
+    if (body.confirmation !== 'clear-only-exact-obsolete-detail-from-completed-tasks') {
+      throw new RequestError('Explicit cleanup confirmation is required', 400);
+    }
+    const backupFile = join(syncStateRoot, `pi-runs.before-review-detail-cleanup-${randomUUID()}.json`);
+    sendJson(response, 200, await piRunRegistry.clearStaleCompletedReviewDetails(backupFile));
+    return;
+  }
   const pi = await getFridayPi();
   if (request.method === 'GET' && pathname === '/api/friday/status') {
     const taskList = await piRunRegistry.listTasks({ conversationId: pi.currentSessionId });
@@ -1218,6 +1269,13 @@ async function handleFridayRequest(request, response, pathname) {
     const profile = { expertise: body.expertise, responsibilities: body.responsibilities, repositories: body.repositories, capacity: body.capacity };
     const updated = await persistPiStaffProfile(profileMatch[1], profile);
     sendJson(response, updated ? 200 : 404, updated || { error: 'Pi conversation not found' });
+    return;
+  }
+  const repositoryVisibilityMatch = pathname.match(/^\/api\/friday\/pi-conversations\/([0-9a-f-]{36})\/repository-visibility$/i);
+  if (repositoryVisibilityMatch && request.method === 'PATCH') {
+    const body = await readJson(request);
+    const updated = await persistPiRepositoryVisibility(repositoryVisibilityMatch[1], body.hiddenRepositories);
+    sendJson(response, updated ? 200 : 404, updated ? { runId: updated.id, hiddenRepositories: updated.hiddenRepositories || [] } : { error: 'Pi conversation not found' });
     return;
   }
   if (request.method === 'POST' && pathname === '/api/friday/sessions') {
