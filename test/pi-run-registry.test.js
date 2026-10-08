@@ -46,6 +46,27 @@ test('closed marker persists as run state and renaming toggles it', async () => 
   assert.equal((await restored.getRun(runId)).closed, true);
 });
 
+test('new runs default to two; legacy missing capacity stays unstored and configured capacity remains unchanged', async () => {
+  const { file } = await setup();
+  const legacyRunId = '123e4567-e89b-12d3-a456-426614174010';
+  const configuredRunId = '123e4567-e89b-12d3-a456-426614174011';
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify({
+    runs: [
+      { id: legacyRunId, workspace: '/work', sessionPath: '/session/legacy', name: 'Legacy' },
+      { id: configuredRunId, workspace: '/work', sessionPath: '/session/configured', name: 'Configured', capacity: 5 },
+    ],
+  }));
+  const registry = createPiRunRegistry({ file });
+  assert.equal((await registry.getRun(legacyRunId)).capacity, undefined);
+  assert.equal((await registry.getRun(configuredRunId)).capacity, 5);
+  const newlyRegistered = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/new', name: 'New' });
+  assert.equal((await registry.getRun(newlyRegistered)).capacity, 2);
+  const persisted = JSON.parse(await fs.readFile(file, 'utf8'));
+  assert.equal('capacity' in persisted.runs.find(({ id }) => id === legacyRunId), false);
+  assert.equal(persisted.runs.find(({ id }) => id === configuredRunId).capacity, 5);
+});
+
 test('batch ensures preserve IDs and persist in one update', async () => {
   const { file } = await setup();
   const registry = createPiRunRegistry({ file });
@@ -99,11 +120,12 @@ test('delegated task state transitions persist with status-safe summaries', asyn
   const queueId = '123e4567-e89b-12d3-a456-426614174002';
   const task = await registry.createTask({ conversationId: 'friday-task-2', runId, queueId, label: 'Run tests' });
   await registry.updateTask(task.id, { status: 'running' });
-  await registry.updateTask(task.id, { status: 'reviewing' });
+  await registry.updateTask(task.id, { status: 'reviewing', detail: 'Friday is checking the Pi result.' });
   await registry.updateTask(task.id, { status: 'completed', summary: 'Tests passed.' });
   const reported = await registry.getTaskForPrompt(runId, queueId);
   assert.equal(reported.status, 'completed');
   assert.equal(reported.summary, 'Tests passed.');
+  assert.equal('detail' in reported, false, 'final summary must not retain stale in-progress detail');
   assert.equal('prompt' in reported, false);
 });
 

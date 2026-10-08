@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
+export const DEFAULT_STAFF_CAPACITY = 2;
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const isClosedName = (name) => typeof name === 'string' && /^\[closed\](?:\s|$)/i.test(name.trim());
 
@@ -90,6 +92,7 @@ export function createPiRunRegistry({ file }) {
       if (!id) { id = randomUUID(); bySession.set(sessionPath, id); }
       const previous = runs.get(id);
       const run = { ...previous, id, workspace, sessionPath, sessionId, name };
+      if (!previous) run.capacity = DEFAULT_STAFF_CAPACITY;
       if (isClosedName(name)) run.closed = true;
       else if (previous?.closed !== true) run.closed = false;
       if (typeof domain === 'string' && domain.trim()) run.domain = domain.trim();
@@ -189,6 +192,7 @@ export function createPiRunRegistry({ file }) {
         task.status = status;
         if (detail !== undefined) task.detail = detail;
         if (summary !== undefined) task.summary = summary;
+        if (summary !== undefined && ['completed', 'blocked'].includes(status)) delete task.detail;
         if (queueId !== undefined) task.queueId = queueId;
         task.updatedAt = new Date().toISOString();
         return task;

@@ -2028,7 +2028,7 @@ function loadFridayPiConversations() {
             `Expertise: ${(session.expertise || []).join(', ') || 'not set'}`,
             `Responsibilities: ${(session.responsibilities || []).join(', ') || 'not set'}`,
             `Repositories: ${(session.repositories || []).join(', ') || 'not set'}`,
-            `Workload: ${session.workload?.openTasks || 0}/${session.capacity || 1}`,
+            `Workload: ${session.workload?.openTasks || 0}/${session.capacity || 2}`,
           ];
           profile.textContent = profileText.join(' · ');
           item.append(profile);
@@ -2056,7 +2056,7 @@ function loadFridayPiConversations() {
           addField('Responsibilities (one per line)', session.responsibilities, 'responsibilities', true);
           addField('Repositories (one per line)', session.repositories, 'repositories', true);
           const capacityLabel = document.createElement('label'); capacityLabel.textContent = 'Task capacity';
-          const capacityInput = document.createElement('input'); capacityInput.type = 'number'; capacityInput.name = 'capacity'; capacityInput.min = '1'; capacityInput.max = '8'; capacityInput.value = String(session.capacity || 1); capacityLabel.append(capacityInput); form.append(capacityLabel);
+          const capacityInput = document.createElement('input'); capacityInput.type = 'number'; capacityInput.name = 'capacity'; capacityInput.min = '1'; capacityInput.max = '8'; capacityInput.value = String(session.capacity || 2); capacityLabel.append(capacityInput); form.append(capacityLabel);
           const saveProfile = document.createElement('button'); saveProfile.type = 'submit'; saveProfile.className = 'button button-small'; saveProfile.textContent = 'Save profile'; form.append(saveProfile);
           form.addEventListener('submit', async (event) => {
             event.preventDefault();

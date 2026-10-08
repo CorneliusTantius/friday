@@ -1,4 +1,5 @@
 import { Type } from 'typebox';
+import { DEFAULT_STAFF_CAPACITY } from '../pi/pi-run-registry.js';
 import { Value } from 'typebox/value';
 
 const UUID = Type.String({ format: 'uuid' });
@@ -88,7 +89,7 @@ export function createFridayPiTools({ listConversations, createSession, renameSe
           const conversations = await listConversations();
           const visible = conversations.map(({ id, name, domain, purpose, modified, messageCount, runId, running, busy, queuedPrompts, expertise, responsibilities, repositories, capacity, workload, tasks }) => ({
             id, name, domain, purpose, modified, messageCount, runId, running, busy, queuedPrompts,
-            expertise: expertise || [], responsibilities: responsibilities || [], repositories: repositories || [], capacity: capacity || 1,
+            expertise: expertise || [], responsibilities: responsibilities || [], repositories: repositories || [], capacity: capacity ?? DEFAULT_STAFF_CAPACITY,
             workload: workload || { openTasks: 0 }, tasks: tasks || [],
           }));
           return result(JSON.stringify(visible));

@@ -12,7 +12,10 @@ function setup() {
   const calls = { list: [], status: [], read: [], create: [], rename: [], profile: [], send: [], report: [], delete: [], stop: [] };
   const contexts = { create: [], rename: [], profile: [], delete: [], stop: [] };
   const tools = createFridayPiTools({
-    listConversations: async () => { calls.list.push(true); return [{ id: 's1', name: 'Build task', domain: 'platform', purpose: 'maintain platform', modified: 'today', messageCount: 4, runId: id, running: true, busy: false, queuedPrompts: 0, expertise: ['Node.js'], responsibilities: ['API'], repositories: ['friday'], capacity: 2, workload: { openTasks: 1 }, tasks: [{ id: taskId, label: 'Add export', status: 'running' }], hiddenField: 'not exposed' }]; },
+    listConversations: async () => { calls.list.push(true); return [
+      { id: 's1', name: 'Build task', domain: 'platform', purpose: 'maintain platform', modified: 'today', messageCount: 4, runId: id, running: true, busy: false, queuedPrompts: 0, expertise: ['Node.js'], responsibilities: ['API'], repositories: ['friday'], capacity: 2, workload: { openTasks: 1 }, tasks: [{ id: taskId, label: 'Add export', status: 'running' }], hiddenField: 'not exposed' },
+      { id: 's2', name: 'Unprofiled', modified: 'today', messageCount: 0, runId: '123e4567-e89b-12d3-a456-426614174004' },
+    ]; },
     getRunStatus: async (runId) => { calls.status.push(runId); return { runId, exists: false, opening: false, workspace: '/other-workspace', running: false }; },
     readConversation: async (value) => { calls.read.push(value); return { runId: value.runId, messages: [{ role: 'assistant', content: 'Pi reply' }] }; },
     createSession: async (value) => { calls.create.push(value); return { runId: id, name: value.purpose, workspace: '/workspace' }; },
@@ -46,6 +49,7 @@ test('Friday exposes five Pi tools, removes agent-facing wait, and keeps actions
 
   assert.deepEqual(await invoke(tools[0], { action: 'list' }), text(JSON.stringify([
     { id: 's1', name: 'Build task', domain: 'platform', purpose: 'maintain platform', modified: 'today', messageCount: 4, runId: id, running: true, busy: false, queuedPrompts: 0, expertise: ['Node.js'], responsibilities: ['API'], repositories: ['friday'], capacity: 2, workload: { openTasks: 1 }, tasks: [{ id: taskId, label: 'Add export', status: 'running' }] },
+    { id: 's2', name: 'Unprofiled', modified: 'today', messageCount: 0, runId: '123e4567-e89b-12d3-a456-426614174004', expertise: [], responsibilities: [], repositories: [], capacity: 2, workload: { openTasks: 0 }, tasks: [] },
   ])));
   assert.deepEqual(calls.list, [true]);
   assert.deepEqual(await invoke(tools[0], { action: 'status', runId: id }), text({ runId: id, exists: false, opening: false, workspace: '/other-workspace', running: false }));

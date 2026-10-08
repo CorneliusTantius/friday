@@ -11,8 +11,9 @@ import { fileURLToPath } from 'node:url';
 import { PiSession } from './pi/pi-session.js';
 import { FridaySdkSession } from './friday/friday-sdk-session.js';
 import { createFridayMemory } from './friday/friday-memory.js';
-import { createPiRunRegistry } from './pi/pi-run-registry.js';
+import { createPiRunRegistry, DEFAULT_STAFF_CAPACITY } from './pi/pi-run-registry.js';
 import { createPiTaskReviewQueue } from './friday/pi-task-review-queue.js';
+import { createPiTaskCompletionHandler } from './friday/pi-task-completion.js';
 import { createProviderAuth } from './integrations/provider-auth.js';
 import { fridayPaths, loadConfig, migrateStorage } from './config.js';
 import { createRepositoryStore } from './storage/repos.js';
@@ -269,14 +270,17 @@ async function runCompletionReview(job) {
     });
     const latest = await piRunRegistry.getTask(task.id);
     if (latest?.status === 'reviewing') {
-      await piRunRegistry.updateTask(task.id, { status: 'reviewing', detail: 'Friday finished the automatic review without a verified final report; ask Friday to continue the exact review.' });
+      await piRunRegistry.updateTask(task.id, {
+        status: 'blocked',
+        detail: 'Friday completed the automatic review but did not produce a verified task report; the result remains unverified and needs manual review.',
+      });
     }
   } catch (error) {
     const latest = await piRunRegistry.getTask(task.id);
-    if (latest && !['completed', 'blocked'].includes(latest.status)) {
+    if (latest?.status === 'reviewing') {
       await piRunRegistry.updateTask(task.id, {
-        status: 'reviewing',
-        detail: `Friday could not finish the automatic review: ${error.message.slice(0, 700)}`,
+        status: 'blocked',
+        detail: `Friday could not complete the automatic review, so the Pi result remains unverified: ${error.message.slice(0, 600)}`,
       }).catch(() => {});
     }
     console.error(`Could not review delegated Pi task ${task.id}: ${error.message}`);
@@ -286,38 +290,12 @@ async function runCompletionReview(job) {
 }
 
 const completionReviews = createPiTaskReviewQueue({ review: runCompletionReview });
-
-function enqueueCompletionReview(task, event) {
-  const result = completionReviews.enqueue(task, event);
-  if (result === 'full') {
-    void piRunRegistry.updateTask(task.id, { status: task.status, detail: 'Friday review queue is full; ask Friday to inspect this exact task manually.' });
-  }
-}
-
-async function updatePiTaskFromQueueEvent(queueId, event) {
-  try {
-    const task = await piRunRegistry.getTaskForQueue(queueId);
-    if (!task || ['completed', 'blocked'].includes(task.status)) return;
-    if (event.type === 'started') {
-      if (task.status === 'queued') await piRunRegistry.updateTask(task.id, { status: 'running' });
-      return;
-    }
-    if (event.status === 'completed') {
-      const updated = await piRunRegistry.updateTask(task.id, { status: 'reviewing', detail: 'Pi finished; Friday is checking the result against the original request.' });
-      if (updated?.status === 'reviewing') enqueueCompletionReview(updated, event);
-      return;
-    }
-    if (event.status === 'failed' || event.status === 'cancelled') {
-      const detail = event.status === 'cancelled' ? 'Pi work was stopped or removed from its queue.' : 'Pi reported a task failure.';
-      const updated = await piRunRegistry.updateTask(task.id, { status: 'blocked', detail });
-      if (updated?.status === 'blocked') enqueueCompletionReview(updated, event);
-      return;
-    }
-    await piRunRegistry.updateTask(task.id, { status: 'outcome-unknown', detail: 'Pi returned an unrecognized terminal task state; Friday did not retry it.' });
-  } catch (error) {
-    console.error(`Could not update delegated Pi task status: ${error.message}`);
-  }
-}
+const piTaskCompletion = createPiTaskCompletionHandler({
+  registry: piRunRegistry,
+  reviewQueue: completionReviews,
+  onError: (error) => console.error(`Could not update delegated Pi task status: ${error.message}`),
+});
+const updatePiTaskFromQueueEvent = piTaskCompletion.handle;
 
 function createPiRuntime(runtimeId, cwd = preferredWorkspace) {
   if (piSessions.size >= maxPiSessions) {
@@ -814,7 +792,7 @@ async function sessionsWithRunIds(workspace) {
       expertise: run?.expertise || [],
       responsibilities: run?.responsibilities || [],
       repositories: run?.repositories || [],
-      capacity: Number.isInteger(run?.capacity) ? run.capacity : 1,
+      capacity: Number.isInteger(run?.capacity) ? run.capacity : DEFAULT_STAFF_CAPACITY,
       workload,
       tasks: tasks.map(({ id, label, status, detail, createdAt, updatedAt, conversationId }) => ({ id, label, status, detail: detail || null, createdAt, updatedAt, conversationId })),
       runtimeId: runtime?.runtimeId || null,
@@ -1121,7 +1099,7 @@ async function enqueuePiPrompt({ conversationId, runId, taskName, prompt }) {
     const assigned = registeredTasks.filter((task) => ['queued', 'running', 'reviewing', 'outcome-unknown'].includes(task.status)).length;
     const live = Number(runtime.entry.pi.isBusy) + (runtime.entry.pi.promptQueue?.length || 0);
     const workload = Math.max(assigned, live);
-    const capacity = Number.isInteger(run.capacity) ? run.capacity : 1;
+    const capacity = Number.isInteger(run.capacity) ? run.capacity : DEFAULT_STAFF_CAPACITY;
     if (workload >= capacity) throw new RequestError(`Pi staff capacity reached for ${run.name || run.id} (${workload}/${capacity} open tasks).`, 409);
     const queueId = randomUUID();
     const task = await piRunRegistry.createTask({ conversationId, runId: run.id, queueId, label: taskName });
