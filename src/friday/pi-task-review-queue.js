@@ -17,7 +17,7 @@ export function createPiTaskReviewQueue({ review, onError = (error) => console.e
         try {
           await review(job.task, job.event);
         } catch (error) {
-          onError(error);
+          onError(error, job.task, job.event);
         } finally {
           pending.delete(job.key);
           completed.add(job.key);

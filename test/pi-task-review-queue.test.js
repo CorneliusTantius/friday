@@ -39,10 +39,14 @@ test('completion reviews deduplicate exact tasks and serialize each origin conve
 test('completion-review backpressure rejects excess queued work and continues after reviewer errors', async () => {
   let release;
   const errors = [];
+  const errorContext = [];
   const seen = [];
   const queue = createPiTaskReviewQueue({
     maxQueued: 1,
-    onError: (error) => errors.push(error.message),
+    onError: (error, failedTask, event) => {
+      errors.push(error.message);
+      errorContext.push({ taskId: failedTask.id, runId: failedTask.runId, queueId: failedTask.queueId, terminalStatus: event.status });
+    },
     review: async (current) => {
       seen.push(current.id);
       if (current.id === 'one') await new Promise((resolve) => { release = resolve; });
@@ -57,5 +61,6 @@ test('completion-review backpressure rejects excess queued work and continues af
   await queue.waitFor('origin');
   assert.deepEqual(seen, ['one', 'two']);
   assert.deepEqual(errors, ['review failed']);
+  assert.deepEqual(errorContext, [{ taskId: 'two', runId: 'run-two', queueId: 'queue-two', terminalStatus: 'failed' }]);
   assert.equal(queue.pendingCount, 0);
 });
