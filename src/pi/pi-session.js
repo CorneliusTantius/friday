@@ -243,9 +243,10 @@ export class PiSession extends EventEmitter {
     return true;
   }
 
-  enqueuePrompt(message) {
+  enqueuePrompt(message, id = randomUUID()) {
     if (typeof message !== 'string' || !message.trim() || message.length > 20_000) throw new TypeError('prompt must be between 1 and 20000 characters');
-    const item = { id: randomUUID(), message: message.trim() };
+    if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) throw new TypeError('invalid queue ID');
+    const item = { id, message: message.trim() };
     this.#prunePromptJobs();
     this.promptJobs.set(item.id, { result: null, waiters: new Set(), completedAt: null });
     this.promptQueue.push(item);
@@ -330,6 +331,7 @@ export class PiSession extends EventEmitter {
         }
         const item = this.promptQueue.shift();
         this.#emitQueueStatus();
+        this.emit('prompt_queue_started', { id: item.id });
         try {
           const result = await this.chat(item.message);
           this.#completePrompt(item, { status: 'completed', result });

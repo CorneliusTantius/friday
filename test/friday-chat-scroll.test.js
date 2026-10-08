@@ -5,6 +5,8 @@ import { createFridayChat } from '../public/friday-chat.js';
 class FakeElement {
   constructor(id = '') {
     this.id = id;
+    this.mutationCount = 0;
+    this.scrollWriteCount = 0;
     this.children = [];
     this.dataset = {};
     this.style = {};
@@ -35,21 +37,33 @@ class FakeElement {
   get clientHeight() { return this.visible ? 200 : 0; }
   get scrollHeight() { return this.children.length * 120; }
   get scrollTop() { return this.storedScrollTop; }
-  set scrollTop(value) { if (this.visible) this.storedScrollTop = value; }
+  set scrollTop(value) { this.scrollWriteCount += 1; if (this.visible) this.storedScrollTop = value; }
   addEventListener(type, listener) { this.listeners.set(type, listener); }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  getAttribute(name) { return this.attributes.get(name) ?? null; }
   replaceChildren(...items) {
+    this.mutationCount += 1;
     for (const item of this.children) item.parentElement = null;
     this.children = [];
     this.append(...items);
   }
   append(...items) {
-    for (const item of items) {
-      item.parentElement = this;
-      this.children.push(item);
-    }
+    for (const item of items) this.insertBefore(item, null);
   }
   appendChild(item) { this.append(item); return item; }
+  insertBefore(item, reference) {
+    this.mutationCount += 1;
+    if (item === reference) return item;
+    if (item.parentElement) {
+      const oldSiblings = item.parentElement.children;
+      const oldIndex = oldSiblings.indexOf(item);
+      if (oldIndex >= 0) oldSiblings.splice(oldIndex, 1);
+    }
+    const index = reference ? this.children.indexOf(reference) : this.children.length;
+    item.parentElement = this;
+    this.children.splice(index < 0 ? this.children.length : index, 0, item);
+    return item;
+  }
   replaceWith(item) {
     if (!this.parentElement) return;
     const siblings = this.parentElement.children;
@@ -60,11 +74,17 @@ class FakeElement {
   }
   remove() {
     if (!this.parentElement) return;
+    this.parentElement.mutationCount += 1;
     this.parentElement.children = this.parentElement.children.filter((item) => item !== this);
     this.parentElement = null;
   }
   querySelector(selector) {
-    if (selector.startsWith('.')) return this.children.find((child) => child.classNames.has(selector.slice(1))) || null;
+    if (!selector.startsWith('.')) return null;
+    for (const child of this.children) {
+      if (child.classNames.has(selector.slice(1))) return child;
+      const nested = child.querySelector(selector);
+      if (nested) return nested;
+    }
     return null;
   }
   getClientRects() { return this.visible ? [{}] : []; }
@@ -121,15 +141,45 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   });
 
   let history = makeHistory(30, 'Cached');
+  let backendSessionId = 'friday-session-a';
   let fridayBusy = false;
   let historyReads = 0;
+  const historyRequests = [];
+  let delegatedTask = null;
+  let historyOverride = null;
   const pendingHistory = [];
+  const historyWire = (items) => {
+    let prefix = '';
+    return items.map((message, sequence) => {
+      const revision = JSON.stringify(message);
+      const item = { ...message, id: `${backendSessionId}:${sequence}`, sequence, revision, prefixRevision: prefix };
+      prefix += `${item.id}:${revision};`;
+      return item;
+    });
+  };
+  const historyResponse = (path) => {
+    const params = new URL(path, 'http://friday.test').searchParams;
+    const all = historyWire(history);
+    const latest = all.at(-1);
+    const full = () => ({ messages: all, sessionId: backendSessionId, reset: true, incremental: false, unchanged: false, latestId: latest?.id || null, latestRevision: latest?.revision || null });
+    if (params.get('full') === '1' || params.get('sessionId') !== backendSessionId) return full();
+    const afterId = params.get('afterId');
+    if (!afterId && all.length) return full();
+    if (!afterId) return { messages: [], sessionId: backendSessionId, reset: false, incremental: true, unchanged: true, latestId: null, latestRevision: null };
+    const index = all.findIndex((item) => item.id === afterId);
+    if (index < 0 || all[index].prefixRevision !== params.get('afterPrefix')) return full();
+    const changed = all[index].revision !== params.get('afterRevision');
+    const messages = all.slice(index + (changed ? 0 : 1));
+    return { messages, sessionId: backendSessionId, reset: false, incremental: true, unchanged: messages.length === 0, latestId: latest?.id || null, latestRevision: latest?.revision || null };
+  };
   const apiJson = async (path) => {
-    if (path === '/api/friday/history') {
+    if (path.startsWith('/api/friday/history')) {
       historyReads += 1;
-      return pendingHistory.shift()?.promise || { messages: history };
+      historyRequests.push(path);
+      if (historyOverride) { const response = historyOverride; historyOverride = null; return response; }
+      return pendingHistory.shift()?.promise || historyResponse(path);
     }
-    if (path === '/api/friday/status') return { busy: fridayBusy, canAbort: fridayBusy, contextUsage: null };
+    if (path === '/api/friday/status') return { busy: fridayBusy, canAbort: fridayBusy, contextUsage: null, delegatedTask };
     if (path === '/api/friday/models') return { models: [], current: null };
     if (path === '/api/friday/thinking-levels') return { levels: ['off'], current: 'off' };
     throw new Error(`Unexpected API request: ${path}`);
@@ -138,10 +188,22 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   let displayedPiStatus = 'stale';
   const chat = createFridayChat({
     apiJson,
-    renderMarkdown: (element, text) => { element.textContent = text; },
+    renderMarkdown: (element, text) => {
+      const rendered = new FakeElement('rendered-markdown');
+      rendered.textContent = text;
+      element.append(rendered);
+    },
     toast: () => {},
     onEnter: async () => { piStatusRefreshes += 1; displayedPiStatus = 'Open · idle'; },
   });
+  const pollNow = async () => {
+    globalThis.document.visibilityState = 'hidden';
+    documentListeners.get('visibilitychange')();
+    globalThis.document.visibilityState = 'visible';
+    documentListeners.get('visibilitychange')();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  };
   await chat.start();
   assert.equal(transcript.scrollTop, 0, 'hidden initial render cannot establish the visible scroll position');
   assert.match(treeText(transcript), /Cached 29/, 'initial transcript is stale in this regression setup');
@@ -152,13 +214,17 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   assert.equal(piStatusRefreshes, 1, 'entering Friday must refresh the supported Pi conversation status as well');
   assert.equal(displayedPiStatus, 'Open · idle', 'the stale Pi status is replaced from the entry refresh');
   assert.equal(historyReads, 2, 'entering an already-started idle session must fetch history again');
+  assert.match(historyRequests.at(-1), /sessionId=friday-session-a&afterId=/, 'polls send the current session and latest known message cursor');
   assert.equal(transcript.children.length, history.length, 'entry reconciles stale messages against backend history');
   assert.match(treeText(transcript), /Current backend reply/);
   assert.doesNotMatch(treeText(transcript), /Cached/);
   assert.equal(transcript.scrollTop, transcript.scrollHeight, 'first visible entry should land at the latest backend message');
   assert.equal(timers.size, 1, 'a visible Friday chat schedules status and transcript polling');
   assert.equal([...timers.values()][0].delay, 15_000, 'idle polling uses a sensible slower interval');
+  await new Promise((resolve) => setImmediate(resolve));
   const readsBeforeHidden = historyReads;
+  const mutationsBeforeIdlePoll = transcript.mutationCount;
+  const scrollWritesBeforeIdlePoll = transcript.scrollWriteCount;
   globalThis.document.visibilityState = 'hidden';
   documentListeners.get('visibilitychange')();
   assert.equal(timers.size, 0, 'polling pauses when the browser tab is hidden');
@@ -166,6 +232,8 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   documentListeners.get('visibilitychange')();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(historyReads, readsBeforeHidden + 1, 'returning to a visible tab immediately reconciles history');
+  assert.equal(transcript.mutationCount, mutationsBeforeIdlePoll, 'an unchanged cursor response leaves transcript DOM untouched');
+  assert.equal(transcript.scrollWriteCount, scrollWritesBeforeIdlePoll, 'an unchanged poll does not adjust transcript scroll');
 
   const staleResponse = deferred();
   pendingHistory.push(staleResponse);
@@ -174,7 +242,8 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   const entering = chat.enterView();
   const concurrentRefresh = chat.refreshTranscript();
   history = latestHistory;
-  staleResponse.resolve({ messages: [...makeHistory(8, 'Old in-flight'), { role: 'assistant', content: 'Old in-flight reply' }] });
+  const staleMessages = historyWire([...makeHistory(8, 'Old in-flight'), { role: 'assistant', content: 'Old in-flight reply' }]);
+  staleResponse.resolve({ messages: staleMessages, sessionId: backendSessionId, reset: true, incremental: false });
   await Promise.all([entering, concurrentRefresh]);
   assert.equal(piStatusRefreshes, 2, 'overlapping view entry still awaits one Pi status refresh');
   assert.equal(historyReads, requestsBeforeOverlap + 2, 'a refresh requested during an in-flight read must run and be awaited');
@@ -186,6 +255,7 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   const heldPosition = transcript.scrollTop;
   history = [...latestHistory, { role: 'assistant', content: 'Streaming update' }];
   await chat.refreshTranscript();
+  assert.match(historyRequests.at(-1), /full=1/, 'explicit history refreshes request a full snapshot');
   assert.equal(transcript.scrollTop, heldPosition, 'a history update must not pull a reader away from older messages');
 
   transcript.visible = false;
@@ -197,8 +267,115 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   await chat.refreshTranscript();
   assert.equal(transcript.scrollTop, transcript.scrollHeight, 'readers already at the bottom should follow new messages');
 
+  const composer = elements.get('friday-message');
+  const composerNode = composer;
+  composer.value = 'typed while Friday updates';
+  composer.selectionStart = 5;
+  composer.selectionEnd = 12;
+  composer.scrollTop = 16;
+  history = [...history, { role: 'assistant', content: 'Polling update while typing' }];
+  await pollNow();
+  assert.strictEqual(elements.get('friday-message'), composerNode, 'transcript polling never replaces the composer DOM node');
+  assert.equal(composer.value, 'typed while Friday updates');
+  assert.deepEqual([composer.selectionStart, composer.selectionEnd, composer.scrollTop], [5, 12, 16], 'polling preserves the typed value, selection, and textarea scroll');
+  const partialArticle = transcript.children.at(-1);
+  const transcriptCountBeforePartial = transcript.children.length;
+  history = [...history.slice(0, -1), { ...history.at(-1), content: 'Polling update while typing — partial' }];
+  await pollNow();
+  assert.strictEqual(transcript.children.at(-1), partialArticle, 'a partial assistant update patches its existing message node');
+  assert.equal(transcript.children.length, transcriptCountBeforePartial, 'partial output updates do not duplicate transcript messages');
+  assert.match(treeText(partialArticle), /partial/);
+  assert.equal(partialArticle.querySelector('.message-content').children.length, 1, 'partial markdown replaces stale rendered nodes instead of accumulating duplicates');
+  assert.deepEqual([composer.value, composer.selectionStart, composer.selectionEnd, composer.scrollTop], ['typed while Friday updates', 5, 12, 16]);
+
+  const calls = [
+    { id: 'call-1', name: 'read_file', arguments: { path: 'a.js' } },
+    { id: 'call-2', name: 'list_files', arguments: { path: '.' } },
+  ];
+  history = [{ role: 'assistant', toolCalls: calls }];
+  await chat.refreshTranscript();
+  const toolGroup = transcript.children[0];
+  assert.equal(toolGroup.className, 'tool-group');
+  assert.equal(toolGroup.toolList.children.length, 2, 'parallel tool calls each get a collapsible result item');
+  assert.match(treeText(toolGroup), /read_file · running/);
+  assert.match(treeText(toolGroup), /list_files · running/);
+  toolGroup.open = true;
+  toolGroup.toolList.children[0].open = true;
+  history = [
+    { role: 'assistant', toolCalls: calls },
+    { role: 'tool', toolCallId: 'call-1', toolName: 'read_file', content: 'const safe = true;' },
+    { role: 'tool', toolCallId: 'call-2', toolName: 'list_files', content: 'a.js' },
+  ];
+  await chat.refreshTranscript();
+  assert.strictEqual(transcript.children[0], toolGroup, 'results update the existing accessible tool group');
+  assert.strictEqual(toolGroup.toolList.children[0], toolGroup.toolEntries.get('call-1'));
+  assert.equal(toolGroup.open, true, 'the group disclosure state survives polling');
+  assert.equal(toolGroup.toolList.children[0].open, true, 'each call disclosure state survives polling');
+  assert.match(treeText(toolGroup), /Result\nconst safe = true;/);
+  assert.match(treeText(toolGroup), /Result\na.js/);
+
+  const statusCall = { id: 'pi-status-1', name: 'pi_sessions', arguments: { action: 'status', runId: 'run-1' } };
+  const readCall = { id: 'pi-read-1', name: 'pi_sessions', arguments: { action: 'read', runId: 'run-1' } };
+  history = [
+    { role: 'assistant', id: 'pi-step-1', toolCalls: [statusCall] },
+    { role: 'tool', toolCallId: statusCall.id, toolName: statusCall.name, content: 'Run is idle.' },
+    { role: 'assistant', id: 'pi-step-2', toolCalls: [readCall] },
+    { role: 'tool', toolCallId: readCall.id, toolName: readCall.name, content: 'Recent conversation excerpt.' },
+    { role: 'assistant', id: 'pi-step-3', content: 'Pi conversation inspected.' },
+  ];
+  await chat.refreshTranscript();
+  assert.equal(transcript.children.length, 2, 'sequential Pi inspection calls share one group before Friday’s response');
+  const piInspectionGroup = transcript.children[0];
+  assert.equal(piInspectionGroup.toolList.children.length, 2);
+  assert.match(treeText(piInspectionGroup), /pi_sessions · complete/);
+  assert.equal(piInspectionGroup.toolEntries.size, 2, 'list/status/read actions remain separately represented in tool history');
+  assert.match(treeText(piInspectionGroup), /Run is idle/);
+  assert.match(treeText(piInspectionGroup), /Recent conversation excerpt/);
+
+  const channelCall = { id: 'slack-call', name: 'slack_read_channel', arguments: { channelId: 'C1' } };
+  history = [
+    { role: 'assistant', id: 'mixed-tool-step', toolCalls: [statusCall, channelCall, readCall] },
+    { role: 'tool', toolCallId: statusCall.id, toolName: statusCall.name, content: 'Run status failed.', isError: true },
+    { role: 'tool', toolCallId: channelCall.id, toolName: channelCall.name, content: 'Slack read failed.', isError: true },
+  ];
+  await chat.refreshTranscript();
+  assert.equal(transcript.children.length, 3, 'a non-Pi call separates adjacent Pi management groups');
+  assert.equal(transcript.children[0].toolList.children.length, 1);
+  assert.equal(transcript.children[1].toolList.children.length, 1);
+  assert.equal(transcript.children[2].toolList.children.length, 1);
+  assert.match(treeText(transcript.children[0]), /pi_sessions · error/);
+  assert.match(treeText(transcript.children[1]), /slack_read_channel · error/);
+  assert.match(treeText(transcript.children[2]), /pi_sessions · running/);
+
+  const wireMessage = (sequence, role, content) => {
+    const message = { role, content };
+    return { ...message, id: `${backendSessionId}:${sequence}`, sequence, revision: JSON.stringify(message), prefixRevision: `before-${sequence}` };
+  };
+  historyOverride = {
+    messages: [
+      wireMessage(4, 'user', 'discard duplicate'),
+      wireMessage(3, 'assistant', 'Out-of-order assistant'),
+      wireMessage(4, 'user', 'Duplicate ID resolved'),
+    ],
+    sessionId: backendSessionId, reset: false, incremental: true,
+  };
+  await pollNow();
+  assert.equal(transcript.children.length, 5, 'out-of-order and duplicate IDs merge into one ordered transcript');
+  assert.match(treeText(transcript), /pi_sessions[\s\S]*slack_read_channel[\s\S]*pi_sessions[\s\S]*Out-of-order assistant[\s\S]*Duplicate ID resolved/);
+  assert.doesNotMatch(treeText(transcript), /discard duplicate/);
+  backendSessionId = 'friday-session-b';
+  history = [{ role: 'user', content: 'New session transcript' }];
+  await pollNow();
+  assert.match(treeText(transcript), /New session transcript/);
+  assert.doesNotMatch(treeText(transcript), /Out-of-order assistant|Duplicate ID resolved/);
+
   fridayBusy = true;
+  delegatedTask = { status: 'running', label: 'Build billing API' };
   await chat.enterView();
+  assert.equal(elements.get('friday-status').textContent, 'Pi is working: Build billing API');
+  delegatedTask = { status: 'reviewing', label: 'Build billing API' };
+  await chat.refreshTranscript();
+  assert.equal(elements.get('friday-status').textContent, 'Friday is reviewing: Build billing API');
   assert.equal([...timers.values()][0].delay, 2_000, 'busy Friday conversations poll more frequently');
   chat.stop();
 });

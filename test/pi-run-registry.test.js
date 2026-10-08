@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createPiRunRegistry } from '../src/pi-run-registry.js';
+import { createPiRunRegistry } from '../src/pi/pi-run-registry.js';
 
 async function setup() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-registry-'));
@@ -18,6 +18,32 @@ test('stable session IDs, metadata updates, and restart restore', async () => {
   const restored = createPiRunRegistry({ file });
   assert.equal((await restored.getRun(id)).name, 'second');
   assert.equal((await restored.listRuns()).length, 1);
+});
+
+test('renaming a run persists its new session name without losing metadata', async () => {
+  const { file } = await setup();
+  const registry = createPiRunRegistry({ file });
+  const runId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/rename', sessionId: 'rename-run', name: 'Build task', domain: 'platform', purpose: 'maintain platform' });
+  const renamed = await registry.renameRun(runId, 'friday-ui');
+  assert.equal(renamed.name, 'friday-ui');
+  assert.equal(renamed.domain, 'platform');
+  assert.equal(renamed.purpose, 'maintain platform');
+  assert.equal((await createPiRunRegistry({ file }).getRun(runId)).name, 'friday-ui');
+  assert.throws(() => registry.renameRun('../bad', 'name'), /Invalid run/);
+  assert.throws(() => registry.renameRun(runId, '  '), /Invalid run name/);
+});
+
+test('closed marker persists as run state and renaming toggles it', async () => {
+  const { file } = await setup();
+  const registry = createPiRunRegistry({ file });
+  const runId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/closed', sessionId: 'closed-run', name: '[closed] friday' });
+  assert.equal((await registry.getRun(runId)).closed, true);
+  const restored = createPiRunRegistry({ file });
+  assert.equal((await restored.getRun(runId)).closed, true);
+  await restored.renameRun(runId, 'friday');
+  assert.equal((await restored.getRun(runId)).closed, false);
+  await restored.renameRun(runId, '[closed] friday');
+  assert.equal((await restored.getRun(runId)).closed, true);
 });
 
 test('batch ensures preserve IDs and persist in one update', async () => {
@@ -47,6 +73,38 @@ test('deleting a run removes its session mapping and Friday links', async () => 
   assert.equal(await registry.getLinkedRun('friday-2'), null);
   assert.equal((await registry.getRun(otherRunId)).name, 'Keep');
   assert.notEqual(await registry.ensureRun({ workspace: '/work', sessionPath: '/session/delete-me', sessionId: 'delete-me', name: 'Recreated' }), runId);
+});
+
+test('task state and session-fit metadata persist, and interrupted work becomes outcome-unknown', async () => {
+  const { file } = await setup();
+  const registry = createPiRunRegistry({ file });
+  const runId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/task', sessionId: 'task-run', name: 'Billing API', domain: 'billing', purpose: 'maintain the billing service' });
+  const task = await registry.createTask({ conversationId: 'friday-task-1', runId, queueId: '123e4567-e89b-12d3-a456-426614174001', label: 'Add invoice export' });
+  assert.equal((await registry.getCurrentTask('friday-task-1')).status, 'queued');
+  await registry.updateTask(task.id, { status: 'reviewing' });
+  const restored = createPiRunRegistry({ file });
+  assert.equal((await restored.getRun(runId)).domain, 'billing');
+  const interrupted = await restored.getTask(task.id);
+  assert.equal(interrupted.status, 'outcome-unknown');
+  assert.match(interrupted.detail, /restarted/);
+  assert.equal((await restored.getCurrentTask('friday-task-1')).id, task.id);
+  await restored.clearCurrentTask('friday-task-1');
+  assert.equal(await restored.getCurrentTask('friday-task-1'), null);
+});
+
+test('delegated task state transitions persist with status-safe summaries', async () => {
+  const { file } = await setup();
+  const registry = createPiRunRegistry({ file });
+  const runId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/report', sessionId: 'report-run' });
+  const queueId = '123e4567-e89b-12d3-a456-426614174002';
+  const task = await registry.createTask({ conversationId: 'friday-task-2', runId, queueId, label: 'Run tests' });
+  await registry.updateTask(task.id, { status: 'running' });
+  await registry.updateTask(task.id, { status: 'reviewing' });
+  await registry.updateTask(task.id, { status: 'completed', summary: 'Tests passed.' });
+  const reported = await registry.getTaskForPrompt(runId, queueId);
+  assert.equal(reported.status, 'completed');
+  assert.equal(reported.summary, 'Tests passed.');
+  assert.equal('prompt' in reported, false);
 });
 
 test('conversation links, validation, concurrent mutations and restrictive modes', async () => {

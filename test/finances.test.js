@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createFinanceStore } from '../src/finances.js';
+import { createFinanceStore } from '../src/storage/finances.js';
 
 test('finance store persists rupiah and sorts newest entries first', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'friday-finances-'));

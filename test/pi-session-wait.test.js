@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PiSession } from '../src/pi-session.js';
+import { PiSession } from '../src/pi/pi-session.js';
 
 const deferred = () => {
   let resolve;
@@ -23,6 +23,8 @@ test('waitForPrompt correlates FIFO results to the exact queue item', async () =
   const pi = session();
   const gates = [];
   const started = [];
+  const queueEvents = [];
+  pi.on('prompt_queue_started', (event) => queueEvents.push(event));
   pi.chat = (message) => {
     started.push(message);
     const gate = deferred();
@@ -35,6 +37,7 @@ test('waitForPrompt correlates FIFO results to the exact queue item', async () =
   const secondWait = pi.waitForPrompt(second.id);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(started, ['first']);
+  assert.deepEqual(queueEvents, [{ id: first.id }]);
   gates[0].resolve('reply one');
   assert.deepEqual(await firstWait, { queueId: first.id, status: 'completed', result: 'reply one' });
   await new Promise((resolve) => setImmediate(resolve));

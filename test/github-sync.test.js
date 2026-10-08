@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, readFile, lstat, rm, cp, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { millisecondsUntilNextQuarterHour, syncGitHubSnapshot, validateGitHubSyncTarget } from '../src/github-sync.js';
+import { millisecondsUntilNextQuarterHour, syncGitHubSnapshot, validateGitHubSyncTarget } from '../src/integrations/github-sync.js';
 
 test('scheduled sync delay aligns with the next wall-clock quarter-hour', () => {
   const cases = [
@@ -38,12 +38,14 @@ test('sync excludes auth.json files while including settings, sessions, and bina
     await writeFile(join(source, 'sessions', 'conversation.jsonl'), 'private conversation');
     await mkdir(join(source, 'memory'));
     await writeFile(join(source, 'memory', 'context.bin'), Buffer.from([0, 1, 2, 255]));
+    await mkdir(join(source, 'data', 'calendar'), { recursive: true });
+    await writeFile(join(source, 'data', 'calendar', 'events.json'), '{"events":[]}');
     await writeFile(join(source, 'large.dat'), Buffer.alloc(2 * 1024 * 1024 + 1, 7));
     const { symlink } = await import('node:fs/promises');
     await writeFile(join(root, 'outside'), 'outside source');
     await symlink(join(root, 'outside'), join(source, 'outside-link'));
     await symlink(join(root, 'outside-dir'), join(source, 'linked-dir'));
-    const result = await syncGitHubSnapshot({ directory: source, owner: 'me', repo: 'private', managedRepos: [repo], backend: {
+    const result = await syncGitHubSnapshot({ directory: source, owner: 'me', repo: 'private', managedRepos: [repo], excludedPaths: ['data/calendar'], backend: {
       validate: async ({ owner, repo: name }) => owner === 'me' && name === 'private',
       prepare: async ({ path }) => { await mkdir(path, { recursive: true }); await writeFile(join(path, 'old.txt'), 'old'); },
       commitAndPush: async ({ path, copied }) => {
@@ -51,7 +53,7 @@ test('sync excludes auth.json files while including settings, sessions, and bina
         for (const file of ['settings.json', 'models.json', '.env', 'sessions/conversation.jsonl', 'memory/context.bin', 'large.dat', 'notes.md']) {
           assert.deepEqual(await readFile(join(path, 'source', file)), await readFile(join(source, file)));
         }
-        for (const file of ['auth.json', 'config/auth.json']) await assert.rejects(lstat(join(path, 'source', file)));
+        for (const file of ['auth.json', 'config/auth.json', 'data/calendar']) await assert.rejects(lstat(join(path, 'source', file)));
         assert.equal(await readFile(join(path, 'old.txt'), 'utf8'), 'old');
         for (const file of ['repos', 'node_modules', 'project', 'linked-dir', 'outside-link']) await assert.rejects(lstat(join(path, 'source', file)));
         return { changed: true, pushed: false, copied };

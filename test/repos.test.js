@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { createRepositoryStore } from '../src/repos.js';
+import { createRepositoryStore } from '../src/storage/repos.js';
 
 test('repository listing reports branch and working tree stats', async (t) => {
   const temp = await mkdtemp(join(tmpdir(), 'friday-git-stats-'));

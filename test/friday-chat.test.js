@@ -98,12 +98,24 @@ rl.on('line', line => {
   const script = await request('/friday-chat.js');
   assert.equal(script.status, 200);
   assert.match(script.headers.get('content-type'), /javascript/);
+  const markdown = await request('/markdown.js');
+  assert.equal(markdown.status, 200, 'the app renderer module must be served for app.js startup');
+  assert.match(markdown.headers.get('content-type'), /javascript/);
+  assert.match(await markdown.text(), /export function renderMarkdown/);
+  const dashboardFormat = await request('/dashboard-format.js');
+  assert.equal(dashboardFormat.status, 200, 'dashboard formatting module must be served for app.js startup');
+  assert.match(dashboardFormat.headers.get('content-type'), /javascript/);
+  const highlighter = await request('/highlight.min.js');
+  assert.equal(highlighter.status, 200, 'the existing Pi-bundled highlighter is served locally');
+  assert.match(highlighter.headers.get('content-type'), /javascript/);
+  assert.match(await highlighter.text(), /hljs/);
 
   const memoryGraphResponse = await request('/api/friday/memory/graph');
   assert.equal(memoryGraphResponse.status, 200);
   assert.deepEqual(await memoryGraphResponse.json(), { nodes: [], edges: [], totalDailyNotes: 0, truncated: false });
   const status = await request('/api/friday/status');
   assert.equal(status.status, 200);
+  assert.equal((await status.json()).delegatedTask, null, 'status exposes the conversation-scoped delegated task when present');
   const piStatus = await (await request('/api/status')).json();
   assert.deepEqual(piStatus.contextUsage, { tokens: 25000, contextWindow: 100000, percent: 25 });
   const safeWorkspace = piStatus.workspace.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-');
@@ -125,6 +137,18 @@ rl.on('line', line => {
   const selectedPiConversation = fridayPiConversations.sessions.find(({ id }) => id === 'selected-workspace');
   assert.equal(selectedPiConversation.running, false, 'a saved session without an open runtime is reported as saved');
   assert.equal(selectedPiConversation.opening, false);
+  const profileResponse = await request(`/api/friday/pi-conversations/${selectedPiConversation.runId}/profile`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expertise: ['Node.js'], responsibilities: ['API ownership'], repositories: ['friday'], capacity: 2 }),
+  });
+  assert.equal(profileResponse.status, 200);
+  const profiledSessions = await (await request('/api/friday/pi-conversations')).json();
+  const profiled = profiledSessions.sessions.find(({ runId }) => runId === selectedPiConversation.runId);
+  assert.deepEqual(profiled.expertise, ['Node.js']);
+  assert.deepEqual(profiled.responsibilities, ['API ownership']);
+  assert.deepEqual(profiled.repositories, ['friday']);
+  assert.equal(profiled.capacity, 2);
+  assert.deepEqual(profiled.workload, { queued: 0, running: 0, reviewing: 0, unknown: 0, openTasks: 0 });
   const selectedPiResponse = await request('/api/session/select', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Friday-Session': 'friday-pi-status-test' },
     body: JSON.stringify({ cwd: piStatus.workspace, path: selectedPiConversation.path }),
@@ -177,7 +201,11 @@ rl.on('line', line => {
   assert.equal((await (await request('/api/thinking-levels')).json()).current, 'off');
   const fridayHistory = await request('/api/friday/history');
   assert.equal(fridayHistory.status, 200);
-  assert.deepEqual((await fridayHistory.json()).messages, []);
+  const emptySnapshot = await fridayHistory.json();
+  assert.deepEqual(emptySnapshot.messages, []);
+  const emptyCursor = await (await request(`/api/friday/history?sessionId=${encodeURIComponent(emptySnapshot.sessionId)}`)).json();
+  assert.deepEqual(emptyCursor.messages, [], 'an unchanged empty transcript also returns no content');
+  assert.equal(emptyCursor.unchanged, true);
   const initialFridaySessions = await (await request('/api/friday/sessions')).json();
   assert.equal(initialFridaySessions.sessions.length, 1);
   const createdFriday = await request('/api/friday/sessions', { method: 'POST' });
@@ -288,7 +316,7 @@ test('Friday SDK resumes the latest saved Friday transcript after restart', { ti
   const fridayWorkspace = join(fridayDir, 'workspace');
   const sessionFile = join(fridayDir, 'data', 'persisted.jsonl');
   await mkdir(join(fridayDir, 'data'), { recursive: true });
-  await writeFile(sessionFile, JSON.stringify({ type: 'session', version: 3, id: 'persisted', timestamp: new Date().toISOString(), cwd: fridayWorkspace }) + '\n' + JSON.stringify({ type: 'message', id: 'message-1', parentId: null, timestamp: new Date().toISOString(), message: { role: 'user', content: 'saved Friday message' } }) + '\n');
+  await writeFile(sessionFile, JSON.stringify({ type: 'session', version: 3, id: 'persisted', timestamp: new Date().toISOString(), cwd: fridayWorkspace }) + '\n' + JSON.stringify({ type: 'message', id: 'message-1', parentId: null, timestamp: new Date().toISOString(), message: { role: 'user', content: 'saved Friday message' } }) + '\n' + JSON.stringify({ type: 'message', id: 'message-2', parentId: 'message-1', timestamp: new Date().toISOString(), message: { role: 'assistant', content: 'saved Friday reply' } }) + '\n');
   const base = `http://127.0.0.1:${port}`;
   const client = createAppClient(base);
   const start = () => spawn(process.execPath, [join(root, 'src/server.js')], {
@@ -304,13 +332,36 @@ test('Friday SDK resumes the latest saved Friday transcript after restart', { ti
   await client.login();
   let history = await client.request('/api/friday/history');
   assert.equal(history.status, 200);
-  assert.match(JSON.stringify(await history.json()), /saved Friday message/);
+  const initialHistory = await history.json();
+  assert.match(JSON.stringify(initialHistory), /saved Friday message/);
+  assert.equal(initialHistory.reset, true);
+  assert.equal(initialHistory.messages[0].sequence, 0);
+  assert.equal(typeof initialHistory.messages[0].id, 'string');
+  assert.equal(initialHistory.messages.length, 2);
+  const firstCursor = initialHistory.messages[0];
+  const latestCursor = initialHistory.messages.at(-1);
+  const cursorPath = (cursor) => `/api/friday/history?sessionId=${encodeURIComponent(initialHistory.sessionId)}&afterId=${encodeURIComponent(cursor.id)}&afterRevision=${encodeURIComponent(cursor.revision)}&afterPrefix=${encodeURIComponent(cursor.prefixRevision)}`;
+  const incrementalHistory = await (await client.request(cursorPath(firstCursor))).json();
+  assert.deepEqual(incrementalHistory.messages.map(({ id }) => id), [latestCursor.id], 'a cursor receives only the newer message');
+  assert.equal(incrementalHistory.incremental, true);
+  const unchangedHistory = await (await client.request(cursorPath(latestCursor))).json();
+  assert.deepEqual(unchangedHistory.messages, [], 'unchanged polls return no transcript messages');
+  assert.equal(unchangedHistory.unchanged, true);
+  assert.equal((await (await client.request('/api/friday/history?full=1')).json()).messages.length, 2, 'full refresh remains available');
+  const switchedHistory = await (await client.request(`/api/friday/history?sessionId=other-session&afterId=${encodeURIComponent(latestCursor.id)}`)).json();
+  assert.equal(switchedHistory.reset, true, 'a mismatched session cursor receives a full snapshot');
+  assert.equal(switchedHistory.messages.length, 2);
+  const resetHistory = await (await client.request(cursorPath(latestCursor).replace(/afterPrefix=[^&]+/, 'afterPrefix=stale-prefix'))).json();
+  assert.equal(resetHistory.reset, true, 'an edited or compacted transcript prefix invalidates the cursor safely');
+  assert.equal(resetHistory.messages.length, 2);
   await stop();
   child = start(); await ready();
   await client.login();
-  history = await client.request('/api/friday/history');
+  history = await client.request(cursorPath(latestCursor));
   assert.equal(history.status, 200);
-  assert.match(JSON.stringify(await history.json()), /saved Friday message/);
+  const afterRestart = await history.json();
+  assert.equal(afterRestart.reset, false, 'the same saved session retains its cursor after restart');
+  assert.deepEqual(afterRestart.messages, []);
   const status = await (await client.request('/api/friday/status')).json();
   assert.match(status.sessionPath, /persisted\.jsonl$/);
 });

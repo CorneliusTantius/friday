@@ -8,22 +8,35 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
 const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 const chat = await readFile(new URL('../public/friday-chat.js', import.meta.url), 'utf8');
+const localCalendar = await readFile(new URL('../public/local-calendar.js', import.meta.url), 'utf8');
+const calendarView = await readFile(new URL('../public/calendar-view.js', import.meta.url), 'utf8');
 const socials = await readFile(new URL('../public/socials.js', import.meta.url), 'utf8');
+const server = await readFile(new URL('../src/server.js', import.meta.url), 'utf8');
 const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
 const login = await readFile(new URL('../public/login.html', import.meta.url), 'utf8');
 
 test('public workspace UI contract has every feature, form, and shell integration', () => {
-  for (const id of ['friday-feature','pi-feature','files-feature','dashboard-feature','repos-feature','notes-feature','finances-feature','socials-feature','settings-feature','friday-form','chat-form','file-save','finance-form','clone-repo-form','workspace-sidebar','assistant-rail','shell-command-dialog','shell-command-input']) {
+  for (const id of ['friday-feature','pi-feature','files-feature','dashboard-feature','repos-feature','notes-feature','finances-feature','socials-feature','calendar-feature','settings-feature','friday-form','chat-form','file-save','finance-form','clone-repo-form','workspace-sidebar','assistant-rail','shell-command-dialog','shell-command-input']) {
     assert.equal((html.match(new RegExp(`\\bid=["']${id}["']`, 'g')) || []).length, 1, `expected one #${id}`);
   }
   assert.match(html, /data-shell-drawer="assistant"/);
   assert.match(html, /data-shell-drawer="sidebar"/);
+  assert.doesNotMatch(html, /Host Online|Host online|connection-dot|connection-label|topbar-status/);
+  assert.doesNotMatch(app, /setConnection|connection-dot|connection-label/);
+  assert.doesNotMatch(css, /\.connection-dot|\.topbar-status/);
   assert.match(app, /initializeWorkspaceShell/);
   assert.match(app, /createFridayChat/);
   assert.match(app, /const fridayEntry = name === 'friday' \? fridayChat\.enterView\(\) : null/);
   assert.match(app, /Promise\.all\(\[fridayChat\.start\(\), fridayEntry,/);
   assert.match(app, /onEnter: refreshFridayAgentViewData/);
   assert.match(app, /apiJson\('\/api\/friday\/pi-conversations'/);
+  assert.match(html, /id="friday-task-board"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(app, /Edit staff profile/);
+  assert.match(app, /Expertise \(one per line\)/);
+  assert.match(app, /Responsibilities \(one per line\)/);
+  assert.match(app, /Repositories \(one per line\)/);
+  assert.match(app, /Workload: \$\{session\.workload\?\.openTasks/);
+  assert.match(chat, /Friday · Task update/);
   const pollRefresh = app.slice(app.indexOf('async function pollHistory'), app.indexOf('function startPolling'));
   assert.match(pollRefresh, /loadHistory\(\{ limit: data\.busy \? 10 : null \}\)/);
   assert.match(pollRefresh, /loadSessions\(elements\.workspace\.value, \{ quiet: true \}\)/);
@@ -44,7 +57,45 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(app, /openAssistant\(\) \{ open\(assistant\); void fridayChat\.enterView\(\)\.catch/);
   assert.match(app, /fridayChat\.enterView\(\)\.catch/);
   assert.match(app, /\['socials', \$\('#socials-feature'\)\]/);
+  assert.match(app, /\['calendar', \$\('#calendar-feature'\)\]/);
   assert.match(html, /data-feature="socials"/);
+  assert.match(html, /nav-group-title workspace-nav-heading">Workspace<\/span>/);
+  assert.doesNotMatch(html, /nav-group-title workspace-nav-heading">Agents<\/span>/);
+  const workspaceNav = html.slice(html.indexOf('nav-group-title workspace-nav-heading">Workspace'), html.indexOf('nav-group-title workspace-nav-heading">Your space'));
+  const yourSpaceNav = html.slice(html.indexOf('nav-group-title workspace-nav-heading">Your space'), html.indexOf('nav-group-title workspace-nav-heading">System'));
+  for (const feature of ['friday', 'pi', 'repos', 'calendar', 'socials']) assert.match(workspaceNav, new RegExp(`data-feature="${feature}"`));
+  assert.doesNotMatch(yourSpaceNav, /data-feature="calendar"|data-feature="socials"/);
+  assert.match(html, /data-feature="calendar"/);
+  const socialsPage = html.slice(html.indexOf('id="socials-feature"'), html.indexOf('id="calendar-feature"'));
+  const calendarPage = html.slice(html.indexOf('id="calendar-feature"'), html.indexOf('id="settings-feature"'));
+  const connections = html.slice(html.indexOf('class="settings-group connections-settings-group"'), html.indexOf('class="settings-group friday-settings-group"'));
+  for (const id of ['gmail-connect', 'gmail-status', 'gmail-disconnect', 'slack-connect', 'slack-status', 'slack-disconnect']) {
+    assert.equal((html.match(new RegExp(`\\bid="${id}"`, 'g')) || []).length, 1, `#${id} exists only once`);
+    assert.ok(connections.includes(`id="${id}"`), `#${id} is in System Settings Connections`);
+  }
+  assert.match(connections, /Authorize Gmail with Google/);
+  assert.match(connections, /Google access and refresh tokens stay in private files on this host/);
+  assert.match(connections, /Authorize Slack workspace/);
+  assert.match(connections, /workspace-admin approval may be required/);
+  assert.match(connections, /Slack bot token privately on this host/);
+  assert.match(connections, /does not sign you in to Friday/);
+  assert.doesNotMatch(socialsPage, /gmail-connect|gmail-status|gmail-disconnect|slack-connect|slack-status|slack-disconnect|calendar-connect|calendar-status|calendar-event-list/);
+  assert.match(socialsPage, /gmail-inbox-status[\s\S]*gmail-message-list[\s\S]*slack-channels-status[\s\S]*slack-channel-list/);
+  for (const id of ['calendar-month-grid', 'calendar-month-days', 'calendar-mobile-date', 'calendar-mobile-agenda', 'calendar-event-form', 'calendar-title', 'calendar-start', 'calendar-end', 'calendar-event-list']) assert.match(calendarPage, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(calendarPage, /Google|Authorize|Connect Calendar/);
+  assert.match(localCalendar, /api\/calendar\/events/);
+  assert.match(localCalendar, /method: editingId \? 'PUT' : 'POST'/);
+  assert.match(localCalendar, /method: 'DELETE'/);
+  assert.match(html, /calendar-month-navigation[\s\S]*aria-label="Previous month"[\s\S]*calendar-today[\s\S]*aria-label="Next month"/);
+  assert.match(html, /<table id="calendar-month-grid"[\s\S]*scope="col"[\s\S]*id="calendar-month-days"/);
+  assert.match(localCalendar, /countEventsByDay\([\s\S]*buildMonthDays\([\s\S]*aria-pressed/);
+  assert.match(localCalendar, /selectedEvents = events\.filter/);
+  assert.match(localCalendar, /monthDays\.querySelector\(/);
+  assert.match(localCalendar, /function beginCreate\(\)/);
+  assert.match(calendarView, /export function shiftMonth/);
+  assert.ok(server.includes('href="/?feature=settings"'), 'Gmail and Slack OAuth callbacks return to Settings');
+  assert.ok(server.includes("join(paths.dataDir, 'calendar', 'events.json')"), 'local events are stored under private Friday data');
+  assert.match(socials, /friday:feature-change/);
   assert.match(socials, /api\/socials\/gmail\/messages/);
   assert.doesNotMatch(socials, /message\.snippet/);
   assert.match(socials, /api\/socials\/gmail\/status/);
@@ -54,6 +105,64 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(css, /--bg:\s*#0b0e11;/);
   assert.match(css, /--accent:\s*#72d9e5;/);
   for (const variable of ['display', 'mono', 'purple']) assert.match(css, new RegExp(`--${variable}:`));
+  assert.match(css, /--border:\s*rgba\(/);
+  assert.match(css, /--radius-sm:\s*8px/);
+  assert.match(css, /--radius:\s*14px/);
+  assert.match(css, /:focus-visible\s*\{\s*outline:2px solid var\(--accent\)/);
+  assert.match(css, /@media \(prefers-reduced-motion:reduce\)[\s\S]*\.feature:hover,button:active:not\(:disabled\) \{ transform:none !important; \}/);
+  assert.match(css, /@keyframes view-fade \{ from \{ opacity:0; transform:translateY\(4px\)/);
+});
+
+test('settings start collapsed and Files and Notes expose accessible code/tree navigation', () => {
+  assert.match(html, /<details class="settings-group friday-settings-group">/);
+  assert.match(html, /<details class="settings-group pi-settings-group">/);
+  assert.doesNotMatch(html, /<details open class="settings-group/);
+  assert.match(html, /<nav id="note-list" class="file-list" aria-label="Notes">/);
+  assert.match(app, /className = 'notes-tree-folder-label'/);
+  assert.match(css, /\.notes-tree \.file-item \{ font-size: 12px; \}/, 'only note-tree entries use the smaller label size');
+  assert.match(app, /setAttribute\('aria-label', `Open note \$\{note\.path\}`\)/);
+  assert.match(html, /id="file-edit"[^>]*>Edit file/);
+  assert.match(app, /function renderFilePreview\(content, path\)/);
+  assert.match(app, /window\.hljs\.highlight\(content, \{ language, ignoreIllegals: true \}\)/);
+  assert.match(app, /code\.textContent = content/);
+  assert.match(html, /src="\/highlight\.min\.js" defer/);
+});
+
+test('host connectivity indicator is removed without removing host health features', () => {
+  assert.doesNotMatch(html, /Host Online|Host online|connection-dot|connection-label|topbar-status/);
+  assert.doesNotMatch(app, /setConnection|connection-dot|connection-label/);
+  assert.doesNotMatch(css, /\.connection-dot|\.topbar-status/);
+  assert.match(app, /apiJson\('\/api\/system\/temperature'\)/);
+  assert.match(app, /apiJson\('\/api\/devices'\)/);
+});
+
+test('calendar month grid stays responsive and exposes accessible touch navigation', () => {
+  assert.match(css, /\.calendar-month-grid \{ width:100%; table-layout:fixed;/);
+  assert.match(css, /\.calendar-day-button \{ display:flex; width:100%; min-height:52px;/);
+  assert.match(css, /\.calendar-nav-button,\.calendar-today-button \{ min-width:44px; min-height:44px;/);
+  assert.match(css, /\.calendar-event-actions button \{ min-height:44px; \}/);
+  assert.match(css, /@media \(max-width:1170px\)[\s\S]*\.local-calendar-layout \{ grid-template-columns:minmax\(0,1fr\);/);
+  assert.match(css, /@media \(max-width:1170px\)[\s\S]*\.calendar-day-button \{ min-height:48px;/);
+  assert.match(css, /@media \(max-width:600px\)[\s\S]*\.calendar-month-grid \{ display:none; \}[\s\S]*\.calendar-mobile-picker \{ display:grid;[\s\S]*\.calendar-mobile-agenda \{ display:grid;/);
+  assert.match(css, /\.calendar-mobile-picker input \{ width:100%; min-width:0; min-height:48px;/);
+  assert.match(localCalendar, /mobileDateInput\.addEventListener\('change'/);
+  assert.match(localCalendar, /function renderMobileAgenda\(\)/);
+  assert.match(localCalendar, /countEventsByDay\(events, timeZone\)/);
+  assert.match(localCalendar, /dayKeyInTimeZone\(new Date\(event\.start\), timeZone\)/);
+  assert.match(localCalendar, /formatEventTime\(event, timeZone\)/);
+  assert.doesNotMatch(css, /\.calendar-month-grid[^}]*min-width:\s*\d{3,}/);
+});
+
+test('System settings separates confirmed Pi extension and CLI updates', () => {
+  for (const id of ['update-pi-extensions', 'pi-extensions-update-status', 'update-pi-runtime', 'pi-runtime-update-status']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(html, /role="status" aria-live="polite"><\/p>[\s\S]*id="extensions-list"/);
+  assert.match(html, /Project-local packages are skipped/);
+  assert.match(html, /Friday’s bundled Pi SDK is managed by Friday deployments/);
+  assert.match(app, /window\.confirm\(extensionUpdate[\s\S]*Update the Pi CLI on this host/);
+  assert.match(app, /JSON\.stringify\(\{ confirmed: true \}\)/);
+  assert.match(app, /apiJson\('\/api\/pi\/update-status'/);
 });
 
 test('dashboard renders the initial temperature after attaching its DOM', () => {

@@ -1,9 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PiSession } from '../src/pi-session.js';
+import { PiSession } from '../src/pi/pi-session.js';
+
+test('PiSession setSessionName sends a name update through Pi RPC', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'pi-rename-'));
+  const script = join(dir, 'fake-pi.js');
+  const launcher = join(dir, 'fake-pi');
+  const record = join(dir, 'rename.json');
+  await writeFile(script, `
+    const fs = require('node:fs');
+    const readline = require('node:readline');
+    const rl = readline.createInterface({ input: process.stdin });
+    const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
+    rl.on('line', (line) => {
+      const request = JSON.parse(line);
+      if (request.type === 'get_state') send({ type: 'response', id: request.id, success: true, data: {} });
+      if (request.type === 'set_session_name') {
+        fs.writeFileSync(process.argv[2], JSON.stringify({ type: request.type, name: request.name }));
+        send({ type: 'response', id: request.id, success: true, data: {} });
+      }
+    });
+  `);
+  await writeFile(launcher, `#!/bin/sh\nexec "${process.execPath}" "${script}" "${record}"`);
+  await chmod(launcher, 0o755);
+  const session = new PiSession({ command: launcher, cwd: dir });
+  t.after(async () => { await session.stop(); await rm(dir, { recursive: true, force: true }); });
+  await session.setSessionName('friday-ui');
+  assert.deepEqual(JSON.parse(await readFile(record, 'utf8')), { type: 'set_session_name', name: 'friday-ui' });
+});
 
 test('enqueuePrompt returns immediately and executes prompts FIFO while chat is active', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'pi-queue-'));

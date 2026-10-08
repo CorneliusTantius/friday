@@ -15,6 +15,8 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   const port = 20000 + Math.floor(Math.random() * 30000);
   const piCommand = join(home, 'pi');
   const marker = join(home, 'pi-started');
+  const piUpdateLog = join(home, 'pi-update-args');
+  const piUpdateFailure = join(home, 'pi-update-failure');
   const fakeBin = join(home, 'bin');
   await mkdir(fakeBin);
   await writeFile(join(fakeBin, 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
@@ -25,7 +27,7 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   await writeFile(legacyPiSyncConfig, JSON.stringify({ owner: 'old-owner', repo: 'old-pi-repo' }));
   await mkdir(join(home, 'friday', 'repos', 'legacy-friday', '.git'), { recursive: true });
   await mkdir(join(home, '.pi', 'repos', 'legacy-pi', '.git'), { recursive: true });
-  await writeFile(piCommand, `#!/bin/sh\ntouch "${marker}"\nexit 1\n`, { mode: 0o700 });
+  await writeFile(piCommand, `#!/bin/sh\ntouch "${marker}"\nif [ "$1" = list ]; then printf 'User packages:\\n  git:github.com/example/pi-extension\\n    /tmp/pi-extension\\n'; exit 0; fi\nif [ "$1" = update ]; then printf '%s\\n' "$*" >> "$PI_UPDATE_LOG"; sleep 0.15; if [ -f "$PI_UPDATE_FAILURE" ]; then echo 'private package output' >&2; exit 9; fi; exit 0; fi\nexit 1\n`, { mode: 0o700 });
   const child = spawn(process.execPath, [serverPath], {
     cwd: home,
     env: {
@@ -34,6 +36,8 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
       FRIDAY_HOME: join(home, 'friday'),
       PI_CODING_AGENT_DIR: join(home, '.pi', 'agent'),
       PI_COMMAND: piCommand,
+      PI_UPDATE_LOG: piUpdateLog,
+      PI_UPDATE_FAILURE: piUpdateFailure,
       INVOCATION_ID: '',
       PATH: `${fakeBin}${delimiter}${process.env.PATH || ''}`,
       PORT: String(port),
@@ -54,6 +58,9 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   }
   assert.ok(ready, 'server should start');
   for (const [url, method] of [
+    ['/api/pi/update-status', 'GET'],
+    ['/api/pi/extensions/update', 'POST'],
+    ['/api/pi/runtime/update', 'POST'],
     ['/api/friday/files', 'GET'],
     ['/api/friday/files/content?path=config/auth.json', 'GET'],
     ['/api/friday/files/content?path=config/auth.json', 'PUT'],
@@ -68,11 +75,16 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   assert.doesNotMatch(appHtml, /data-feature="(?:friday-settings|pi-settings|pi-files|pi-repos)"/);
   assert.equal((appHtml.match(/data-feature="files"/g) || []).length, 1, 'Files has one navigation entry');
   assert.equal((appHtml.match(/data-feature="repos"/g) || []).length, 1, 'Repositories has one navigation entry');
+  const workspaceNav = appHtml.slice(appHtml.indexOf('nav-group-title workspace-nav-heading">Workspace'), appHtml.indexOf('nav-group-title workspace-nav-heading">Your space'));
+  assert.match(workspaceNav, /Friday Agent[\s\S]*Pi Agent[\s\S]*Repositories/);
+  const personalSpaceNav = appHtml.slice(appHtml.indexOf('nav-group-title workspace-nav-heading">Your space'), appHtml.indexOf('workspace-system-group'));
+  assert.doesNotMatch(personalSpaceNav, /data-feature="repos"/);
   assert.match(appHtml, /data-file-scope="files"[\s\S]*data-file-scope="pi-files"/);
   assert.doesNotMatch(appHtml, /data-repo-scope=/);
   assert.doesNotMatch(appHtml, /data-sync="pi"/);
   assert.doesNotMatch(appHtml, /id="pi-repos-feature"|id="pi-repo-list"|id="clone-pi-repo-form"/);
-  assert.match(appHtml, /<details open class="settings-group friday-settings-group">/);
+  assert.match(appHtml, /<details class="settings-group friday-settings-group">/);
+  assert.doesNotMatch(appHtml, /<details open class="settings-group/);
   assert.ok(appHtml.indexOf('data-feature="dashboard"') < appHtml.indexOf('Friday Agent'));
   assert.match(appHtml, /<h2 id="server-settings-heading">Server<\/h2>[\s\S]*<h3 id="connected-devices-heading">Connected devices<\/h3>/);
   assert.match(appHtml, /id="restart-friday"/);
@@ -85,6 +97,49 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
   assert.equal((await request('/api/pi/repos/pull', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'legacy-pi' }) })).status, 404);
   assert.ok((await stat(join(home, '.pi', 'repos', 'legacy-pi', '.git'))).isDirectory());
   await assert.rejects(stat(join(home, '.pi', 'workspace', 'repos')));
+  const updateStatus = await (await request('/api/pi/update-status')).json();
+  assert.equal(updateStatus.state, 'idle');
+  assert.equal(await import('node:fs/promises').then(({ access }) => access(marker).then(() => true, () => false)), false,
+    'reading Pi update status must not execute the Pi CLI');
+  assert.equal((await request('/api/pi/extensions/update', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://attacker.example' }, body: JSON.stringify({ confirmed: true }),
+  })).status, 403, 'Pi update actions must reject cross-origin requests');
+  for (const body of [{}, { confirmed: false }, { confirmed: true, source: 'arbitrary-command' }]) {
+    assert.equal((await request('/api/pi/extensions/update', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })).status, 400, 'Pi update actions require confirmation and reject caller-supplied command data');
+  }
+  assert.equal(await import('node:fs/promises').then(({ access }) => access(marker).then(() => true, () => false)), false,
+    'unconfirmed and cross-origin updates must not execute the Pi CLI');
+
+  const updateRequest = request('/api/pi/extensions/update', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed: true }),
+  });
+  await delay(30);
+  assert.equal((await request('/api/pi/runtime/update', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed: true }),
+  })).status, 409, 'only one package-changing operation can run at a time');
+  const extensionsUpdated = await updateRequest;
+  assert.equal(extensionsUpdated.status, 200);
+  assert.equal((await extensionsUpdated.json()).state, 'succeeded');
+  const runtimeUpdated = await request('/api/pi/runtime/update', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed: true }),
+  });
+  assert.equal(runtimeUpdated.status, 200);
+  assert.equal((await runtimeUpdated.json()).operation, 'runtime');
+  assert.deepEqual((await readFile(piUpdateLog, 'utf8')).trim().split('\n'), [
+    'update --extensions --no-approve', 'update --self --no-approve',
+  ]);
+  await writeFile(piUpdateFailure, 'fail');
+  const failedUpdate = await request('/api/pi/runtime/update', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed: true }),
+  });
+  assert.equal(failedUpdate.status, 502);
+  assert.doesNotMatch(await failedUpdate.text(), /private package output/);
+  const failedStatus = await (await request('/api/pi/update-status')).json();
+  assert.equal(failedStatus.state, 'failed');
+  assert.match(failedStatus.message, /Pi update failed/);
+
   const restart = await request('/api/system/restart', { method: 'POST' });
   assert.equal(restart.status, 409, 'manual server instances must not terminate without a systemd restart policy');
 
@@ -179,9 +234,6 @@ test('settings routes keep Friday, System, and Pi scopes independent without sta
     assert.equal(response.status, 200, `${path} should be available without Pi`);
     assert.equal(typeof await response.json(), 'object');
   }
-  assert.equal(await import('node:fs/promises').then(({ access }) => access(marker).then(() => true, () => false)), false,
-    'Friday and System settings must not start Pi');
-
   const piSettings = await request('/api/pi/settings');
   assert.equal(piSettings.status, 200);
   assert.equal((await piSettings.json()).workspace, join(home, 'friday', 'workspace'));

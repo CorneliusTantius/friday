@@ -28,17 +28,18 @@
             <button class="feature active" type="button" data-feature="dashboard" aria-current="page" aria-label="Dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8V3H3zM13 21h8V11h-8zM13 3h8v6h-8zM3 17h8v4H3z"/></svg><span>Dashboard</span></button>
           </div>
           <div class="nav-group workspace-nav-group">
-            <span class="nav-group-title workspace-nav-heading">Agents</span>
+            <span class="nav-group-title workspace-nav-heading">Workspace</span>
             <button class="feature" type="button" data-feature="friday" aria-label="Friday Agent"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5L12 2Z"/><path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15Z"/></svg><span>Friday Agent</span></button>
             <button class="feature" type="button" data-feature="pi" aria-label="Pi Agent"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M8 7v10m8-10v10"/></svg><span>Pi Agent</span></button>
+            <button class="feature" type="button" data-feature="repos" aria-label="Repositories"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-10Z"/><path d="M3.5 10h17"/></svg><span>Repositories</span></button>
+            <button class="feature" type="button" data-feature="calendar" aria-label="Calendar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v3m14-3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13H4V6a1 1 0 0 1 1-1Z"/><path d="M8 13h2m4 0h2m-8 4h2"/></svg><span>Calendar</span></button>
+            <button class="feature" type="button" data-feature="socials" aria-label="Socials"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v13H4z"/><path d="m4.5 7 7.5 6 7.5-6"/></svg><span>Socials</span></button>
           </div>
           <div class="nav-group workspace-nav-group">
             <span class="nav-group-title workspace-nav-heading">Your space</span>
             <button class="feature" type="button" data-feature="files" aria-label="Files"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h4l2 2h6A2.5 2.5 0 0 1 20.5 9.5v7A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z"/></svg><span>Files</span></button>
-            <button class="feature" type="button" data-feature="repos" aria-label="Repositories"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-10Z"/><path d="M3.5 10h17"/></svg><span>Repositories</span></button>
             <button class="feature" type="button" data-feature="notes" aria-label="Friday notes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l4 4V20a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V5.5a2 2 0 0 1 2-2Z"/><path d="M14 4v5h5M8 13h8M8 17h8"/></svg><span>Notes</span></button>
             <button class="feature" type="button" data-feature="finances" aria-label="Financial tracker"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 5-7"/></svg><span>Finances</span></button>
-            <button class="feature" type="button" data-feature="socials" aria-label="Socials"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v13H4z"/><path d="m4.5 7 7.5 6 7.5-6"/></svg><span>Socials</span></button>
           </div>
           <div class="nav-group workspace-nav-group workspace-system-group">
             <span class="nav-group-title workspace-nav-heading">System</span>
@@ -56,7 +57,6 @@
         <div class="topbar-breadcrumb"><svg class="topbar-home" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10H3zM9 20v-7h6v7"/></svg><span class="topbar-root">Workspace</span><span class="topbar-slash">/</span><span id="topbar-page">Dashboard</span></div>
         <button id="shell-command-trigger" class="shell-search-trigger" type="button" aria-label="Search or run a command"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search</span><kbd>⌘ K</kbd></button>
         <button class="secondary shell-assistant-toggle" type="button" data-shell-drawer="assistant" aria-label="Open Friday assistant" aria-controls="assistant-rail" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3z"/></svg>Friday</button>
-        <div class="topbar-status"><span class="connection-dot" id="connection-dot"></span><span id="connection-label">Connecting</span></div>
       </header>
 
       <main id="main-content" class="feature-shell" tabindex="-1">
@@ -82,6 +82,7 @@
               </div>
             </header>
             <section id="friday-messages" class="messages" aria-label="Friday conversation"></section>
+            <section id="friday-task-board" class="friday-task-board" aria-label="Delegated task updates" role="status" aria-live="polite" hidden></section>
             <div id="friday-announcement" class="sr-only" role="status" aria-live="polite"></div>
             <form id="friday-form" class="composer">
               <label class="sr-only" for="friday-message">Message Friday</label>
@@ -219,7 +220,7 @@
               <textarea id="file-editor" class="file-content file-editor" spellcheck="false" aria-label="Edit file"></textarea>
               <article id="file-markdown-preview" class="file-markdown-preview message-content" aria-label="Rendered Markdown" hidden></article>
             </div>
-            <div id="file-edit-actions" class="file-edit-actions" hidden><span id="file-edit-status" role="status" aria-live="polite"></span><button id="file-save" class="secondary" type="button">Save file</button><button id="file-cancel" class="secondary" type="button">Cancel</button></div>
+            <div id="file-edit-actions" class="file-edit-actions" hidden><span id="file-edit-status" role="status" aria-live="polite"></span><button id="file-edit" class="secondary" type="button" hidden>Edit file</button><button id="file-save" class="secondary" type="button" hidden>Save file</button><button id="file-cancel" class="secondary" type="button" hidden>Cancel</button></div>
           </section>
         </section>
 
@@ -229,7 +230,7 @@
         </section>
         <section id="repos-feature" class="feature-page repositories-page" hidden>
           <header class="feature-header page-header">
-            <div><span class="eyebrow">Your space / source control</span><h1 id="repo-page-title">Repositories</h1><p id="repo-page-description">Friday workspace projects.</p></div>
+            <div><span class="eyebrow">Workspace / source control</span><h1 id="repo-page-title">Repositories</h1><p id="repo-page-description">Friday workspace projects.</p></div>
           </header>
           <form id="clone-repo-form" class="repo-form"><label for="clone-repo-url">Git URL</label><input id="clone-repo-url" type="url" required placeholder="https://github.com/owner/repo.git"><button type="submit">Clone repository</button></form>
           <div id="repo-clone-progress" class="clone-progress" role="status" hidden><progress aria-label="Repository clone in progress"></progress><span>Cloning repository…</span></div>
@@ -271,11 +272,59 @@
         <section id="socials-feature" class="feature-page socials-page" hidden>
           <header class="feature-header page-header"><div><span class="eyebrow">Your space</span><h1>Socials</h1><p>Connect services Friday can access on your behalf.</p></div></header>
           <section class="socials-card" aria-labelledby="gmail-heading">
-            <div class="socials-card-heading"><div><span class="socials-provider-mark" aria-hidden="true">G</span><div><h2 id="gmail-heading">Gmail</h2><p id="gmail-status" role="status" aria-live="polite">Checking connection…</p></div></div><div class="socials-actions"><button id="gmail-connect" type="button">Connect Gmail</button><button id="gmail-refresh" class="secondary" type="button" hidden>Refresh inbox</button><button id="gmail-disconnect" class="secondary danger-button" type="button" hidden>Disconnect</button></div></div>
-            <p class="socials-privacy">Read-only access to Inbox headers and unread status. Friday fetches metadata only when you open or refresh this page; it does not request message bodies, send email, or store message history.</p>
+            <div class="socials-card-heading"><div><span class="socials-provider-mark" aria-hidden="true">G</span><div><h2 id="gmail-heading">Gmail Inbox</h2></div></div><div class="socials-actions"><button id="gmail-refresh" class="secondary" type="button" hidden>Refresh inbox</button></div></div>
+            <p id="gmail-inbox-status" class="socials-workflow-status" role="status" aria-live="polite">Manage Gmail access in System Settings → Connections.</p>
             <div id="gmail-message-list" class="gmail-message-list" aria-label="Inbox messages"></div>
             <button id="gmail-next-page" class="secondary" type="button" hidden>Load more</button>
           </section>
+          <section class="socials-card" aria-labelledby="slack-heading">
+            <div class="socials-card-heading"><div><span class="socials-provider-mark" aria-hidden="true">S</span><div><h2 id="slack-heading">Slack Channels</h2></div></div><div class="socials-actions"><button id="slack-refresh-channels" class="secondary" type="button" hidden>Refresh channels</button></div></div>
+            <p id="slack-channels-status" class="socials-workflow-status" role="status" aria-live="polite">Manage Slack access in System Settings → Connections.</p>
+            <div id="slack-channel-list" class="gmail-message-list" aria-label="Select Slack channels"></div>
+            <div class="socials-actions"><button id="slack-save-channels" class="secondary" type="button" hidden>Save selected channels</button></div>
+          </section>
+        </section>
+        <section id="calendar-feature" class="feature-page calendar-page" hidden>
+          <header class="feature-header page-header"><div><span class="eyebrow">Your space</span><h1>Calendar</h1><p>Plan and manage events stored privately on this Friday host.</p></div><button id="calendar-refresh" class="secondary" type="button">Refresh</button></header>
+          <div class="local-calendar-layout">
+            <section class="socials-card local-calendar-month" aria-label="Calendar month view">
+              <nav class="calendar-month-navigation" aria-label="Calendar month navigation">
+                <button id="calendar-previous-month" class="secondary calendar-nav-button" type="button" aria-label="Previous month">‹</button>
+                <h2 id="calendar-month-label" aria-live="polite"></h2>
+                <button id="calendar-today" class="secondary calendar-today-button" type="button">Today</button>
+                <button id="calendar-next-month" class="secondary calendar-nav-button" type="button" aria-label="Next month">›</button>
+              </nav>
+              <div class="calendar-mobile-picker">
+                <label for="calendar-mobile-date">Choose a day</label>
+                <input id="calendar-mobile-date" type="date" aria-label="Choose a calendar day">
+              </div>
+              <div id="calendar-mobile-agenda" class="calendar-mobile-agenda" aria-label="Events this month" aria-live="polite"></div>
+              <table id="calendar-month-grid" class="calendar-month-grid" aria-label="Calendar month">
+                <thead><tr><th scope="col" abbr="Monday">Mon</th><th scope="col" abbr="Tuesday">Tue</th><th scope="col" abbr="Wednesday">Wed</th><th scope="col" abbr="Thursday">Thu</th><th scope="col" abbr="Friday">Fri</th><th scope="col" abbr="Saturday">Sat</th><th scope="col" abbr="Sunday">Sun</th></tr></thead>
+                <tbody id="calendar-month-days"></tbody>
+              </table>
+            </section>
+            <div class="calendar-side-column">
+              <section class="socials-card calendar-day-panel" aria-labelledby="calendar-agenda-heading">
+                <div class="socials-card-heading"><div><h2 id="calendar-agenda-heading" tabindex="-1">Agenda · <span id="calendar-selected-date"></span></h2></div><button id="calendar-add-event" class="secondary" type="button">Add event</button></div>
+                <div id="calendar-event-list" class="local-calendar-agenda" aria-label="Events for selected day" aria-live="polite"></div>
+              </section>
+              <section class="socials-card local-calendar-editor" aria-labelledby="calendar-form-heading">
+                <h2 id="calendar-form-heading">New event</h2>
+                <form id="calendar-event-form">
+                  <label>Title<input id="calendar-title" name="title" maxlength="160" required></label>
+                  <label>Description<textarea id="calendar-description" name="description" maxlength="2000" rows="3"></textarea></label>
+                  <div class="calendar-time-fields">
+                    <label>Starts<input id="calendar-start" name="start" type="datetime-local" required></label>
+                    <label>Ends<input id="calendar-end" name="end" type="datetime-local" required></label>
+                  </div>
+                  <p class="calendar-timezone">Times use <span id="calendar-time-zone"></span>.</p>
+                  <div class="socials-actions"><button id="calendar-save" type="submit">Save event</button><button id="calendar-cancel" class="secondary" type="button" hidden>Cancel edit</button></div>
+                  <p id="calendar-status" class="socials-workflow-status" role="status" aria-live="polite"></p>
+                </form>
+              </section>
+            </div>
+          </div>
         </section>
         <section id="settings-feature" class="feature-page" hidden>
           <header class="feature-header page-header">
@@ -287,7 +336,24 @@
             <button id="refresh-settings" class="secondary compact" type="button">Refresh</button>
           </header>
           <div class="settings-groups">
-            <details open class="settings-group friday-settings-group">
+            <details class="settings-group connections-settings-group">
+              <summary class="settings-group-summary"><div><h2 id="connections-heading">Connections</h2><p>Manage connected accounts and provider access.</p></div><span class="settings-chevron" aria-hidden="true">⌄</span></summary>
+              <div class="settings-group-content">
+                <div class="integration-settings-grid">
+                  <section class="integration-setting" aria-labelledby="gmail-connection-heading">
+                    <div class="integration-setting-heading"><h3 id="gmail-connection-heading">Gmail</h3><p id="gmail-status" role="status" aria-live="polite">Checking connection…</p></div>
+                    <div class="socials-actions"><button id="gmail-connect" type="button">Authorize Gmail with Google</button><button id="gmail-disconnect" class="secondary danger-button" type="button" hidden>Disconnect</button></div>
+                    <p>Use Google’s account sign-in and consent screen to authorize Gmail API access; this does not sign you in to Friday. Friday requests read-only Inbox headers and unread status. Google access and refresh tokens stay in private files on this host. Friday fetches metadata on demand; it does not read message bodies, send mail, or cache message history.</p>
+                  </section>
+                  <section class="integration-setting" aria-labelledby="slack-connection-heading">
+                    <div class="integration-setting-heading"><h3 id="slack-connection-heading">Slack</h3><p id="slack-status" role="status" aria-live="polite">Checking connection…</p></div>
+                    <div class="socials-actions"><button id="slack-connect" type="button">Authorize Slack workspace</button><button id="slack-disconnect" class="secondary danger-button" type="button" hidden>Disconnect</button></div>
+                    <p>Use Slack’s OAuth screen to authorize/install Friday in a workspace; workspace-admin approval may be required. This is separate from Friday app login. Friday stores the Slack bot token privately on this host. Access is read-only and limited to selected public channels: no DMs, search, or posting. Chat excerpts may remain in transcripts and enabled GitHub snapshots, but not daily memory or connector cache.</p>
+                  </section>
+                </div>
+              </div>
+            </details>
+            <details class="settings-group friday-settings-group">
               <summary class="settings-group-summary"><div><h2 id="friday-settings-heading">Friday Chat</h2><p>General conversation, workspace, and provider.</p></div><span class="settings-chevron" aria-hidden="true">⌄</span></summary>
               <div class="settings-group-content">
                 <div id="friday-settings-list" class="settings-list"></div>
@@ -295,15 +361,25 @@
                 <section class="github-sync" data-sync="friday"><h3>GitHub sync</h3><form><label>Owner <input name="owner" required autocomplete="off"></label><label>Repository <input name="repo" required autocomplete="off"></label><button class="secondary" type="submit">Save</button><button class="secondary" type="button" data-sync-run>Sync now</button></form><p class="sync-status" role="status" aria-live="polite"></p><p class="sync-help">Syncs ~/.friday/ to one private GitHub repository (created if missing). Files named auth.json, repositories, memory/, node_modules, .git metadata, and symlinks are excluded. Other settings and conversation history may contain sensitive data; existing remote auth.json copies are not removed.</p></section>
               </div>
             </details>
-            <details open class="settings-group pi-settings-group">
+            <details class="settings-group pi-settings-group">
               <summary class="settings-group-summary"><div><h2 id="runtime-settings-heading">Pi runtime</h2><p>Workspace, extensions, and provider.</p></div><span class="settings-chevron" aria-hidden="true">⌄</span></summary>
               <div class="settings-group-content">
                 <div id="settings-list" class="settings-list"></div>
                 <section class="auth-panel" data-auth-provider="pi" aria-label="Pi provider authentication"></section>
-                <div class="settings-subsection"><h3 id="extensions-heading">Installed Pi extensions</h3><p>Configured packages available to Pi.</p><div id="extensions-list" class="extensions-list"></div></div>
+                <section class="settings-subsection" aria-labelledby="extensions-heading">
+                  <header class="section-heading"><div><h3 id="extensions-heading">Installed Pi extensions</h3><p>Review configured packages and update user-installed extensions.</p></div><button id="update-pi-extensions" class="secondary" type="button" aria-describedby="pi-extensions-update-help">Update extensions</button></header>
+                  <p id="pi-extensions-update-help" class="feature-notice">Project-local packages are skipped. Updates may install package code; Friday will not install new packages or remove extensions.</p>
+                  <p id="pi-extensions-update-status" class="feature-notice" role="status" aria-live="polite"></p>
+                  <div id="extensions-list" class="extensions-list" aria-label="Installed Pi extensions"></div>
+                </section>
+                <section class="settings-subsection pi-runtime-update" aria-labelledby="pi-runtime-update-heading">
+                  <header class="section-heading"><div><h3 id="pi-runtime-update-heading">Pi CLI runtime</h3><p>Update the Pi command used by agent sessions on this host.</p></div><button id="update-pi-runtime" class="secondary" type="button" aria-describedby="pi-runtime-update-help">Update Pi</button></header>
+                  <p id="pi-runtime-update-help" class="feature-notice">This updates the Pi CLI on PATH. Friday’s bundled Pi SDK is managed by Friday deployments. Active Pi tasks must finish first.</p>
+                  <p id="pi-runtime-update-status" class="feature-notice" role="status" aria-live="polite"></p>
+                </section>
               </div>
             </details>
-            <details open class="settings-group">
+            <details class="settings-group">
               <summary class="settings-group-summary"><div><h2 id="server-settings-heading">Server</h2><p>Host configuration, sync, resources, and connected devices.</p></div><span class="settings-chevron" aria-hidden="true">⌄</span></summary>
               <div class="settings-group-content">
                 <div id="server-settings-list" class="settings-list"></div>
@@ -340,7 +416,9 @@
     </dialog>
     <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
     <div id="announcement" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+    <script src="/highlight.min.js" defer></script>
     <script src="/app.js" type="module"></script>
     <script src="/socials.js" type="module"></script>
+    <script src="/local-calendar.js" type="module"></script>
   </body>
 </html>

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertPiSessionDeletable, deletePiSessionWithPolicy, hasExplicitPiSessionDeleteAuthorization } from '../src/pi-session-delete-policy.js';
+import { assertPiSessionDeletable, deletePiSessionWithPolicy, hasExplicitPiSessionDeleteAuthorization } from '../src/pi/pi-session-delete-policy.js';
 
 const run = { id: '123e4567-e89b-12d3-a456-426614174000', sessionId: 'pi-session-1', name: 'Build task' };
 

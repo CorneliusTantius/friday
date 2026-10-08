@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createGmailIntegration } from '../src/gmail.js';
+import { createGmailIntegration } from '../src/integrations/gmail.js';
 
 const config = {
   FRIDAY_GMAIL_CLIENT_ID: 'client-id.apps.googleusercontent.com',

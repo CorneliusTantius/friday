@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listAgentFiles, readAgentFile, writeAgentFile } from '../src/agent-files.js';
+import { listAgentFiles, readAgentFile, writeAgentFile } from '../src/storage/agent-files.js';
 
 test('scoped agent roots browse and edit hidden credential, JSON, Markdown, and text files', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'agent-files-'));

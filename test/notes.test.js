@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { browseNotes, readNote } from '../src/notes.js';
+import { browseNotes, readNote } from '../src/storage/notes.js';
 
 test('browse and read notes safely within the notes root', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'friday-notes-'));

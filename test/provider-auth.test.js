@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ProviderAuth } from '../src/provider-auth.js';
+import { ProviderAuth } from '../src/integrations/provider-auth.js';
 
 test('uses explicit per-agent paths and exposes only non-secret credential status', async () => {
   let paths; let loginArgs;

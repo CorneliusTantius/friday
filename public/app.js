@@ -1,3 +1,6 @@
+import { formatPercent } from './dashboard-format.js';
+import { renderMarkdown as renderMarkdownDocument } from './markdown.js';
+
 const fridayChatModule = await import('./friday-chat.js').catch(() => null);
 
 const $ = (selector) => document.querySelector(selector);
@@ -11,11 +14,11 @@ const elements = {
   fileList: $('#file-list'), filesPathLabel: $('#files-path'), filesUp: $('#files-up'), filesRootLabel: $('#files-root'),
   fileTitle: $('#file-title'), fileMeta: $('#file-meta'), fileContent: $('#file-content'),
   fileEditorLayout: $('#file-editor-layout'), fileEditor: $('#file-editor'), fileMarkdownPreview: $('#file-markdown-preview'),
-  fileEditActions: $('#file-edit-actions'), fileEditStatus: $('#file-edit-status'), fileSave: $('#file-save'), fileCancel: $('#file-cancel'),
+  fileEditActions: $('#file-edit-actions'), fileEditStatus: $('#file-edit-status'), fileEdit: $('#file-edit'), fileSave: $('#file-save'), fileCancel: $('#file-cancel'),
   deviceList: $('#device-list'), deviceStatus: $('#device-status'),
   fridaySettingsList: $('#friday-settings-list'), settingsList: $('#settings-list'),
   serverSettingsList: $('#server-settings-list'), extensionsList: $('#extensions-list'),
-  connectionDot: $('#connection-dot'), connectionLabel: $('#connection-label'),
+  piExtensionsUpdateStatus: $('#pi-extensions-update-status'), piRuntimeUpdateStatus: $('#pi-runtime-update-status'),
   toastRegion: $('#toast-region'), drawerBackdrop: $('#drawer-backdrop'), agentOrb: $('.header .agent-orb'),
   logout: $('#logout'),
   financeForm: $('#finance-form'), financeList: $('#finance-list'), financeStatus: $('#finance-status'),
@@ -35,7 +38,7 @@ const featureViews = new Map([
   ['pi', $('#pi-feature')],
   ['files', $('#files-feature')], ['pi-files', $('#files-feature')],
   ['repos', $('#repos-feature')], ['notes', $('#notes-feature')],
-  ['finances', $('#finances-feature')], ['socials', $('#socials-feature')],
+  ['finances', $('#finances-feature')], ['socials', $('#socials-feature')], ['calendar', $('#calendar-feature')],
   ['dashboard', $('#dashboard-feature')], ['settings', $('#settings-feature')], ['friday-settings', $('#settings-feature')], ['pi-settings', $('#settings-feature')],
 ]);
 const url = new URL(window.location.href);
@@ -129,11 +132,6 @@ function isAbort(error) {
   return error?.name === 'AbortError';
 }
 
-function setConnection(online) {
-  elements.connectionDot.className = `connection-dot ${online ? 'online' : 'offline'}`;
-  elements.connectionLabel.textContent = online ? 'Host online' : 'Host offline';
-}
-
 function toast(message, type = '') {
   const item = document.createElement('div');
   item.className = `toast${type ? ` ${type}` : ''}`;
@@ -192,219 +190,8 @@ function pretty(value) {
   return JSON.stringify(value, null, 2) ?? '';
 }
 
-function safeMarkdownHref(destination) {
-  const value = destination.replace(/\\([()<>\\ ])/g, '$1');
-  if (/^[a-z][a-z\d+.-]*:/i.test(value) && !/^(https?:|mailto:)/i.test(value)) return null;
-  try {
-    const url = new URL(value, window.location.href);
-    return ['http:', 'https:', 'mailto:'].includes(url.protocol) ? url.href : null;
-  } catch {
-    return null;
-  }
-}
-
-function markdownLinkAt(source, start) {
-  if (source[start] !== '[') return null;
-  const labelEnd = source.indexOf('](', start + 1);
-  if (labelEnd < 0 || source.slice(start, labelEnd).includes('\n')) return null;
-
-  let depth = 1;
-  let escaped = false;
-  for (let index = labelEnd + 2; index < source.length; index += 1) {
-    const character = source[index];
-    if (escaped) { escaped = false; continue; }
-    if (character === '\\') { escaped = true; continue; }
-    if (character === '\n') return null;
-    if (character === '(') depth += 1;
-    if (character === ')' && --depth === 0) {
-      const raw = source.slice(labelEnd + 2, index).trim();
-      const match = raw.match(/^(<[^>]+>|(?:\\.|[^\s])+?)(?:\s+(?:"[^"]*"|'[^']*'))?$/);
-      if (!match) return null;
-      const destination = match[1].startsWith('<') ? match[1].slice(1, -1) : match[1];
-      return { label: source.slice(start + 1, labelEnd), destination, end: index + 1 };
-    }
-  }
-  return null;
-}
-
-function appendPlainTextWithLinks(parent, source) {
-  const pattern = /https?:\/\/[^\s<>]+/g;
-  let cursor = 0;
-  for (const match of source.matchAll(pattern)) {
-    let url = match[0];
-    while (/[.,!?;:]$/.test(url)) url = url.slice(0, -1);
-    while (url.endsWith(')') && (url.match(/\)/g)?.length || 0) > (url.match(/\(/g)?.length || 0)) {
-      url = url.slice(0, -1);
-    }
-    if (!url) continue;
-    const start = match.index;
-    parent.append(document.createTextNode(source.slice(cursor, start)));
-    const link = document.createElement('a');
-    link.href = url; link.target = '_blank'; link.rel = 'noreferrer noopener'; link.textContent = url;
-    parent.append(link);
-    cursor = start + url.length;
-  }
-  parent.append(document.createTextNode(source.slice(cursor)));
-}
-
-function appendInlineMarkdown(parent, source) {
-  const formatting = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_)/g;
-  let cursor = 0;
-  while (cursor < source.length) {
-    formatting.lastIndex = cursor;
-    const formatted = formatting.exec(source);
-    let link = null;
-    let linkIndex = -1;
-    for (let index = source.indexOf('[', cursor); index >= 0; index = source.indexOf('[', index + 1)) {
-      link = markdownLinkAt(source, index);
-      if (link) { linkIndex = index; break; }
-    }
-    const formatIndex = formatted?.index ?? Infinity;
-    if (!link) linkIndex = Infinity;
-    if (!formatted && !link) {
-      appendPlainTextWithLinks(parent, source.slice(cursor));
-      break;
-    }
-
-    const tokenIndex = Math.min(formatIndex, linkIndex);
-    appendPlainTextWithLinks(parent, source.slice(cursor, tokenIndex));
-    if (link && linkIndex <= formatIndex) {
-      const href = safeMarkdownHref(link.destination);
-      if (href) {
-        const anchor = document.createElement('a');
-        anchor.href = href; anchor.target = '_blank'; anchor.rel = 'noreferrer noopener'; appendInlineMarkdown(anchor, link.label);
-        parent.append(anchor);
-      } else {
-        parent.append(document.createTextNode(source.slice(linkIndex, link.end)));
-      }
-      cursor = link.end;
-      continue;
-    }
-
-    const token = formatted[0];
-    if (token.startsWith('`')) {
-      const code = document.createElement('code'); code.textContent = token.slice(1, -1); parent.append(code);
-    } else if (token.startsWith('**') || token.startsWith('__')) {
-      const strong = document.createElement('strong'); appendInlineMarkdown(strong, token.slice(2, -2)); parent.append(strong);
-    } else {
-      const emphasis = document.createElement('em'); appendInlineMarkdown(emphasis, token.slice(1, -1)); parent.append(emphasis);
-    }
-    cursor = formatted.index + token.length;
-  }
-}
-
-function splitTableRow(line) {
-  let source = line.trim();
-  if (source.startsWith('|')) source = source.slice(1);
-  if (source.endsWith('|') && !source.endsWith('\\|')) source = source.slice(0, -1);
-  const cells = [];
-  let cell = '';
-  let inCode = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index];
-    if (character === '\\' && source[index + 1] === '|') {
-      cell += '|'; index += 1;
-    } else if (character === '`') {
-      inCode = !inCode; cell += character;
-    } else if (character === '|' && !inCode) {
-      cells.push(cell.trim()); cell = '';
-    } else {
-      cell += character;
-    }
-  }
-  cells.push(cell.trim());
-  return cells;
-}
-
-function tableAlignments(line) {
-  if (!line.includes('|')) return null;
-  const cells = splitTableRow(line);
-  if (cells.length < 2) return null;
-  const alignments = cells.map((cell) => {
-    if (!/^:?-{3,}:?$/.test(cell)) return null;
-    if (cell.startsWith(':') && cell.endsWith(':')) return 'center';
-    if (cell.endsWith(':')) return 'right';
-    return 'left';
-  });
-  return alignments.every(Boolean) ? alignments : null;
-}
-
-function renderMarkdownTable(parent, headers, alignments, rows) {
-  const wrapper = document.createElement('div'); wrapper.className = 'table-wrap';
-  const table = document.createElement('table');
-  const head = document.createElement('thead');
-  const headerRow = document.createElement('tr');
-  headers.forEach((value, index) => {
-    const cell = document.createElement('th'); cell.style.textAlign = alignments[index]; appendInlineMarkdown(cell, value); headerRow.append(cell);
-  });
-  head.append(headerRow); table.append(head);
-  const body = document.createElement('tbody');
-  for (const values of rows) {
-    const row = document.createElement('tr');
-    headers.forEach((_, index) => {
-      const cell = document.createElement('td'); cell.style.textAlign = alignments[index]; appendInlineMarkdown(cell, values[index] || ''); row.append(cell);
-    });
-    body.append(row);
-  }
-  table.append(body); wrapper.append(table); parent.append(wrapper);
-}
-
 function renderMarkdown(parent, source) {
-  const lines = source.replaceAll('\r\n', '\n').split('\n');
-  let paragraph = [];
-  let list = null;
-  let code = null;
-  const flushParagraph = () => {
-    if (!paragraph.length) return;
-    const element = document.createElement('p');
-    paragraph.forEach((line, index) => { if (index) element.append(document.createElement('br')); appendInlineMarkdown(element, line); });
-    parent.append(element); paragraph = [];
-  };
-  const flushList = () => { if (list) parent.append(list.element); list = null; };
-  const flushCode = () => { const pre = document.createElement('pre'); pre.textContent = code.join('\n'); parent.append(pre); code = null; };
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (code) { if (line.trim() === '```') flushCode(); else code.push(line); continue; }
-    if (line.trim().startsWith('```')) { flushParagraph(); flushList(); code = []; continue; }
-    if (!line.trim()) { flushParagraph(); flushList(); continue; }
-
-    const alignments = index + 1 < lines.length ? tableAlignments(lines[index + 1]) : null;
-    if (line.includes('|') && alignments) {
-      const headers = splitTableRow(line);
-      if (headers.length === alignments.length) {
-        flushParagraph(); flushList();
-        const rows = [];
-        let rowIndex = index + 2;
-        while (rowIndex < lines.length && lines[rowIndex].trim() && lines[rowIndex].includes('|')) {
-          rows.push(splitTableRow(lines[rowIndex])); rowIndex += 1;
-        }
-        renderMarkdownTable(parent, headers, alignments, rows);
-        index = rowIndex - 1;
-        continue;
-      }
-    }
-
-    const heading = line.match(/^(#{1,6})\s+(.+)$/);
-    if (heading) {
-      flushParagraph(); flushList();
-      const element = document.createElement(`h${heading[1].length}`); appendInlineMarkdown(element, heading[2]); parent.append(element); continue;
-    }
-    const listItem = line.match(/^\s*(?:[-*+]\s+|\d+\.\s+)(.+)$/);
-    if (listItem) {
-      flushParagraph();
-      const ordered = /^\s*\d+\./.test(line);
-      if (!list || list.ordered !== ordered) { flushList(); list = { ordered, element: document.createElement(ordered ? 'ol' : 'ul') }; }
-      const item = document.createElement('li'); appendInlineMarkdown(item, listItem[1]); list.element.append(item); continue;
-    }
-    if (line.startsWith('>')) {
-      flushParagraph(); flushList();
-      const quote = document.createElement('blockquote'); appendInlineMarkdown(quote, line.replace(/^>\s?/, '')); parent.append(quote); continue;
-    }
-    paragraph.push(line);
-  }
-  if (code) flushCode();
-  flushParagraph(); flushList();
+  renderMarkdownDocument(parent, source, appendHighlightedCode);
 }
 
 function renderSignature(value) {
@@ -702,15 +489,13 @@ async function pollHistory() {
   try {
     const data = await apiJson('/api/status', {}, 'poll-status');
     if (context !== state.contextVersion) return;
-    setConnection(true);
     setAgentBusy(data.busy, data.canAbort === true);
     renderPiContextUsage(data.contextUsage);
     await Promise.all([
       loadHistory({ limit: data.busy ? 10 : null }),
       loadSessions(elements.workspace.value, { quiet: true }),
     ]);
-  } catch (error) {
-    if (context === state.contextVersion && !isAbort(error)) setConnection(false);
+  } catch {
   } finally {
     pollInFlight = false;
     if (context === state.contextVersion) schedulePoll(state.agentBusy ? activePollInterval : idlePollInterval);
@@ -733,9 +518,7 @@ async function loadWorkspaceSuggestions(prefix = '') {
   try {
     const data = await apiJson(`/api/workspaces?prefix=${encodeURIComponent(prefix)}`, {}, 'suggestions');
     if (sequence === suggestionSequence) setWorkspaceSuggestions(data.workspaces);
-  } catch (error) {
-    if (!isAbort(error)) setConnection(false);
-  }
+  } catch {}
 }
 
 function sessionState(item) {
@@ -902,7 +685,6 @@ async function loadThinkingLevels() {
 
 async function loadWorkspace() {
   const [current, data] = await Promise.all([apiJson('/api/status', {}, 'initial-status'), apiJson('/api/workspaces', {}, 'initial-workspaces')]);
-  setConnection(true);
   setWorkspaceSuggestions(data.workspaces);
   elements.workspace.value = current.preferredWorkspace || current.workspace;
   state.workspace = elements.workspace.value;
@@ -941,6 +723,36 @@ function renderPiContextUsage(usage) {
       ? `${Math.round(usage.tokens).toLocaleString()} of ${Math.round(usage.contextWindow).toLocaleString()} context tokens (${percent.toFixed(1)}%)`
       : `${percent.toFixed(1)}% of the context window used`;
   elements.contextProgress.setAttribute('aria-valuetext', percent === null ? 'Unavailable' : `${percent.toFixed(1)} percent`);
+}
+
+const fileLanguages = {
+  js: 'javascript', javascript: 'javascript', cjs: 'javascript', mjs: 'javascript', jsx: 'javascript', ts: 'typescript', typescript: 'typescript', tsx: 'typescript',
+  py: 'python', python: 'python', rb: 'ruby', ruby: 'ruby', go: 'go', rs: 'rust', rust: 'rust', java: 'java', kt: 'kotlin', swift: 'swift', php: 'php',
+  html: 'xml', htm: 'xml', xml: 'xml', svg: 'xml', css: 'css', scss: 'scss', less: 'less',
+  json: 'json', jsonc: 'json', yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini',
+  sh: 'bash', bash: 'bash', zsh: 'bash', sql: 'sql', md: 'markdown', markdown: 'markdown', diff: 'diff',
+  dockerfile: 'dockerfile', makefile: 'makefile',
+};
+
+function appendHighlightedCode(parent, content, languageHint = '') {
+  const code = document.createElement('code');
+  const language = fileLanguages[languageHint.toLowerCase()] || languageHint.toLowerCase();
+  if (language && window.hljs?.getLanguage(language)) {
+    code.className = `hljs language-${language}`;
+    try { code.innerHTML = window.hljs.highlight(content, { language, ignoreIllegals: true }).value; }
+    catch { code.textContent = content; }
+  } else {
+    code.textContent = content;
+  }
+  parent.append(code);
+}
+
+function renderFilePreview(content, path) {
+  const fileName = path.split('/').at(-1).toLowerCase();
+  const extension = fileName.includes('.') ? fileName.split('.').at(-1) : fileName;
+  const language = fileLanguages[extension] || extension;
+  elements.fileContent.replaceChildren();
+  appendHighlightedCode(elements.fileContent, content, language);
 }
 
 function formatBytes(bytes) {
@@ -1019,17 +831,23 @@ async function loadFile(path) {
     elements.fileTitle.textContent = data.path.split('/').pop() || data.path;
     const typeLabel = data.editorType === 'markdown' ? 'Markdown' : data.editorType === 'json' ? 'JSON' : 'text';
     elements.fileMeta.textContent = `${data.path} · ${formatBytes(data.size)} · ${new Date(data.modified).toLocaleString()} · ${typeLabel} editor`;
-    elements.fileContent.hidden = true;
-    elements.fileEditorLayout.hidden = false;
+    const isMarkdown = data.editorType === 'markdown';
+    elements.fileContent.hidden = isMarkdown;
+    elements.fileEditorLayout.hidden = !isMarkdown;
     elements.fileEditorLayout.dataset.editorType = data.editorType;
+    delete elements.fileEditorLayout.dataset.editing;
     elements.fileEditor.setAttribute('aria-label', `Edit ${typeLabel} file`);
     elements.fileEditor.value = data.content;
     elements.fileEditor.dataset.original = data.content;
-    elements.fileMarkdownPreview.hidden = data.editorType !== 'markdown';
+    elements.fileMarkdownPreview.hidden = !isMarkdown;
     elements.fileMarkdownPreview.replaceChildren();
-    if (data.editorType === 'markdown') renderMarkdown(elements.fileMarkdownPreview, data.content);
+    if (isMarkdown) renderMarkdown(elements.fileMarkdownPreview, data.content);
+    else renderFilePreview(data.content, data.path);
     elements.fileEditActions.hidden = false;
     elements.fileEditStatus.textContent = '';
+    elements.fileEdit.hidden = isMarkdown;
+    elements.fileSave.hidden = !isMarkdown;
+    elements.fileCancel.hidden = !isMarkdown;
     elements.fileSave.disabled = true;
     for (const item of elements.fileList.querySelectorAll('.file-item')) item.classList.toggle('selected', item.title === data.path);
   } catch (error) {
@@ -1071,6 +889,14 @@ function renderSettingCards(container, values) {
   }
 }
 
+function renderPiUpdateStatus(update = {}) {
+  const updating = update.state === 'updating';
+  $('#update-pi-extensions').disabled = updating;
+  $('#update-pi-runtime').disabled = updating;
+  elements.piExtensionsUpdateStatus.textContent = update.operation === 'extensions' ? update.message : '';
+  elements.piRuntimeUpdateStatus.textContent = update.operation === 'runtime' ? update.message : '';
+}
+
 function renderSettings(data) {
   const friday = data.fridayChat;
   renderSettingCards(elements.fridaySettingsList, friday ? [
@@ -1082,6 +908,7 @@ function renderSettings(data) {
     ['Pi status', data.busy ? 'Working' : data.piRunning ? 'Ready' : 'Standby'],
     ['Workspace', data.workspace],
   ]);
+  renderPiUpdateStatus(data.piUpdateStatus);
   renderSettingCards(elements.serverSettingsList, [
     ['System usage', formatUsage(data.systemUsage)],
     ['Server', `${data.host}:${data.port}`],
@@ -1177,29 +1004,61 @@ async function loadNotes() {
     const notes = Array.isArray(data.notes) ? data.notes : [];
     meta.textContent = `${notes.length} note${notes.length === 1 ? '' : 's'}`;
     if (!notes.length) content.textContent = 'No notes found.';
+    const root = { folders: new Map(), notes: [] };
     for (const note of notes) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'file-item';
-      button.textContent = note.name || note.path || 'Untitled note';
-      button.addEventListener('click', async () => {
-        list.querySelector('.file-item.selected')?.classList.remove('selected');
-        button.classList.add('selected');
-        title.textContent = note.name || note.path || 'Untitled note';
-        meta.textContent = note.path || 'Markdown note';
-        content.textContent = 'Loading note…';
-        closeDrawer();
-        try {
-          const result = await apiJson(`/api/notes/content?path=${encodeURIComponent(note.path)}`, {}, 'note-content');
-          if (state.activeFeature !== 'notes') return;
-          content.replaceChildren();
-          renderMarkdown(content, typeof result.content === 'string' ? result.content : '');
-        } catch (error) {
-          if (!isAbort(error)) content.textContent = `Unable to load note: ${error.message}`;
-        }
-      });
-      list.append(button);
+      const path = note.path || note.name || '';
+      const parts = path.split('/').filter(Boolean);
+      if (!parts.length) continue;
+      let folder = root;
+      for (const part of parts.slice(0, -1)) {
+        if (!folder.folders.has(part)) folder.folders.set(part, { folders: new Map(), notes: [] });
+        folder = folder.folders.get(part);
+      }
+      folder.notes.push({ path, name: parts.at(-1) });
     }
+    const appendFolder = (folder, parent) => {
+      const items = document.createElement('ul');
+      items.className = 'notes-tree';
+      for (const [name, child] of [...folder.folders].sort(([a], [b]) => a.localeCompare(b))) {
+        const item = document.createElement('li');
+        item.className = 'notes-tree-folder';
+        const label = document.createElement('span');
+        label.className = 'notes-tree-folder-label';
+        label.textContent = name;
+        item.append(label);
+        appendFolder(child, item);
+        items.append(item);
+      }
+      for (const note of folder.notes.sort((a, b) => a.name.localeCompare(b.name))) {
+        const item = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'file-item';
+        button.textContent = note.name;
+        button.title = note.path;
+        button.setAttribute('aria-label', `Open note ${note.path}`);
+        button.addEventListener('click', async () => {
+          list.querySelector('.file-item.selected')?.classList.remove('selected');
+          button.classList.add('selected');
+          title.textContent = note.name;
+          meta.textContent = note.path;
+          content.textContent = 'Loading note…';
+          closeDrawer();
+          try {
+            const result = await apiJson(`/api/notes/content?path=${encodeURIComponent(note.path)}`, {}, 'note-content');
+            if (state.activeFeature !== 'notes') return;
+            content.replaceChildren();
+            renderMarkdown(content, typeof result.content === 'string' ? result.content : '');
+          } catch (error) {
+            if (!isAbort(error)) content.textContent = `Unable to load note: ${error.message}`;
+          }
+        });
+        item.append(button);
+        items.append(item);
+      }
+      parent.append(items);
+    };
+    if (notes.length) appendFolder(root, list);
   } catch (error) {
     if (isAbort(error)) return;
     list.replaceChildren();
@@ -1559,7 +1418,7 @@ async function loadDashboard() {
   const metrics = document.createElement('section'); metrics.className = 'dashboard-metrics';
   const metricItems = [
     ['Active agents', friday && pi ? String(Number(friday.running === true) + Number(pi.piRunning === true)) : 'Unavailable', `Friday ${friday ? `${Number(friday.running === true)} running` : 'unavailable'} · Pi ${pi ? `${Number(pi.piRunning === true)} running` : 'unavailable'}`],
-    ['Host CPU', Number.isFinite(system?.systemUsage?.cpuPercent) ? `${system.systemUsage.cpuPercent.toFixed(1)}%` : 'Unavailable', hostName || 'CPU usage'],
+    ['Host CPU', formatPercent(system?.systemUsage?.cpuPercent), hostName || 'CPU usage'],
     ['Monthly expenses', finances && Array.isArray(finances.entries) ? money(finances.entries.filter((entry) => entry.type === 'expense' && entry.date >= financeSummaryRange(1).start && entry.date <= financeSummaryRange(1).end).reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0)) : 'Unavailable', 'Past month · IDR'],
     ['Memory notes', memoryGraph ? String(memoryGraph.nodes?.length || 0) : 'Unavailable', 'Friday memory'],
   ];
@@ -1597,7 +1456,7 @@ async function loadDashboard() {
   const resourceHeading = document.createElement('h2'); resourceHeading.className = 'dashboard-panel-heading'; resourceHeading.textContent = 'Host resources'; resources.append(resourceHeading);
   const resourceDetail = document.createElement('p'); resourceDetail.textContent = `${devices ? `${(devices.devices || []).length} visible devices` : 'Device count unavailable'} · ${hostName ? `Host: ${hostName}` : 'Host unavailable'}`; resources.append(resourceDetail);
   for (const [label, value] of [['CPU', system?.systemUsage?.cpuPercent], ['RAM', system?.systemUsage?.memoryPercent]]) {
-    const wrap = document.createElement('div'); wrap.className = 'dashboard-resource-gauge'; const text = document.createElement('label'); text.textContent = `${label}: ${Number.isFinite(value) ? `${value}%` : 'Unavailable'}`; const gauge = document.createElement('progress'); gauge.max = 100; gauge.value = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0; gauge.setAttribute('aria-label', `${label} usage`); gauge.setAttribute('aria-valuetext', Number.isFinite(value) ? `${value}%` : 'Unavailable'); wrap.append(text, gauge); resources.append(wrap);
+    const wrap = document.createElement('div'); wrap.className = 'dashboard-resource-gauge'; const text = document.createElement('label'); text.textContent = `${label}: ${formatPercent(value)}`; const gauge = document.createElement('progress'); gauge.max = 100; gauge.value = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0; gauge.setAttribute('aria-label', `${label} usage`); gauge.setAttribute('aria-valuetext', formatPercent(value)); wrap.append(text, gauge); resources.append(wrap);
   }
   const temperatureWrap = document.createElement('div'); temperatureWrap.className = 'dashboard-resource-gauge';
   const temperatureText = document.createElement('span'); temperatureText.className = 'dashboard-resource-temperature'; temperatureText.setAttribute('aria-live', 'polite'); temperatureText.id = 'dashboard-temperature';
@@ -1646,13 +1505,14 @@ async function loadDashboard() {
 }
 
 async function loadSettings() {
-  const [friday, pi, system] = await Promise.all([
+  const [friday, pi, system, piUpdateStatus] = await Promise.all([
     apiJson('/api/friday/settings', {}, 'settings-friday'),
     apiJson('/api/pi/settings', {}, 'settings-pi'),
     apiJson('/api/system/settings', {}, 'settings-system'),
+    apiJson('/api/pi/update-status', {}, 'settings-pi-update-status'),
   ]);
   if (state.activeFeature !== 'settings') return;
-  renderSettings({ ...pi, fridayChat: friday.fridayChat, ...system });
+  renderSettings({ ...pi, fridayChat: friday.fridayChat, ...system, piUpdateStatus });
   await Promise.all([
     loadProviderAuth('friday'), loadProviderAuth('pi'),
     loadSyncSettings('friday'),
@@ -2013,7 +1873,7 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
 }
 
 function updateTopbar(name = state.activeFeature) {
-  const labels = { dashboard: 'Dashboard', friday: 'Friday Agent', pi: 'Pi Agent', notes: 'Notes', finances: 'Finances', socials: 'Socials', settings: 'System' };
+  const labels = { dashboard: 'Dashboard', friday: 'Friday Agent', pi: 'Pi Agent', notes: 'Notes', finances: 'Finances', socials: 'Socials', calendar: 'Calendar', settings: 'System' };
   const label = name === 'files' || name === 'pi-files' ? `Files · ${name === 'files' ? 'Friday' : 'Pi'}` : labels[name] || 'Workspace';
   $('#topbar-page').textContent = label;
 }
@@ -2076,9 +1936,11 @@ async function setFeature(name, { startPiPolling = true } = {}) {
           : view === $('#pi-feature') ? name === 'pi'
             : view === $('#notes-feature') ? name === 'notes'
               : view === $('#finances-feature') ? name === 'finances'
-                : view === $('#socials-feature') ? name === 'socials' : name === 'friday';
+                : view === $('#socials-feature') ? name === 'socials'
+                  : view === $('#calendar-feature') ? name === 'calendar' : name === 'friday';
     view.hidden = !visible;
   }
+  document.dispatchEvent(new CustomEvent('friday:feature-change', { detail: name }));
   workspaceShell.updateFeature(name);
   const fridayEntry = name === 'friday' ? fridayChat.enterView() : null;
   $('#system-devices-view').hidden = false;
@@ -2160,7 +2022,57 @@ function loadFridayPiConversations() {
           status.textContent = session.opening ? 'Opening' : session.busy ? `Working${session.queuedPrompts ? ` · ${session.queuedPrompts} queued` : ''}` : session.queuedPrompts ? `${session.queuedPrompts} queued` : session.running ? 'Open' : 'Saved';
           details.append(meta, status); open.append(title, details);
           open.addEventListener('click', () => void openPiConversationFromFriday(session));
-          item.append(open); list.append(item);
+          item.append(open);
+          const profile = document.createElement('div'); profile.className = 'friday-staff-summary';
+          const profileText = [
+            `Expertise: ${(session.expertise || []).join(', ') || 'not set'}`,
+            `Responsibilities: ${(session.responsibilities || []).join(', ') || 'not set'}`,
+            `Repositories: ${(session.repositories || []).join(', ') || 'not set'}`,
+            `Workload: ${session.workload?.openTasks || 0}/${session.capacity || 1}`,
+          ];
+          profile.textContent = profileText.join(' · ');
+          item.append(profile);
+          const openTasks = (session.tasks || []).filter((task) => ['queued', 'running', 'reviewing', 'outcome-unknown'].includes(task.status)).slice(0, 3);
+          if (openTasks.length) {
+            const taskList = document.createElement('ul'); taskList.className = 'friday-staff-tasks';
+            for (const task of openTasks) {
+              const row = document.createElement('li');
+              row.textContent = `${task.label}: ${task.status}${task.detail ? ` · ${task.detail}` : ''}`;
+              taskList.append(row);
+            }
+            item.append(taskList);
+          }
+          const editor = document.createElement('details'); editor.className = 'friday-staff-editor';
+          const editorSummary = document.createElement('summary'); editorSummary.textContent = 'Edit staff profile'; editor.append(editorSummary);
+          const form = document.createElement('form'); form.className = 'friday-staff-profile-form';
+          const addField = (labelText, value, name, multiline = false) => {
+            const label = document.createElement('label'); label.textContent = labelText;
+            const field = document.createElement(multiline ? 'textarea' : 'input');
+            if (!multiline) field.type = 'text';
+            field.name = name; field.value = (value || []).join('\n'); field.rows = 2; field.autocomplete = 'off';
+            label.append(field); form.append(label);
+          };
+          addField('Expertise (one per line)', session.expertise, 'expertise', true);
+          addField('Responsibilities (one per line)', session.responsibilities, 'responsibilities', true);
+          addField('Repositories (one per line)', session.repositories, 'repositories', true);
+          const capacityLabel = document.createElement('label'); capacityLabel.textContent = 'Task capacity';
+          const capacityInput = document.createElement('input'); capacityInput.type = 'number'; capacityInput.name = 'capacity'; capacityInput.min = '1'; capacityInput.max = '8'; capacityInput.value = String(session.capacity || 1); capacityLabel.append(capacityInput); form.append(capacityLabel);
+          const saveProfile = document.createElement('button'); saveProfile.type = 'submit'; saveProfile.className = 'button button-small'; saveProfile.textContent = 'Save profile'; form.append(saveProfile);
+          form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            saveProfile.disabled = true;
+            try {
+              const values = (name) => String(new FormData(form).get(name) || '').split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+              await apiJson(`/api/friday/pi-conversations/${encodeURIComponent(session.runId)}/profile`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ expertise: values('expertise'), responsibilities: values('responsibilities'), repositories: values('repositories'), capacity: Number(capacityInput.value) }),
+              }, 'friday-pi-conversations');
+              toast('Pi staff profile saved');
+              await refreshFridayPiConversations();
+            } catch (error) { toast(error.message, 'error'); }
+            finally { saveProfile.disabled = false; }
+          });
+          editor.append(form); item.append(editor); list.append(item);
         }
       } while (fridayPiConversationRefreshAgain);
       return latestSessions;
@@ -2333,7 +2245,6 @@ for (const button of document.querySelectorAll('[data-close-drawer]')) button.ad
 elements.drawerBackdrop.addEventListener('click', closeDrawer);
 window.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeDrawer(); });
 window.addEventListener('online', () => {
-  setConnection(true);
   if (state.activeFeature === 'pi') startPolling(0);
   if (state.activeFeature === 'friday') {
     void fridayChat.enterView().catch((error) => toast(error.message, 'error'));
@@ -2344,7 +2255,6 @@ window.addEventListener('offline', () => {
   stopFridayPiConversationPolling();
   stopFridaySessionListPolling();
   fridayChat.pause();
-  setConnection(false);
 });
 window.addEventListener('pagehide', () => {
   stopPolling();
@@ -2423,6 +2333,15 @@ elements.refreshSessions.addEventListener('click', async () => {
   catch (error) { if (!isAbort(error)) toast(error.message, 'error'); }
 });
 
+elements.fileEdit.addEventListener('click', () => {
+  elements.fileEditorLayout.dataset.editing = 'true';
+  elements.fileContent.hidden = true;
+  elements.fileEditorLayout.hidden = false;
+  elements.fileEdit.hidden = true;
+  elements.fileSave.hidden = false;
+  elements.fileCancel.hidden = false;
+  elements.fileEditor.focus();
+});
 elements.fileEditor.addEventListener('input', () => {
   elements.fileSave.disabled = elements.fileEditor.value === elements.fileEditor.dataset.original;
   if (elements.fileEditorLayout.dataset.editorType === 'markdown') {
@@ -2464,6 +2383,37 @@ elements.filesUp.addEventListener('click', () => {
 });
 $('#refresh-devices').addEventListener('click', async () => { try { await loadDevices(); toast('Devices refreshed'); } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); } });
 $('#refresh-settings').addEventListener('click', async () => { try { await loadSettings(); toast('System refreshed'); } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); } });
+async function runPiUpdate(operation) {
+  const extensionUpdate = operation === 'extensions';
+  const status = extensionUpdate ? elements.piExtensionsUpdateStatus : elements.piRuntimeUpdateStatus;
+  const button = $(extensionUpdate ? '#update-pi-extensions' : '#update-pi-runtime');
+  const confirmed = window.confirm(extensionUpdate
+    ? 'Update all user-installed Pi extensions now? Pi may download replacement package code. Project-local packages will be skipped.'
+    : 'Update the Pi CLI on this host now? This replaces the installed Pi command used by future sessions.' );
+  if (!confirmed) return;
+
+  $('#update-pi-extensions').disabled = true;
+  $('#update-pi-runtime').disabled = true;
+  status.textContent = extensionUpdate ? 'Updating installed Pi extensions… This may take a few minutes.' : 'Updating the Pi CLI… This may take a few minutes.';
+  try {
+    const result = await apiJson(extensionUpdate ? '/api/pi/extensions/update' : '/api/pi/runtime/update', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed: true }),
+    });
+    renderPiUpdateStatus(result);
+  } catch (error) {
+    status.textContent = error.message;
+    toast(error.message, 'error');
+  } finally {
+    const update = await apiJson('/api/pi/update-status').catch(() => null);
+    if (update) renderPiUpdateStatus(update);
+    else {
+      $('#update-pi-extensions').disabled = false;
+      $('#update-pi-runtime').disabled = false;
+    }
+  }
+}
+$('#update-pi-extensions').addEventListener('click', () => void runPiUpdate('extensions'));
+$('#update-pi-runtime').addEventListener('click', () => void runPiUpdate('runtime'));
 $('#refresh-dashboard').addEventListener('click', async () => { try { await loadDashboard(); toast('Dashboard refreshed'); } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); } });
 $('#restart-friday').addEventListener('click', async (event) => {
   const button = event.currentTarget;
@@ -2519,7 +2469,7 @@ async function abortPiTurn() {
     try {
       const current = await apiJson('/api/status', {}, 'abort-recovery');
       setAgentBusy(current.busy, current.canAbort === true);
-    } catch { setConnection(false); }
+    } catch {}
   } finally {
     state.stopping = false;
     updateControls();
@@ -2558,7 +2508,7 @@ elements.form.addEventListener('submit', async (event) => {
           await loadHistory();
           schedulePoll(idlePollInterval);
         }
-      } catch { setConnection(false); startPolling(); }
+      } catch { startPolling(); }
     }
   } finally { lock('chat', false); elements.input.focus(); }
 });
@@ -2598,7 +2548,6 @@ function initializePi() {
       const current = await apiJson('/api/status', {}, 'startup-status');
       setAgentBusy(current.busy, current.canAbort === true);
       renderPiContextUsage(current.contextUsage);
-      setConnection(true);
       piInitialized = true;
     } finally {
       state.initializing = false;
@@ -2626,7 +2575,6 @@ elements.logout.addEventListener('click', async () => {
 const workspaceShell = initializeWorkspaceShell({ navigate: setFeature, getFeature: () => state.activeFeature });
 syncScopeSelectors();
 updateTopbar();
-setConnection(navigator.onLine);
 updateControls();
 void fridayChat.start();
 void setFeature(state.activeFeature);
