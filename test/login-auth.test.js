@@ -64,9 +64,7 @@ test('password login protects the app with a memory-only session cookie', { time
   assert.deepEqual(await health.json(), { status: 'ok' });
   assert.equal((await fetch(`${base}/api/status`)).status, 401);
   assert.equal((await fetch(`${base}/api/system/temperature`)).status, 401);
-  assert.equal((await fetch(`${base}/api/socials/gmail/status`)).status, 401);
   assert.equal((await fetch(`${base}/api/socials/calendar/status`)).status, 401);
-  assert.equal((await fetch(`${base}/api/socials/slack/status`)).status, 401);
   const protectedPage = await fetch(`${base}/`, { redirect: 'manual' });
   assert.equal(protectedPage.status, 303);
   assert.equal(protectedPage.headers.get('location'), '/login');
@@ -84,16 +82,23 @@ test('password login protects the app with a memory-only session cookie', { time
   assert.match(setCookie, /SameSite=Strict/);
   assert.doesNotMatch(setCookie, /Max-Age|Expires=/);
   assert.equal((await client.request('/')).status, 200);
-  const gmailStatus = await client.request('/api/socials/gmail/status');
-  assert.deepEqual(await gmailStatus.json(), { configured: false, connected: false, email: null, scope: null });
   assert.equal((await client.request('/api/socials/calendar/status')).status, 404, 'Google Calendar integration is dormant');
-  const slackStatus = await client.request('/api/socials/slack/status');
-  assert.deepEqual(await slackStatus.json(), { configured: false, connected: false, workspace: null, selectedChannels: [] });
-  assert.equal((await client.request('/api/socials/slack/connect', { method: 'POST' })).status, 503);
-  const crossOriginConnect = await client.request('/api/socials/gmail/connect', { method: 'POST', headers: { Origin: 'https://attacker.example' } });
-  assert.equal(crossOriginConnect.status, 403);
-  const unconfiguredConnect = await client.request('/api/socials/gmail/connect', { method: 'POST' });
-  assert.equal(unconfiguredConnect.status, 503);
+  for (const [path, method] of [
+    ['/api/socials/slack/status', 'GET'],
+    ['/api/socials/slack/connect', 'POST'],
+    ['/api/socials/slack/channels', 'GET'],
+    ['/api/socials/slack/selected-channels', 'POST'],
+    ['/api/socials/slack/disconnect', 'POST'],
+    ['/api/socials/slack/callback', 'GET'],
+  ]) assert.equal((await client.request(path, { method })).status, 404, `${path} is removed`);
+  assert.equal((await client.request('/socials.js')).status, 404, 'the removed Socials client bundle is not served');
+  for (const [path, method] of [
+    ['/api/socials/gmail/status', 'GET'],
+    ['/api/socials/gmail/connect', 'POST'],
+    ['/api/socials/gmail/messages', 'GET'],
+    ['/api/socials/gmail/disconnect', 'POST'],
+    ['/api/socials/gmail/callback', 'GET'],
+  ]) assert.equal((await client.request(path, { method })).status, 404, `${path} is removed`);
   const eventPayload = { title: 'Planning', description: 'Sprint review', start: '2026-09-29T14:00:00.000Z', end: '2026-09-29T15:00:00.000Z', timeZone: 'America/New_York' };
   const createdEventResponse = await client.request('/api/calendar/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(eventPayload) });
   assert.equal(createdEventResponse.status, 201);
@@ -118,12 +123,11 @@ test('password login protects the app with a memory-only session cookie', { time
   assert.equal(appScript.status, 200);
   assert.match(await appScript.text(), /location\.replace\('\/login\?notice=login-required'\)/);
   for (const [path, marker] of [
-    ['/socials.js', 'gmail-connect'],
     ['/local-calendar.js', "from './calendar-view.js'"],
     ['/calendar-view.js', 'buildMonthDays'],
   ]) {
     const asset = await client.request(path);
-    assert.equal(asset.status, 200, `${path} must be served for the calendar and socials modules`);
+    assert.equal(asset.status, 200, `${path} must be served for Calendar`);
     assert.match(asset.headers.get('content-type'), /javascript/);
     assert.ok((await asset.text()).includes(marker), `${path} should return its JavaScript module`);
   }

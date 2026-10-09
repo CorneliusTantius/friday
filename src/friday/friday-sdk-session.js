@@ -6,7 +6,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { lstat, mkdir, stat, unlink } from 'node:fs/promises';
 import { fridaySystemPrompt } from './friday-system-prompt.js';
 import { createFridayPiTools } from './friday-pi-tools.js';
-import { createFridaySocialTools } from './friday-social-tools.js';
+import { createFridayCalendarTools } from './friday-calendar-tools.js';
 
 const hostSessionEventsByAdapter = new WeakMap();
 
@@ -49,7 +49,7 @@ export function fridayHistory(messages, sessionId = null) {
 
 /** Friday-owned SDK-backed PiSession-compatible runtime. */
 export class FridaySdkSession extends EventEmitter {
-  constructor({ cwd, agentDir, dataDir, sessionManager, createSession = createAgentSession, createModelRuntime = ModelRuntime.create, model, thinkingLevel, memory, piControl, socialControl, piToolNames, reviewMode = false, modelRefreshIntervalMs = 15 * 60 * 1000 } = {}) {
+  constructor({ cwd, agentDir, dataDir, sessionManager, createSession = createAgentSession, createModelRuntime = ModelRuntime.create, model, thinkingLevel, memory, piControl, calendarControl, piToolNames, reviewMode = false, modelRefreshIntervalMs = 15 * 60 * 1000 } = {}) {
     super();
     const root = resolve(process.env.FRIDAY_HOME || join(homedir(), '.friday'));
     this.cwd = cwd || join(root, 'data');
@@ -60,7 +60,7 @@ export class FridaySdkSession extends EventEmitter {
     this.createModelRuntime = createModelRuntime;
     this.memory = memory;
     this.piControl = piControl;
-    this.socialControl = socialControl;
+    this.calendarControl = calendarControl;
     this.piToolNames = piToolNames ? new Set(piToolNames) : null;
     this.reviewMode = reviewMode;
     this.model = model;
@@ -77,6 +77,9 @@ export class FridaySdkSession extends EventEmitter {
     this.activeUserMessage = null;
     this.modelRefreshIntervalMs = modelRefreshIntervalMs;
     this.modelRefreshTimer = null;
+    this.compactionModelKey = null;
+    this.compactionContextWindow = null;
+    this.compactionWarning = null;
     this.sessionFileVersion = null;
     this.chatJobs = new Map();
     this.chatQueue = [];
@@ -147,12 +150,14 @@ export class FridaySdkSession extends EventEmitter {
           getStopAuthorizationContext: getAuthorizationContext,
           getDeleteAuthorizationContext: getAuthorizationContext,
         }).filter((tool) => !this.piToolNames || this.piToolNames.has(tool.name)) : [];
-        const socialTools = this.reviewMode ? [] : this.socialControl ? createFridaySocialTools(this.socialControl) : [];
+        const calendarTools = this.reviewMode ? [] : this.calendarControl ? createFridayCalendarTools(this.calendarControl) : [];
         const resourceLoader = new DefaultResourceLoader({ cwd: this.cwd, agentDir: this.agentDir, settingsManager,
           systemPrompt,
           noSkills: true, noExtensions: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
         await resourceLoader.reload();
-        const allCustomTools = [...customTools, ...socialTools];
+        settingsManager.applyOverrides({ compaction: { enabled: true, reserveTokens: 16_384 } });
+        this.#configureCompactionModel(this.model);
+        const allCustomTools = [...customTools, ...calendarTools];
         const tools = allCustomTools.map((tool) => tool.name);
         return this.createSession({
           cwd: this.cwd, agentDir: this.agentDir, tools, customTools: allCustomTools, modelRuntime, settingsManager,
@@ -164,10 +169,20 @@ export class FridaySdkSession extends EventEmitter {
           this.session = session;
           this.#applyState();
           this.sessionFileVersion = await this.#readSessionFileVersion();
-          this.unsubscribe = session.subscribe?.((event) => this.emit('event', event));
+          this.unsubscribe = session.subscribe?.((event) => {
+            if (event.type === 'compaction_end') {
+              if (event.errorMessage) this.compactionWarning = 'failed';
+              else if (!event.aborted && event.result) this.compactionWarning = null;
+            }
+            this.emit('event', event);
+          });
           if (this.modelRefreshIntervalMs > 0 && session.modelRuntime?.refresh && !this.modelRefreshTimer) {
             this.modelRefreshTimer = setInterval(() => {
-              session.modelRuntime.refresh().catch((error) => console.error(`Friday model refresh failed: ${error.message}`));
+              session.modelRuntime.refresh().then(() => {
+                const current = this.currentModel;
+                const refreshed = current && session.modelRuntime.getAvailableSnapshot?.().find((model) => model.provider === current.provider && model.id === current.id);
+                if (refreshed) this.#configureCompactionModel(refreshed);
+              }).catch((error) => console.error(`Friday model refresh failed: ${error.message}`));
             }, this.modelRefreshIntervalMs);
             this.modelRefreshTimer.unref?.();
           }
@@ -203,6 +218,32 @@ export class FridaySdkSession extends EventEmitter {
     this.sessionPath = this.session.sessionFile || this.sessionPath;
     this.model = this.session.model || this.model;
     this.thinkingLevel = this.session.thinkingLevel || this.thinkingLevel;
+  }
+
+  #configureCompactionModel(model, force = false) {
+    this.settingsManager.applyOverrides({ compaction: { enabled: true, reserveTokens: 16_384 } });
+    if (!model || typeof model !== 'object') return;
+    const modelKey = typeof model.provider === 'string' && model.provider && typeof model.id === 'string' && model.id
+      ? `${model.provider}/${model.id}`
+      : null;
+    const contextWindow = model.contextWindow;
+    if (!modelKey || !Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
+      this.compactionModelKey = null;
+      this.compactionContextWindow = null;
+      this.compactionWarning = 'unknown-window';
+      return;
+    }
+    if (!force && modelKey === this.compactionModelKey && contextWindow === this.compactionContextWindow) return;
+    try {
+      // SDK shouldCompact() uses `tokens > window - reserve`; this reserve makes its first integer trigger ceil(75% of window).
+      const reserveTokens = Math.floor(contextWindow / 4) + 1;
+      this.settingsManager.applyOverrides({ compaction: { modelOverrides: { [modelKey]: { reserveTokens } } } });
+      this.compactionModelKey = modelKey;
+      this.compactionContextWindow = contextWindow;
+      this.compactionWarning = null;
+    } catch {
+      this.compactionWarning = 'configuration';
+    }
   }
 
   async abort() {
@@ -384,6 +425,7 @@ export class FridaySdkSession extends EventEmitter {
     this.modelConfigured = true;
     this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
     await this.settingsManager.flush();
+    this.#configureCompactionModel(this.currentModel, true);
     return this.currentModel;
   }
 
@@ -394,6 +436,7 @@ export class FridaySdkSession extends EventEmitter {
     this.thinkingConfigured = true;
     this.settingsManager.setDefaultThinkingLevel(level);
     await this.settingsManager.flush();
+    this.#configureCompactionModel(this.currentModel, true);
     return result;
   }
 
@@ -545,7 +588,9 @@ export class FridaySdkSession extends EventEmitter {
 
   async getContextUsage() {
     await this.start();
-    return this.session.getContextUsage?.() || null;
+    const usage = this.session.getContextUsage?.() || null;
+    if (!this.compactionWarning) return usage;
+    return { ...(usage || {}), compactionWarning: this.compactionWarning };
   }
 
   async stop() {

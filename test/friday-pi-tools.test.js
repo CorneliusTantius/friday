@@ -18,7 +18,7 @@ function setup() {
     ]; },
     getRunStatus: async (runId) => { calls.status.push(runId); return { runId, exists: false, opening: false, workspace: '/other-workspace', running: false }; },
     readConversation: async (value) => { calls.read.push(value); return { runId: value.runId, messages: [{ role: 'assistant', content: 'Pi reply' }] }; },
-    createSession: async (value) => { calls.create.push(value); return { runId: id, name: value.purpose, workspace: '/workspace' }; },
+    createSession: async (value) => { calls.create.push(value); return { runId: id, name: value.name, purpose: value.purpose, domain: value.domain, workspace: '/workspace' }; },
     renameSession: async (value) => { calls.rename.push(value); return { runId: value.runId, previousName: 'Build task', name: value.name }; },
     updateProfile: async (value) => { calls.profile.push(value); return { runId: value.runId, ...value.profile }; },
     sendPrompt: async (value) => { calls.send.push(value); return { taskId, runId: id, queueId, position: 2 }; },
@@ -74,7 +74,8 @@ test('discriminated query and management actions reject invalid, mixed, and extr
   for (const invalid of [
     {}, { action: 'unknown' }, { action: 'create' },
     { action: 'create', purpose: 'new', runId: id },
-    { action: 'create', purpose: 'new', domain: 'x'.repeat(81) },
+    { action: 'create', purpose: 'new', domain: 'platform' },
+    { action: 'create', purpose: 'new', name: 'valid', domain: 'x'.repeat(81) },
     { action: 'rename', name: 'new-name' },
     { action: 'rename', runId: 'not-a-uuid', name: 'new-name' },
     { action: 'rename', runId: id, name: 'new-name', purpose: 'extra' },
@@ -93,12 +94,12 @@ test('discriminated query and management actions reject invalid, mixed, and extr
 test('manage actions preserve distinct current-user authorization contexts and never select sessions', async () => {
   const { tools, calls, contexts } = setup();
   const manage = tools[1];
-  assert.deepEqual(await invoke(manage, { action: 'create', purpose: 'this task', domain: 'platform' }), text({ runId: id, name: 'this task', workspace: '/workspace' }));
+  assert.deepEqual(await invoke(manage, { action: 'create', name: 'Friday Project Staff', purpose: 'Work on the Friday project', domain: 'Friday project development' }), text({ runId: id, name: 'Friday Project Staff', purpose: 'Work on the Friday project', domain: 'Friday project development', workspace: '/workspace' }));
   assert.deepEqual(await invoke(manage, { action: 'rename', runId: id, name: 'friday-ui' }), text({ runId: id, previousName: 'Build task', name: 'friday-ui' }));
   const profile = { expertise: ['Node.js'], responsibilities: ['API'], capacity: 2 };
   assert.deepEqual(await invoke(manage, { action: 'profile', runId: id, ...profile }), text({ runId: id, ...profile }));
   assert.deepEqual(await invoke(manage, { action: 'delete', runId: id }), text({ deleted: true, runId: id }));
-  assert.deepEqual(calls.create, [{ purpose: 'this task', domain: 'platform', userMessage: 'Create a new Pi session for this task.', previousAssistantMessage: '' }]);
+  assert.deepEqual(calls.create, [{ name: 'Friday Project Staff', purpose: 'Work on the Friday project', domain: 'Friday project development', userMessage: 'Create a new Pi session for this task.', previousAssistantMessage: '' }]);
   assert.deepEqual(calls.rename, [{ runId: id, name: 'friday-ui', userMessage: 'Rename Build task to friday-ui.' }]);
   assert.deepEqual(calls.profile, [{ runId: id, profile, userMessage: 'Update the profile for Build task.' }]);
   assert.deepEqual(calls.delete, [{ runId: id, conversationId: 'friday-c1', userMessage: 'Delete Build task.' }]);

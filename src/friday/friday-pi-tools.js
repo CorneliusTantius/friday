@@ -36,6 +36,7 @@ const sessionsParameters = strictObject({
 
 const createAction = strictObject({
   action: Type.Literal('create'),
+  name: Type.String({ minLength: 1, maxLength: 100, description: 'Concise staff name; used as the session title.' }),
   purpose: Type.String({ minLength: 1, maxLength: 100 }),
   domain: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
 });
@@ -54,10 +55,10 @@ const profileAction = strictObject({
 const manageActions = { create: createAction, rename: renameAction, delete: deleteAction, profile: profileAction };
 const manageParameters = strictObject({
   action: Type.Union([Type.Literal('create'), Type.Literal('rename'), Type.Literal('delete'), Type.Literal('profile')], { description: 'Select exactly one session action; the server applies that action’s own authorization policy.' }),
-  purpose: Type.Optional(Type.String({ minLength: 1, maxLength: 100, description: 'Required only for create.' })),
+  name: Type.Optional(Type.String({ minLength: 1, maxLength: 100, description: 'Required for create (staff name) or rename (new session title).' })),
+  purpose: Type.Optional(Type.String({ minLength: 1, maxLength: 100, description: 'Required only for create; task purpose metadata.' })),
   domain: Type.Optional(Type.String({ minLength: 1, maxLength: 80, description: 'Optional for create only.' })),
   runId: Type.Optional(Type.String({ format: 'uuid', description: 'Required for rename and delete; never inferred from conversation context.' })),
-  name: Type.Optional(Type.String({ minLength: 1, maxLength: 100, description: 'Required only for rename.' })),
   expertise: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { maxItems: 12 })),
   responsibilities: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { maxItems: 12 })),
   capacity: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
@@ -111,7 +112,7 @@ export function createFridayPiTools({ listConversations, createSession, renameSe
         const args = validateAction(manageActions, rawArgs, 'pi_manage_session');
         if (args.action === 'create') {
           const authorization = await getCreateAuthorizationContext();
-          const session = await createSession({ purpose: args.purpose, domain: args.domain, ...authorization });
+          const session = await createSession({ name: args.name, purpose: args.purpose, domain: args.domain, ...authorization });
           return result(JSON.stringify(session));
         }
         if (args.action === 'rename') {

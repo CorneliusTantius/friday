@@ -7,7 +7,10 @@ export async function fetchAndRenderCurrent({ load, currentRevision, render }) {
 }
 
 const profileFields = ['expertise', 'responsibilities', 'capacity'];
-const SESSION_NAME_POOL = ['Nova', 'Atlas', 'Echo', 'Iris'];
+export const PI_STAFF_NAME_POOL = Object.freeze([
+  'Nova', 'Atlas', 'Echo', 'Iris', 'Aether', 'Aria', 'Astra', 'Aurora', 'Cora', 'Cypher',
+  'Eon', 'Juno', 'Lyra', 'Nyx', 'Orion', 'Sage', 'Sol', 'Turing', 'Vesper', 'Zenith',
+]);
 
 export function generatePiSessionName(sessions, excludeSessionPath = null) {
   const used = new Set(sessions
@@ -15,10 +18,10 @@ export function generatePiSessionName(sessions, excludeSessionPath = null) {
     .map((session) => session.name?.trim().toLowerCase())
     .filter(Boolean));
   const available = (name) => !used.has(name.toLowerCase());
-  const firstAvailable = SESSION_NAME_POOL.find(available);
+  const firstAvailable = PI_STAFF_NAME_POOL.find(available);
   if (firstAvailable) return firstAvailable;
   for (let suffix = 2; ; suffix += 1) {
-    const candidate = `${SESSION_NAME_POOL[0]} ${suffix}`;
+    const candidate = `${PI_STAFF_NAME_POOL[0]} ${suffix}`;
     if (available(candidate)) return candidate;
   }
 }
@@ -72,21 +75,21 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
     open.addEventListener('click', () => onOpen(state.session));
     state.title = documentRef.createElement('span'); state.title.className = 'session-title';
     state.meta = documentRef.createElement('span'); state.meta.className = 'session-meta';
+    open.append(state.title, state.meta);
+    state.statusRow = documentRef.createElement('div'); state.statusRow.className = 'friday-session-status-row';
+    state.profile = documentRef.createElement('span'); state.profile.className = 'friday-staff-workload';
     state.status = documentRef.createElement('span');
-    const details = documentRef.createElement('span'); details.className = 'session-details';
-    details.append(state.meta, state.status); open.append(state.title, details);
+    state.statusRow.append(state.profile, state.status);
 
-    state.profile = documentRef.createElement('div'); state.profile.className = 'friday-staff-summary';
-
-    state.visibilityEditor = documentRef.createElement('details'); state.visibilityEditor.className = 'friday-staff-editor friday-repo-visibility';
-    const visibilitySummary = documentRef.createElement('summary'); visibilitySummary.textContent = 'Visible repositories';
-    state.visibilityEditor.append(visibilitySummary);
+    state.editor = documentRef.createElement('details'); state.editor.className = 'friday-staff-editor';
+    const editorSummary = documentRef.createElement('summary'); editorSummary.textContent = 'Staff profile and repositories'; state.editor.append(editorSummary);
+    const repositorySection = documentRef.createElement('section'); repositorySection.className = 'friday-repo-context';
+    const repositoryHeading = documentRef.createElement('h3'); repositoryHeading.textContent = 'Visible repositories'; repositorySection.append(repositoryHeading);
     const disclaimer = documentRef.createElement('p');
     disclaimer.textContent = 'Unchecked repositories are omitted from this session’s app-provided repo context. This is not a filesystem sandbox; host tools may still access other files.';
-    state.visibilityEditor.append(disclaimer);
+    repositorySection.append(disclaimer);
     state.visibilityForm = documentRef.createElement('form'); state.visibilityForm.className = 'friday-repo-visibility-form';
-    state.repoOptions = documentRef.createElement('div');
-    state.visibilityForm.append(state.repoOptions);
+    state.repoOptions = documentRef.createElement('div'); state.visibilityForm.append(state.repoOptions);
     state.saveVisibility = documentRef.createElement('button'); state.saveVisibility.type = 'submit'; state.saveVisibility.className = 'button button-small'; state.saveVisibility.textContent = 'Save visibility';
     state.visibilityForm.append(state.saveVisibility);
     state.visibilityForm.addEventListener('submit', async (event) => {
@@ -107,29 +110,38 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
       } catch (error) { toast(error.message, 'error'); }
       finally { state.visibilitySaving = false; state.saveVisibility.disabled = false; }
     });
-    state.visibilityEditor.append(state.visibilityForm);
-
-    state.editor = documentRef.createElement('details'); state.editor.className = 'friday-staff-editor';
-    const editorSummary = documentRef.createElement('summary'); editorSummary.textContent = 'Edit staff profile'; state.editor.append(editorSummary);
+    repositorySection.append(state.visibilityForm);
+    state.editor.append(repositorySection);
+    const profileHeading = documentRef.createElement('h3'); profileHeading.className = 'friday-profile-heading'; profileHeading.textContent = 'Edit staff profile'; state.editor.append(profileHeading);
     state.profileForm = documentRef.createElement('form'); state.profileForm.className = 'friday-staff-profile-form';
-    const labels = {
-      expertise: 'Expertise (optional; one per line)',
-      responsibilities: 'Responsibilities (one per line)',
-      capacity: 'Task capacity',
-    };
+    const profileFieldsGroup = documentRef.createElement('fieldset'); profileFieldsGroup.className = 'friday-staff-profile-fields';
+    const profileLegend = documentRef.createElement('legend'); profileLegend.textContent = 'Profile details';
+    profileFieldsGroup.append(profileLegend);
+    const labels = { expertise: 'Expertise', responsibilities: 'Responsibilities', capacity: 'Task capacity' };
     for (const name of profileFields) {
-      const label = documentRef.createElement('label'); label.textContent = labels[name];
+      const label = documentRef.createElement('label'); label.className = 'friday-staff-profile-field';
+      const title = documentRef.createElement('span'); title.textContent = labels[name]; label.append(title);
       const input = documentRef.createElement(name === 'capacity' ? 'input' : 'textarea');
       input.name = name; input.autocomplete = 'off';
       if (name === 'capacity') { input.type = 'number'; input.min = '1'; input.max = '8'; }
-      else input.rows = 2;
+      else {
+        input.rows = 3;
+        if (name === 'responsibilities') input.maxLength = 500;
+      }
       input.addEventListener('input', () => {
         if (input.value === state.profileBaseline[name]) state.profileDirty.delete(name);
         else state.profileDirty.add(name);
       });
       state.profileInputs[name] = input;
-      label.append(input); state.profileForm.append(label);
+      label.append(input);
+      if (name !== 'capacity') {
+        const hint = documentRef.createElement('span'); hint.className = 'friday-staff-profile-hint';
+        hint.textContent = name === 'responsibilities' ? 'One per line · 500 characters total maximum' : 'Optional · one per line';
+        label.append(hint);
+      }
+      profileFieldsGroup.append(label);
     }
+    state.profileForm.append(profileFieldsGroup);
     state.saveProfile = documentRef.createElement('button'); state.saveProfile.type = 'submit'; state.saveProfile.className = 'button button-small'; state.saveProfile.textContent = 'Save profile';
     state.profileForm.append(state.saveProfile);
     state.profileForm.addEventListener('submit', async (event) => {
@@ -154,12 +166,12 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
       finally { state.profileSaving = false; state.saveProfile.disabled = false; }
     });
     state.editor.append(state.profileForm);
-    state.item.append(open, state.profile, state.visibilityEditor, state.editor);
+    state.item.append(open, state.statusRow, state.editor);
     state.open = open;
     return state;
   }
 
-  function updateVisibility(state, session) {
+  function updateRepositories(state, session) {
     const available = Array.isArray(session.availableRepositories) ? session.availableRepositories : [];
     const visible = Array.isArray(session.visibleRepositories) ? session.visibleRepositories : available;
     state.serverVisible = visible.slice();
@@ -215,18 +227,14 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
 
   function updateCard(state, session) {
     state.session = session;
-    state.open.title = session.preview || session.name || '';
-    state.title.textContent = session.name || 'Untitled Pi conversation';
+    const displayTitle = session.name || 'Untitled Pi conversation';
+    state.open.title = session.preview || displayTitle;
+    state.title.textContent = displayTitle;
     state.meta.textContent = `${formatDate(session.modified)} · ${session.messageCount} msg`;
     state.status.className = `session-state ${session.opening || session.busy || session.queuedPrompts ? 'working' : session.running ? 'running' : 'saved'}`;
     state.status.textContent = session.opening ? 'Opening' : session.busy ? `Working${session.queuedPrompts ? ` · ${session.queuedPrompts} queued` : ''}` : session.queuedPrompts ? `${session.queuedPrompts} queued` : session.running ? 'Open' : 'Saved';
-    const profileText = [
-      `Expertise: ${(session.expertise || []).join(', ') || 'not set'}`,
-      `Responsibilities: ${(session.responsibilities || []).join(', ') || 'not set'}`,
-      `Workload: ${session.workload?.openTasks || 0}/${session.capacity || 2}`,
-    ];
-    state.profile.textContent = profileText.join(' · ');
-    updateVisibility(state, session);
+    state.profile.textContent = `Workload: ${session.workload?.openTasks || 0}/${session.capacity || 2}`;
+    updateRepositories(state, session);
     updateProfile(state, session);
 
     const tasks = (session.tasks || []).filter((task) => ['queued', 'running', 'reviewing', 'outcome-unknown'].includes(task.status)).slice(0, 3);
@@ -241,7 +249,7 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
           row.textContent = `${task.label}: ${task.status}${task.detail ? ` · ${task.detail}` : ''}`;
           state.taskList.append(row);
         }
-        state.item.insertBefore(state.taskList, state.editor);
+        state.item.append(state.taskList);
       }
     }
     state.signature = JSON.stringify(session);

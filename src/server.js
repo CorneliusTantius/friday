@@ -23,9 +23,7 @@ import { listAgentFiles, readAgentFile, writeAgentFile } from './storage/agent-f
 import { millisecondsUntilNextQuarterHour, syncGitHubSnapshot, validateGitHubSyncTarget } from './integrations/github-sync.js';
 import { createFinanceStore } from './storage/finances.js';
 import { createHostTemperatureMonitor } from './host-temperature.js';
-import { createGmailIntegration } from './integrations/gmail.js';
 import { createLocalCalendarStore } from './storage/local-calendar.js';
-import { createSlackIntegration } from './integrations/slack.js';
 import { assertPiSessionDeletable, assertPiSessionDeleteAuthorized, deletePiSessionWithPolicy } from './pi/pi-session-delete-policy.js';
 import { assertPiSessionCreateAuthorized } from './pi/pi-session-create-policy.js';
 import { assertPiSessionRenameAuthorized } from './pi/pi-session-rename-policy.js';
@@ -39,14 +37,9 @@ const paths = fridayPaths();
 const repositories = createRepositoryStore({ directory: paths.reposDir });
 const finances = createFinanceStore({ file: join(paths.dataDir, 'finances.json') });
 const hostTemperature = createHostTemperatureMonitor();
-const gmail = createGmailIntegration({ file: join(paths.dataDir, 'socials', 'gmail', 'auth.json') });
 const localCalendar = createLocalCalendarStore({ file: join(paths.dataDir, 'calendar', 'events.json') });
-const slack = createSlackIntegration({
-  file: join(paths.dataDir, 'socials', 'slack', 'auth.json'),
-  selectionFile: join(paths.dataDir, 'socials', 'slack-selection', 'auth.json'),
-});
-let socialContentAccessed = false;
-const socialControl = { slack, onSensitiveRead: () => { socialContentAccessed = true; } };
+let calendarContentAccessed = false;
+const calendarControl = { onSensitiveRead: () => { calendarContentAccessed = true; } };
 const agentDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'));
 const piWorkspaceDir = join(dirname(agentDir), 'workspace');
 const fridayAuth = createProviderAuth({ agentDir: paths.configDir });
@@ -99,8 +92,6 @@ if (!appPassword) {
 const appPasswordSalt = randomBytes(16);
 const appPasswordDigest = scryptSync(appPassword, appPasswordSalt, 32);
 const appSessionCookie = '__Host-friday-session';
-const gmailFlowCookie = '__Host-friday-gmail-flow';
-const slackFlowCookie = '__Host-friday-slack-flow';
 const appSessions = new Map();
 const failedLogins = new Map();
 const appSessionIdleTtlMs = 12 * 60 * 60_000;
@@ -347,7 +338,7 @@ async function getFridayPi() {
   if (!fridayInit) {
     fridayInit = (async () => {
       await mkdir(fridaySessionDir, { recursive: true, mode: 0o700 });
-      const pi = new FridaySdkSession({ cwd: fridayChatDir, dataDir: fridaySessionDir, agentDir: paths.configDir, memory: fridayMemory, piControl, socialControl });
+      const pi = new FridaySdkSession({ cwd: fridayChatDir, dataDir: fridaySessionDir, agentDir: paths.configDir, memory: fridayMemory, piControl, calendarControl });
       try {
         await pi.start();
         fridayPi = pi;
@@ -749,7 +740,7 @@ function runtimeForSessionPath(workspace, sessionPath) {
     .map(([runtimeId, entry]) => ({ runtimeId, pi: entry.pi }))[0] || null;
 }
 
-async function sessionsWithRunIds(workspace, { includeRepositoryVisibility = false } = {}) {
+async function sessionsWithRunIds(workspace, { includeRepositoryVisibility = false, includeNavigationLabel = false } = {}) {
   const sessions = await listSessions(workspace);
   const runIds = await piRunRegistry.ensureRuns(sessions.map(({ path, id, name }) => ({ workspace, sessionPath: path, sessionId: id, name })));
   const registeredRuns = await Promise.all(runIds.map((runId) => piRunRegistry.getRun(runId)));
@@ -771,6 +762,7 @@ async function sessionsWithRunIds(workspace, { includeRepositoryVisibility = fal
       runId,
       domain: run?.domain || null,
       purpose: run?.purpose || null,
+      ...(includeNavigationLabel ? { navigationLabel: run?.navigationLabel || null } : {}),
       expertise: run?.expertise || [],
       responsibilities: run?.responsibilities || [],
       ...(includeRepositoryVisibility ? { hiddenRepositories: run?.hiddenRepositories || [] } : {}),
@@ -789,11 +781,13 @@ async function sessionsWithRunIds(workspace, { includeRepositoryVisibility = fal
 async function findRunRuntime(run) {
   if (deletingPiRuns.has(run.id)) throw new RequestError('This Pi conversation is being deleted', 409);
   const session = await findSession(run.workspace, run.sessionPath);
-  const active = () => [...piSessions.entries()].find(([, entry]) => entry.pi.currentSessionPath === session.path);
-  let match = active();
-  if (match) {
-    match[1].lastUsed = Date.now();
-    return { entry: match[1], runtimeId: match[0] };
+  const active = runtimeForSessionPath(run.workspace, session.path);
+  if (active) {
+    const entry = piSessions.get(active.runtimeId);
+    if (entry) {
+      entry.lastUsed = Date.now();
+      return { entry, runtimeId: active.runtimeId };
+    }
   }
   if (piRunOpenings.has(run.id)) return piRunOpenings.get(run.id);
 
@@ -817,7 +811,7 @@ async function findRunRuntime(run) {
 
 async function listPiConversations() {
   const [sessions, availableRepositories] = await Promise.all([
-    sessionsWithRunIds(preferredWorkspace, { includeRepositoryVisibility: true }),
+    sessionsWithRunIds(preferredWorkspace, { includeRepositoryVisibility: true, includeNavigationLabel: true }),
     repositories.listRepositoryNames(),
   ]);
   return sessions.map(({ hiddenRepositories = [], ...session }) => {
@@ -835,6 +829,13 @@ async function persistPiStaffProfile(runId, profile) {
     const run = await piRunRegistry.updateRunProfile(runId, profile);
     return run && { runId: run.id, expertise: run.expertise || [], responsibilities: run.responsibilities || [], capacity: run.capacity };
   } catch (error) { throw new RequestError(error.message); }
+}
+
+async function persistPiNavigationLabel(runId, label) {
+  const run = await piRunRegistry.getRun(runId);
+  if (!run || run.workspace !== preferredWorkspace) return null;
+  try { return await piRunRegistry.updateRunNavigationLabel(runId, label); }
+  catch (error) { throw new RequestError(error.message); }
 }
 
 async function persistPiRepositoryVisibility(runId, hiddenRepositories) {
@@ -857,8 +858,11 @@ async function updatePiStaffProfile({ runId, profile, userMessage }) {
   return persistPiStaffProfile(runId, profile);
 }
 
-async function createPiConversation({ purpose, domain, userMessage, previousAssistantMessage }) {
+async function createPiConversation({ name, purpose, domain, userMessage, previousAssistantMessage }) {
   assertPiSessionCreateAuthorized({ userMessage, previousAssistantMessage, purpose });
+  if (typeof name !== 'string' || !name.trim() || name.trim().length > 100 || /[\r\n\u0000-\u001f\u007f]/.test(name)) {
+    throw new RequestError('name must be a single-line staff name up to 100 characters');
+  }
   if (typeof purpose !== 'string' || !purpose.trim() || purpose.trim().length > 100 || /[\r\n\u0000-\u001f\u007f]/.test(purpose)) {
     throw new RequestError('purpose must be a single-line name up to 100 characters');
   }
@@ -870,10 +874,10 @@ async function createPiConversation({ purpose, domain, userMessage, previousAssi
   try {
     const pi = createPiRuntime(runtimeId, preferredWorkspace);
     await pi.persistCurrentSession();
-    await pi.setSessionName(purpose.trim());
+    await pi.setSessionName(name.trim());
     const session = await findSession(pi.workspace, pi.currentSessionPath);
     const runId = await piRunRegistry.ensureRun({ workspace: pi.workspace, sessionPath: session.path, sessionId: session.id, name: session.name, domain, purpose: purpose.trim() });
-    return { runId, name: session.name || purpose.trim(), domain: domain?.trim() || null, purpose: purpose.trim(), workspace: pi.workspace };
+    return { runId, name: session.name || name.trim(), domain: domain?.trim() || null, purpose: purpose.trim(), workspace: pi.workspace };
   } catch (error) {
     const entry = piSessions.get(runtimeId);
     if (entry) {
@@ -1160,7 +1164,6 @@ async function serveStatic(pathname, response) {
     '/app.js': 'app.js',
     '/friday-chat.js': 'friday-chat.js',
     '/friday-pi-session-cards.js': 'friday-pi-session-cards.js',
-    '/socials.js': 'socials.js',
     '/local-calendar.js': 'local-calendar.js',
     '/calendar-view.js': 'calendar-view.js',
     '/markdown.js': 'markdown.js',
@@ -1271,6 +1274,14 @@ async function handleFridayRequest(request, response, pathname) {
     sendJson(response, 200, { workspace: preferredWorkspace, sessions: await listPiConversations() });
     return;
   }
+  const labelMatch = pathname.match(/^\/api\/friday\/pi-conversations\/([0-9a-f-]{36})\/label$/i);
+  if (labelMatch && request.method === 'PATCH') {
+    const body = await readJson(request);
+    if (typeof body.label !== 'string') throw new RequestError('label must be a string');
+    const updated = await persistPiNavigationLabel(labelMatch[1], body.label);
+    sendJson(response, updated ? 200 : 404, updated ? { runId: updated.id, navigationLabel: updated.navigationLabel || null } : { error: 'Pi conversation not found' });
+    return;
+  }
   const profileMatch = pathname.match(/^\/api\/friday\/pi-conversations\/([0-9a-f-]{36})\/profile$/i);
   if (profileMatch && request.method === 'PATCH') {
     const body = await readJson(request);
@@ -1367,9 +1378,9 @@ async function handleFridayRequest(request, response, pathname) {
       conversationId,
       beforeRun: () => waitForConversationReview(conversationId),
       onComplete: async (reply) => {
-        const providerContentUsed = socialContentAccessed;
-        socialContentAccessed = false;
-        if (providerContentUsed) return;
+        const sensitiveCalendarDataUsed = calendarContentAccessed;
+        calendarContentAccessed = false;
+        if (sensitiveCalendarDataUsed) return;
         const now = new Date();
         try {
           await fridayMemory.appendDailyLog({
@@ -1495,45 +1506,6 @@ async function handleRequest(request, response) {
     await serveStatic(pathname, response);
     return;
   }
-  if (request.method === 'GET' && pathname === '/api/socials/gmail/callback') {
-    const state = url.searchParams.get('state');
-    const browserState = cookieValue(request, gmailFlowCookie);
-    let status = 200;
-    let message = 'Gmail is connected. Return to System Settings to manage access; Socials contains Inbox metadata.';
-    if (url.searchParams.has('error')) {
-      gmail.cancel({ state, browserState });
-      status = 400;
-      message = 'Google authorization was declined or failed. Return to Friday and try again.';
-    } else {
-      try { await gmail.complete({ code: url.searchParams.get('code'), state, browserState }); }
-      catch (error) {
-        status = error.status || 400;
-        message = 'Could not finish Gmail authorization. Return to Friday and try again.';
-      }
-    }
-    response.setHeader('Set-Cookie', `${gmailFlowCookie}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`);
-    response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
-    response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gmail — Friday</title><main style="font:1rem system-ui;max-width:36rem;margin:10vh auto;padding:1rem"><h1>Gmail connection</h1><p>${message}</p><a href="/?feature=settings">Open System Settings</a></main></html>`);
-    return;
-  }
-  if (request.method === 'GET' && pathname === '/api/socials/slack/callback') {
-    const state = url.searchParams.get('state');
-    const browserState = cookieValue(request, slackFlowCookie);
-    let status = 200;
-    let message = 'Slack is connected. Return to System Settings to manage access; Socials contains public-channel selection.';
-    if (url.searchParams.has('error')) {
-      slack.cancel({ state, browserState });
-      status = 400;
-      message = 'Slack authorization was declined or failed. Return to Friday and try again.';
-    } else {
-      try { await slack.complete({ code: url.searchParams.get('code'), state, browserState }); }
-      catch (error) { status = error.status || 400; message = 'Could not finish Slack authorization. Return to Friday and try again.'; }
-    }
-    response.setHeader('Set-Cookie', `${slackFlowCookie}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`);
-    response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
-    response.end(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Slack — Friday</title><main style="font:1rem system-ui;max-width:36rem;margin:10vh auto;padding:1rem"><h1>Slack connection</h1><p>${message}</p><a href="/?feature=settings">Open System Settings</a></main></html>`);
-    return;
-  }
   if (request.method === 'POST' && pathname === '/api/login') {
     const body = await readJson(request);
     const attempt = loginRateLimit(request);
@@ -1602,45 +1574,6 @@ async function handleRequest(request, response) {
     if (!event) throw new RequestError('Calendar event not found', 404);
     sendJson(response, 200, { deleted: true, id: event.id });
     return;
-  }
-
-  if (pathname.startsWith('/api/socials/gmail/')) {
-    if (request.method === 'GET' && pathname === '/api/socials/gmail/status') {
-      sendJson(response, 200, await gmail.status());
-      return;
-    }
-    if (request.method === 'POST' && pathname === '/api/socials/gmail/connect') {
-      const result = await gmail.begin();
-      const state = new URL(result.authorizationUrl).searchParams.get('state');
-      response.setHeader('Set-Cookie', `${gmailFlowCookie}=${state}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Lax`);
-      sendJson(response, 200, result);
-      return;
-    }
-    if (request.method === 'GET' && pathname === '/api/socials/gmail/messages') {
-      sendJson(response, 200, await gmail.listInbox({ pageToken: url.searchParams.get('pageToken') || undefined }));
-      return;
-    }
-    if (request.method === 'POST' && pathname === '/api/socials/gmail/disconnect') {
-      sendJson(response, 200, await gmail.disconnect());
-      return;
-    }
-    throw new RequestError('Not found', 404);
-  }
-
-  if (pathname.startsWith('/api/socials/slack/')) {
-    if (request.method === 'GET' && pathname === '/api/socials/slack/status') { sendJson(response, 200, await slack.status()); return; }
-    if (request.method === 'POST' && pathname === '/api/socials/slack/connect') {
-      const result = await slack.begin();
-      response.setHeader('Set-Cookie', `${slackFlowCookie}=${result.state}; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Lax`);
-      sendJson(response, 200, { authorizationUrl: result.url }); return;
-    }
-    if (request.method === 'GET' && pathname === '/api/socials/slack/channels') { sendJson(response, 200, { channels: await slack.listChannels() }); return; }
-    if (request.method === 'POST' && pathname === '/api/socials/slack/selected-channels') {
-      const body = await readJson(request);
-      sendJson(response, 200, await slack.setSelectedChannels(body.channelIds)); return;
-    }
-    if (request.method === 'POST' && pathname === '/api/socials/slack/disconnect') { sendJson(response, 200, await slack.disconnect()); return; }
-    throw new RequestError('Not found', 404);
   }
 
   if (request.method === 'GET' && pathname === '/pi-not-installed') {

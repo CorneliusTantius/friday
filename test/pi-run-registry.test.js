@@ -20,6 +20,20 @@ test('stable session IDs, metadata updates, and restart restore', async () => {
   assert.equal((await restored.listRuns()).length, 1);
 });
 
+test('navigation labels persist independently from session identity and can be cleared', async () => {
+  const { file } = await setup();
+  const registry = createPiRunRegistry({ file });
+  const runId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/label', sessionId: 'label-run', name: 'Staff identity' });
+  await registry.updateRunNavigationLabel(runId, 'Release review');
+  const restored = createPiRunRegistry({ file });
+  assert.equal((await restored.getRun(runId)).navigationLabel, 'Release review');
+  assert.equal((await restored.getRun(runId)).name, 'Staff identity');
+  await restored.updateRunNavigationLabel(runId, '  ');
+  assert.equal((await createPiRunRegistry({ file }).getRun(runId)).navigationLabel, null);
+  assert.throws(() => restored.updateRunNavigationLabel(runId, 'x'.repeat(81)), /Invalid Pi navigation label/);
+  assert.throws(() => restored.updateRunNavigationLabel(runId, 'bad\nlabel'), /Invalid Pi navigation label/);
+});
+
 test('renaming a run persists its new session name without losing metadata', async () => {
   const { file } = await setup();
   const registry = createPiRunRegistry({ file });
@@ -65,6 +79,23 @@ test('new runs default to two; legacy missing capacity stays unstored and config
   const persisted = JSON.parse(await fs.readFile(file, 'utf8'));
   assert.equal('capacity' in persisted.runs.find(({ id }) => id === legacyRunId), false);
   assert.equal(persisted.runs.find(({ id }) => id === configuredRunId).capacity, 5);
+});
+
+test('responsibilities allow empty values and cap total unique text at 500 characters', async () => {
+  const { file } = await setup();
+  const registry = createPiRunRegistry({ file });
+  const runId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/profile-limit', name: 'Profile limit' });
+  const profile = { expertise: [], capacity: 2 };
+  const responsibilities = ['a', 'b', 'c', 'd', 'e'].map((letter) => letter.repeat(100));
+
+  await registry.updateRunProfile(runId, { ...profile, responsibilities: [] });
+  assert.deepEqual((await registry.getRun(runId)).responsibilities, [], 'there is no 500-character minimum');
+  await registry.updateRunProfile(runId, { ...profile, responsibilities });
+  assert.equal((await registry.getRun(runId)).responsibilities.reduce((total, item) => total + item.length, 0), 500);
+  assert.throws(() => registry.updateRunProfile(runId, {
+    ...profile,
+    responsibilities: [...responsibilities, 'x'],
+  }), /Invalid Pi profile responsibilities/);
 });
 
 test('repository visibility defaults to all, persists per run, and profile saves preserve private legacy metadata', async () => {

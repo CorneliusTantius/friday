@@ -127,6 +127,18 @@ export function createPiRunRegistry({ file, onRecovery = () => {} }) {
         .filter((task) => (conversationId === undefined || task.conversationId === conversationId) && (runId === undefined || task.runId === runId))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     },
+    updateRunNavigationLabel(runId, label) {
+      validRun(runId);
+      if (label !== null && (typeof label !== 'string' || label.trim().length > 80 || /[\u0000-\u001f\u007f]/.test(label))) throw new TypeError('Invalid Pi navigation label');
+      const navigationLabel = typeof label === 'string' && label.trim() ? label.trim() : null;
+      return mutate(() => {
+        const run = runs.get(runId);
+        if (!run) return null;
+        const updated = { ...run, navigationLabel };
+        runs.set(runId, updated);
+        return updated;
+      });
+    },
     updateRunRepositoryVisibility(runId, hiddenRepositories) {
       validRun(runId);
       if (!Array.isArray(hiddenRepositories) || hiddenRepositories.length > 500 || hiddenRepositories.some((name) => typeof name !== 'string' || !name.trim() || name.trim().length > 100)) throw new TypeError('Invalid repository visibility');
@@ -145,6 +157,8 @@ export function createPiRunRegistry({ file, onRecovery = () => {} }) {
         const values = profile[key];
         if (!Array.isArray(values) || values.length > 12 || values.some((item) => typeof item !== 'string' || !item.trim() || item.trim().length > 100)) throw new TypeError(`Invalid Pi profile ${key}`);
       }
+      const uniqueResponsibilities = [...new Set(profile.responsibilities.map((item) => item.trim()))];
+      if (uniqueResponsibilities.reduce((total, item) => total + item.length, 0) > 500) throw new TypeError('Invalid Pi profile responsibilities');
       if (!Number.isInteger(profile.capacity) || profile.capacity < 1 || profile.capacity > 8) throw new TypeError('Invalid Pi profile capacity');
       return mutate(() => {
         const run = runs.get(runId);

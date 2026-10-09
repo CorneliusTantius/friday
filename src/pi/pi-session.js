@@ -7,6 +7,8 @@ import { dirname } from 'node:path';
 const COMMAND_TIMEOUT_MS = 30_000;
 const PROMPT_RESULT_TTL_MS = 10 * 60_000;
 const MAX_PROMPT_RESULTS = 500;
+const MAX_BUSY_PROMPT_RETRIES = 3;
+const AGENT_BUSY_PROMPT_ERROR = "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.";
 
 function textFromMessage(message) {
   if (typeof message?.content === 'string') {
@@ -64,6 +66,8 @@ export class PiSession extends EventEmitter {
     this.promptQueue = [];
     this.promptJobs = new Map();
     this.processingPromptQueue = false;
+    this.agentSettledVersion = 0;
+    this.agentSettledWaiters = new Set();
   }
 
   get isRunning() {
@@ -71,7 +75,7 @@ export class PiSession extends EventEmitter {
   }
 
   get isBusy() {
-    return this.operation === 'chat';
+    return this.operation === 'chat' || this.processingPromptQueue;
   }
 
   get canAbort() {
@@ -323,6 +327,8 @@ export class PiSession extends EventEmitter {
   async #processPromptQueue() {
     if (this.processingPromptQueue) return;
     this.processingPromptQueue = true;
+    this.#emitQueueStatus();
+    this.emit('status', { operation: this.operation, busy: this.isBusy, workspace: this.workspace, sessionPath: this.currentSessionPath });
     try {
       while (this.promptQueue.length) {
         if (this.operation) {
@@ -342,12 +348,25 @@ export class PiSession extends EventEmitter {
     } finally {
       this.processingPromptQueue = false;
       this.#emitQueueStatus();
+      this.emit('status', { operation: this.operation, busy: this.isBusy, workspace: this.workspace, sessionPath: this.currentSessionPath });
     }
   }
 
   #emitQueueStatus() {
     const status = { queued: this.promptQueue.length, processing: this.processingPromptQueue };
     this.emit('prompt_queue_status', status);
+  }
+
+  #waitForAgentSettled(afterVersion) {
+    if (this.agentSettledVersion > afterVersion) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const waiter = { afterVersion, resolve, reject, timer: null };
+      waiter.timer = setTimeout(() => {
+        this.agentSettledWaiters.delete(waiter);
+        reject(new Error('Timed out waiting for the active Pi prompt to settle'));
+      }, COMMAND_TIMEOUT_MS);
+      this.agentSettledWaiters.add(waiter);
+    });
   }
 
   async chat(message) {
@@ -362,29 +381,56 @@ export class PiSession extends EventEmitter {
         rejectTurn = reject;
       });
 
-      this.activeTurn = {
+      const turn = {
+        accepted: false,
+        started: false,
+        finalAssistantMessage: null,
         append: (event) => {
+          if (event.type === 'message_start' && event.message?.role === 'user' && turn.accepted) {
+            turn.started = true;
+            responseText = '';
+            turn.finalAssistantMessage = null;
+            return;
+          }
+          if (!turn.started) return;
+
           if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
             responseText += event.assistantMessageEvent.delta;
           }
 
           if (event.type === 'message_end' && event.message?.role === 'assistant') {
-            const finalText = textFromMessage(event.message);
-            if (finalText) {
-              responseText = finalText;
-            }
+            turn.finalAssistantMessage = event.message;
+            responseText = textFromMessage(event.message).trim();
           }
 
           if (event.type === 'agent_settled') {
-            resolveTurn(responseText);
+            const failure = turn.finalAssistantMessage?.errorMessage
+              || (['error', 'aborted'].includes(turn.finalAssistantMessage?.stopReason)
+                ? `Pi prompt ended with ${turn.finalAssistantMessage.stopReason}` : null);
+            if (failure) rejectTurn(new Error(failure));
+            else resolveTurn(responseText);
           }
         },
         reject: rejectTurn,
       };
+      this.activeTurn = turn;
 
       try {
-        await this.#send({ type: 'prompt', message });
-        return await settled;
+        let settledVersion = this.agentSettledVersion;
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            turn.accepted = false;
+            await this.#send({ type: 'prompt', message }, { onResponse: (response) => { turn.accepted = response.success; } });
+            break;
+          } catch (error) {
+            if (error.message !== AGENT_BUSY_PROMPT_ERROR || attempt >= MAX_BUSY_PROMPT_RETRIES) throw error;
+            await this.#waitForAgentSettled(settledVersion);
+            settledVersion = this.agentSettledVersion;
+          }
+        }
+        const result = await settled;
+        if (!result.trim()) throw new Error('Pi completed without a final assistant response');
+        return result;
       } finally {
         this.activeTurn = null;
       }
@@ -535,13 +581,13 @@ export class PiSession extends EventEmitter {
       return await operation();
     } finally {
       this.operation = null;
+      if (this.promptQueue.length) void this.#processPromptQueue();
       this.emit('status', {
         operation: name,
         busy: this.isBusy,
         workspace: this.workspace,
         sessionPath: this.currentSessionPath,
       });
-      if (this.promptQueue.length) void this.#processPromptQueue();
     }
   }
 
@@ -572,6 +618,7 @@ export class PiSession extends EventEmitter {
     if (message.type === 'response' && message.id && this.pending.has(message.id)) {
       const request = this.pending.get(message.id);
       this.pending.delete(message.id);
+      request.onResponse?.(message);
       if (message.success) {
         request.resolve(message);
       } else {
@@ -580,11 +627,20 @@ export class PiSession extends EventEmitter {
       return;
     }
 
+    if (message.type === 'agent_settled') {
+      this.agentSettledVersion += 1;
+      for (const waiter of this.agentSettledWaiters) {
+        if (this.agentSettledVersion <= waiter.afterVersion) continue;
+        clearTimeout(waiter.timer);
+        this.agentSettledWaiters.delete(waiter);
+        waiter.resolve();
+      }
+    }
     this.activeTurn?.append(message);
     this.emit('event', message);
   }
 
-  #send(command) {
+  #send(command, { onResponse } = {}) {
     if (!this.isRunning || !this.child.stdin?.writable) {
       return Promise.reject(new Error('Pi session is not running'));
     }
@@ -597,6 +653,7 @@ export class PiSession extends EventEmitter {
       }, COMMAND_TIMEOUT_MS);
 
       this.pending.set(id, {
+        onResponse,
         resolve: (value) => {
           clearTimeout(timer);
           resolve(value);
@@ -622,6 +679,11 @@ export class PiSession extends EventEmitter {
       request.reject(error);
     }
     this.pending.clear();
+    for (const waiter of this.agentSettledWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
+    this.agentSettledWaiters.clear();
     this.activeTurn?.reject(error);
   }
 }

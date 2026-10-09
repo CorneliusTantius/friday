@@ -8,7 +8,7 @@ const $ = (selector) => document.querySelector(selector);
 
 const elements = {
   messages: $('#messages'), form: $('#chat-form'), input: $('#message'), send: $('#send'), reset: $('#reset'),
-  refreshSessions: $('#refresh-sessions'), sessionList: $('#session-list'), status: $('#status'),
+  refreshSessions: $('#refresh-sessions'), sessionList: $('#pi-session-cards'), piOverview: $('#pi-session-overview'), piChatView: $('#pi-chat-view'), piBackToSessions: $('#pi-back-to-sessions'), piActiveSessionTitle: $('#pi-active-session-title'), status: $('#status'),
   contextUsage: $('#pi-context-usage'), contextProgress: $('#pi-context-progress'), contextLabel: $('#pi-context-label'),
   workspace: $('#workspace'), workspaceOptions: $('#workspace-options'), model: $('#model'),
   thinkingLevel: $('#thinking-level'), jumpLatest: $('#jump-latest'),
@@ -471,8 +471,7 @@ function stopPolling() {
 function piViewVisible() {
   return document.visibilityState !== 'hidden'
     && state.activeFeature === 'pi'
-    && elements.messages.isConnected
-    && elements.messages.getClientRects().length > 0;
+    && (elements.piOverview.getClientRects().length > 0 || (elements.messages.isConnected && elements.messages.getClientRects().length > 0));
 }
 
 function schedulePoll(delay = state.agentBusy ? activePollInterval : idlePollInterval) {
@@ -494,10 +493,9 @@ async function pollHistory() {
     if (context !== state.contextVersion) return;
     setAgentBusy(data.busy, data.canAbort === true);
     renderPiContextUsage(data.contextUsage);
-    await Promise.all([
-      loadHistory({ limit: data.busy ? 10 : null }),
-      loadSessions(elements.workspace.value, { quiet: true }),
-    ]);
+    const refreshes = [loadSessions(elements.workspace.value, { quiet: true })];
+    if (elements.piChatView.hidden === false) refreshes.push(loadHistory({ limit: data.busy ? 10 : null }));
+    await Promise.all(refreshes);
   } catch {
   } finally {
     pollInFlight = false;
@@ -545,45 +543,68 @@ function formatLocalTimestamp(value) {
 }
 
 let currentPiSessions = [];
+let currentPiSessionSignature = '';
+
+function renderSessionOverviewError(error) {
+  currentPiSessionSignature = '';
+  elements.sessionList.replaceChildren();
+  const message = document.createElement('p'); message.className = 'pi-overview-error';
+  message.textContent = `Could not load sessions: ${error.message}`;
+  const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'secondary'; retry.textContent = 'Try again';
+  retry.addEventListener('click', () => void loadSessions(elements.workspace.value));
+  elements.sessionList.append(message, retry);
+}
 
 function renderSessions(items, currentPath) {
   currentPiSessions = items;
+  const currentSession = items.find((item) => item.path === currentPath);
+  elements.piActiveSessionTitle.textContent = currentSession?.name || currentSession?.title || (currentPath ? 'Current session' : 'New session');
+  const signature = JSON.stringify([currentPath, items.map(({ path, name, messageCount, runtimeId, running, busy, queuedPrompts }) => [path, name, messageCount, runtimeId, running, busy, queuedPrompts])]);
+  const cards = [...elements.sessionList.querySelectorAll('.pi-session-card')];
+  if (signature === currentPiSessionSignature && cards.length === items.length) {
+    for (const item of items) {
+      const card = cards.find((candidate) => candidate.dataset.sessionPath === item.path);
+      if (!card) continue;
+      card.classList.toggle('selected', item.path === currentPath);
+      card.querySelector('.session-meta').textContent = `${formatDate(item.modified)} · ${item.messageCount} messages`;
+    }
+    return;
+  }
+  currentPiSessionSignature = signature;
   elements.sessionList.replaceChildren();
   if (!items.length) {
-    const empty = document.createElement('div'); empty.className = 'empty-state'; empty.innerHTML = '<div><strong>No sessions yet</strong><span class="empty-copy">Start a conversation to create one.</span></div>';
-    elements.sessionList.append(empty); return;
+    const empty = document.createElement('div'); empty.className = 'pi-overview-empty';
+    const title = document.createElement('h3'); title.textContent = 'No sessions yet';
+    const copy = document.createElement('p'); copy.textContent = 'Start a new session to begin a conversation.';
+    empty.append(title, copy); elements.sessionList.append(empty); return;
   }
   for (const item of items) {
-    const card = document.createElement('div');
-    card.className = `session-item${item.path === currentPath ? ' selected' : ''}`;
-    const openButton = document.createElement('button');
-    openButton.type = 'button'; openButton.className = 'session-open'; openButton.title = item.preview || item.path;
-    if (item.path === currentPath) openButton.setAttribute('aria-current', 'true');
-    const title = document.createElement('span'); title.className = 'session-title'; title.textContent = item.name;
-    const details = document.createElement('span'); details.className = 'session-details';
-    const meta = document.createElement('span'); meta.className = 'session-meta'; meta.textContent = `${formatDate(item.modified)} · ${item.messageCount} msg`;
+    const card = document.createElement('article');
+    card.dataset.sessionPath = item.path;
+    card.className = `pi-session-card${item.path === currentPath ? ' selected' : ''}`;
+    const heading = document.createElement('div'); heading.className = 'pi-session-card-heading';
+    const title = document.createElement('h3'); title.textContent = item.name;
     const sessionStatus = sessionState(item);
     const statusLabel = document.createElement('span'); statusLabel.className = `session-state ${sessionStatus.className}`; statusLabel.textContent = sessionStatus.label;
-    details.append(meta, statusLabel); openButton.append(title, details);
+    heading.append(title, statusLabel);
+    const meta = document.createElement('p'); meta.className = 'session-meta'; meta.textContent = `${formatDate(item.modified)} · ${item.messageCount} messages`;
+    const actions = document.createElement('div'); actions.className = 'pi-session-card-actions';
+    const openButton = document.createElement('button'); openButton.type = 'button'; openButton.className = 'secondary'; openButton.textContent = 'Open conversation';
+    openButton.setAttribute('aria-label', `Open ${item.name}`);
+    if (item.path === currentPath) openButton.setAttribute('aria-current', 'page');
     openButton.addEventListener('click', () => {
       if (state.locks.has('session')) return;
-      closeDrawer();
-      const currentRuntimeId = sessionStorage.getItem('friday-session-id');
-      if (item.path === currentPath && item.runtimeId === currentRuntimeId) return;
-      card.classList.add('loading');
-      if (item.runtimeId && item.runtimeId !== currentRuntimeId) { attachRuntime(item.runtimeId); return; }
+      if (item.runtimeId && item.runtimeId !== sessionStorage.getItem('friday-session-id')) { attachRuntime(item.runtimeId, item.path); return; }
       void openSession(item.path);
     });
-
-    const actions = document.createElement('div'); actions.className = 'session-actions';
     const rename = document.createElement('button'); rename.type = 'button'; rename.className = 'session-action'; rename.textContent = 'Rename';
     rename.setAttribute('aria-label', `Rename ${item.name}`);
     rename.addEventListener('click', () => void manageSession('rename', item));
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'session-action danger'; remove.textContent = 'Delete';
     remove.setAttribute('aria-label', `Delete ${item.name}`);
     remove.addEventListener('click', () => void manageSession('delete', item));
-    actions.append(rename, remove);
-    card.append(openButton, actions);
+    actions.append(openButton, rename, remove);
+    card.append(heading, meta, actions);
     elements.sessionList.append(card);
   }
 }
@@ -623,25 +644,36 @@ async function manageSession(action, item) {
 
 async function loadSessions(cwd = elements.workspace.value, { quiet = false } = {}) {
   const requestedWorkspace = cwd;
-  if (!quiet) elements.refreshSessions.classList.add('loading');
+  if (!quiet) {
+    elements.refreshSessions.classList.add('loading');
+    currentPiSessionSignature = '';
+    const loading = document.createElement('p'); loading.className = 'pi-overview-loading'; loading.textContent = 'Loading sessions…';
+    elements.sessionList.replaceChildren(loading);
+  }
   try {
     const data = await apiJson(`/api/sessions?cwd=${encodeURIComponent(cwd)}`, {}, 'sessions');
     if (elements.workspace.value !== requestedWorkspace && elements.workspace.value !== data.workspace) return;
     elements.workspace.value = data.workspace;
     state.currentSessionPath = data.currentSession;
     renderSessions(data.sessions, data.currentSession);
+  } catch (error) {
+    if (!quiet) renderSessionOverviewError(error);
+    throw error;
   } finally {
     elements.refreshSessions.classList.remove('loading');
   }
 }
 
-function attachRuntime(runtimeId) {
+function attachRuntime(runtimeId, sessionPath = null) {
   sessionStorage.setItem('friday-session-id', runtimeId);
+  if (sessionPath) sessionStorage.setItem('friday-open-pi-session-path', sessionPath);
   window.location.assign('/?feature=pi');
 }
 
 async function openSession(sessionPath) {
   if (state.locks.has('session')) return;
+  showPiChat();
+  elements.piActiveSessionTitle.textContent = currentPiSessions.find((item) => item.path === sessionPath)?.name || 'Opening session…';
   if (sessionPath !== state.currentSessionPath) clearPiSessionNameSuggestion();
   closeDrawer();
   lock('session', true);
@@ -661,11 +693,12 @@ async function openSession(sessionPath) {
     renderPiContextUsage((await apiJson('/api/status', {}, 'poll-status')).contextUsage);
     closeDrawer();
   } catch (error) {
+    showPiOverview();
     if (!isAbort(error)) toast(error.message, 'error');
   } finally {
     lock('session', false);
     schedulePoll(0);
-    elements.input.focus();
+    if (!elements.piChatView.hidden) elements.input.focus();
   }
 }
 
@@ -1704,9 +1737,6 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
   const chatHome = document.createComment('Friday chat mount');
   chat.before(chatHome);
   const backdrop = $('#shell-backdrop');
-  const dialog = $('#shell-command-dialog');
-  const commandInput = $('#shell-command-input');
-  const commandResults = dialog.querySelector('.command-results');
   let drawer = null;
   let returnFocus = null;
   let assistantExpanded = false;
@@ -1728,7 +1758,6 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
     }
     // Off-canvas surfaces are modal; background controls must not receive focus.
     $('#main-content').inert = !!drawer;
-    $('.workspace-topbar').inert = !!drawer;
     $('.shell-mobile-shortcuts').inert = !!drawer;
     if (drawer && drawer !== sidebar) sidebar.inert = true;
     if (drawer && drawer !== assistant) assistant.inert = true;
@@ -1756,7 +1785,9 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
     drawer = null;
     backdrop.hidden = true;
     sync();
-    if (restore && returnFocus?.isConnected && !returnFocus.closest('[inert]')) returnFocus.focus();
+    const mobileSidebarTrigger = document.querySelector('.shell-mobile-shortcuts [data-shell-drawer="sidebar"]');
+    const focusTarget = returnFocus?.isConnected && !returnFocus.closest('[inert]') ? returnFocus : mobileSidebarTrigger;
+    if (restore && focusTarget?.isConnected && !focusTarget.closest('[inert]') && getComputedStyle(focusTarget).display !== 'none') focusTarget.focus();
     returnFocus = null;
   }
   function open(element, trigger = document.activeElement) {
@@ -1799,40 +1830,8 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
   for (const button of document.querySelectorAll('[data-shell-close]')) button.addEventListener('click', () => close());
   backdrop.addEventListener('click', () => close());
   document.addEventListener('friday:drawer-open', () => close(false));
-  const commands = featureButtons.map((button) => ({ feature: button.dataset.feature, label: button.textContent.trim(), icon: button.querySelector('svg')?.cloneNode(true) }));
-  function renderCommands() {
-    commandResults.replaceChildren();
-    for (const command of commands.filter((item) => `${item.label} ${item.feature}`.toLowerCase().includes(commandInput.value.trim().toLowerCase()))) {
-      const button = document.createElement('button');
-      button.type = 'button'; button.dataset.commandFeature = command.feature;
-      if (command.icon) button.append(command.icon.cloneNode(true));
-      const label = document.createElement('span'); label.textContent = command.label;
-      const hint = document.createElement('small'); hint.textContent = 'GO TO ↗';
-      button.append(label, hint);
-      button.addEventListener('click', () => { dialog.close(); void navigate(command.feature); });
-      commandResults.append(button);
-    }
-    $('#command-empty').hidden = commandResults.children.length > 0;
-  }
-  function openCommands() {
-    close(); closeDrawer();
-    commandInput.value = ''; renderCommands();
-    if (!dialog.open) dialog.showModal();
-    commandInput.focus();
-  }
-  $('#shell-command-trigger').addEventListener('click', openCommands);
-  $('#command-close').addEventListener('click', () => dialog.close());
-  commandInput.addEventListener('input', renderCommands);
-  dialog.addEventListener('click', (event) => {
-    if (event.target !== dialog) return;
-    const bounds = dialog.getBoundingClientRect();
-    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close();
-  });
   document.addEventListener('keydown', (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-      event.preventDefault();
-      if (dialog.open) dialog.close(); else openCommands();
-    } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'j' && !dialog.open) {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'j') {
       event.preventDefault();
       if (drawer === assistant) close();
       else if (!isDrawer(assistant) && !['friday', 'pi'].includes(getFeature())) {
@@ -1840,18 +1839,8 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
         sync();
         if (assistantExpanded) $('#friday-message').focus();
       } else open(assistant);
-    } else if (event.key === 'Escape' && !dialog.open) close();
-    if (dialog.open) {
-      const buttons = [...commandResults.children];
-      const current = buttons.indexOf(document.activeElement);
-      if (buttons.length && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
-        event.preventDefault();
-        const next = event.key === 'ArrowDown' ? (current + 1) % buttons.length : current <= 0 ? buttons.length - 1 : current - 1;
-        buttons[next].focus();
-      } else if (event.key === 'Enter' && document.activeElement === commandInput) {
-        event.preventDefault(); buttons[0]?.click();
-      }
-    } else if (drawer && event.key === 'Tab') {
+    } else if (event.key === 'Escape') close();
+    if (drawer && event.key === 'Tab') {
       const items = focusable(drawer);
       if (!items.length) return;
       if (event.shiftKey && document.activeElement === items[0]) { event.preventDefault(); items.at(-1).focus(); }
@@ -1881,12 +1870,6 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
   };
 }
 
-function updateTopbar(name = state.activeFeature) {
-  const labels = { dashboard: 'Dashboard', friday: 'Friday Agent', pi: 'Pi Agent', notes: 'Notes', finances: 'Finances', socials: 'Socials', calendar: 'Calendar', settings: 'System' };
-  const label = name === 'files' || name === 'pi-files' ? `Files · ${name === 'files' ? 'Friday' : 'Pi'}` : labels[name] || 'Workspace';
-  $('#topbar-page').textContent = label;
-}
-
 function selectFileScope(scope) {
   if (scope === state.fileFeature) return;
   if (['files', 'pi-files'].includes(state.activeFeature) && !confirmDiscardFileChanges()) return;
@@ -1912,6 +1895,18 @@ async function loadFridayDirectory() {
   elements.fridayWorkspaceDirectory.title = directory;
 }
 
+function showPiOverview() {
+  elements.piOverview.hidden = false;
+  elements.piChatView.hidden = true;
+  elements.piBackToSessions.hidden = true;
+}
+
+function showPiChat() {
+  elements.piOverview.hidden = true;
+  elements.piChatView.hidden = false;
+  elements.piBackToSessions.hidden = false;
+}
+
 async function setFeature(name, { startPiPolling = true } = {}) {
   if (name === 'friday-settings' || name === 'pi-settings') name = 'settings';
   if (name === 'files') name = state.fileFeature;
@@ -1920,6 +1915,7 @@ async function setFeature(name, { startPiPolling = true } = {}) {
   if (['files', 'pi-files'].includes(state.activeFeature) && !['files', 'pi-files'].includes(name) && !confirmDiscardFileChanges()) return;
   if (!featureViews.has(name)) return;
   state.activeFeature = name;
+  if (name === 'pi') showPiOverview();
   if (name !== 'pi') stopPolling();
   if (name !== 'friday') {
     fridayChat.pause();
@@ -1931,7 +1927,7 @@ async function setFeature(name, { startPiPolling = true } = {}) {
     clearTimeout(dashboardTemperatureTimer);
   }
   sessionStorage.setItem('friday-files-scope', state.fileFeature === 'pi-files' ? 'pi' : 'friday');
-  syncScopeSelectors(); updateTopbar(name);
+  syncScopeSelectors();
   closeDrawer();
   const primaryName = name === 'pi-files' ? 'files' : name;
   for (const button of featureButtons) {
@@ -2096,18 +2092,21 @@ async function openPiConversationFromFriday(session) {
       body: JSON.stringify({ cwd: session.cwd, path: session.path }),
     }, 'session-action');
     if (context !== state.contextVersion) return;
-    if (data.runtimeId && data.runtimeId !== sessionStorage.getItem('friday-session-id')) { attachRuntime(data.runtimeId); return; }
+    if (data.runtimeId && data.runtimeId !== sessionStorage.getItem('friday-session-id')) { attachRuntime(data.runtimeId, session.path); return; }
     const wasInitialized = piInitialized;
     if (wasInitialized) {
       elements.workspace.value = data.workspace; state.workspace = data.workspace; state.currentSessionPath = data.sessionPath;
       state.history = []; state.historyTotal = 0;
     }
     await setFeature('pi', { startPiPolling: false });
+    showPiChat();
     if (wasInitialized) {
       await Promise.all([loadHistory({ forceScroll: true }), loadModels(), loadThinkingLevels(), loadSessions(data.workspace, { quiet: true })]);
       const status = await apiJson('/api/status');
       setAgentBusy(status.busy, status.canAbort === true);
       renderPiContextUsage(status.contextUsage);
+    } else {
+      await loadHistory({ forceScroll: true });
     }
   } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); }
   finally { lock('session', false); schedulePoll(0); }
@@ -2562,6 +2561,12 @@ $('#pi-accept-session-name').addEventListener('click', async (event) => {
   finally { button.disabled = false; }
 });
 
+elements.piBackToSessions.addEventListener('click', () => {
+  showPiOverview();
+  $('#pi-session-overview-title').focus();
+  schedulePoll(0);
+});
+
 elements.reset.addEventListener('click', async () => {
   if (!elements.workspace.value || state.locks.has('session')) return;
   lock('session', true); ++state.contextVersion; stopPolling(); cancelRequest('history');
@@ -2569,10 +2574,11 @@ elements.reset.addEventListener('click', async () => {
     const data = await apiJson('/api/session/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cwd: elements.workspace.value }) }, 'session-action');
     if (data.runtimeId && data.runtimeId !== sessionStorage.getItem('friday-session-id')) {
       sessionStorage.setItem('friday-new-pi-run-id', data.runId);
-      attachRuntime(data.runtimeId);
+      attachRuntime(data.runtimeId, data.sessionPath);
       return;
     }
-    state.history = []; state.historyTotal = 0; state.currentSessionPath = data.sessionPath; renderHistory([]);
+    showPiChat();
+    state.history = []; state.historyTotal = 0; state.currentSessionPath = data.sessionPath; elements.piActiveSessionTitle.textContent = 'New session'; renderHistory([]);
     await Promise.all([loadModels(), loadThinkingLevels(), loadSessions(data.workspace)]);
     renderPiContextUsage((await apiJson('/api/status', {}, 'poll-status')).contextUsage);
     await suggestPiSessionName(data.runId);
@@ -2594,8 +2600,14 @@ function initializePi() {
   piInitPromise = (async () => {
     try {
       await loadWorkspace();
-      await Promise.all([loadHistory(), loadModels(), loadThinkingLevels()]);
-      await loadSessions(elements.workspace.value, { quiet: true });
+      await Promise.all([loadModels(), loadThinkingLevels()]);
+      await loadSessions(elements.workspace.value);
+      const openSessionPath = sessionStorage.getItem('friday-open-pi-session-path');
+      if (openSessionPath && openSessionPath === state.currentSessionPath) {
+        showPiChat();
+        await loadHistory({ forceScroll: true });
+        sessionStorage.removeItem('friday-open-pi-session-path');
+      }
       const newRunId = sessionStorage.getItem('friday-new-pi-run-id');
       if (newRunId) {
         await suggestPiSessionName(newRunId);
@@ -2620,7 +2632,7 @@ elements.logout.addEventListener('click', async () => {
   try {
     const response = await fetch('/api/logout', { method: 'POST' });
     if (!response.ok) throw new Error('Could not sign out');
-    for (const key of ['friday-session-id', 'friday-client-id', 'friday-active-feature', 'friday-new-pi-run-id']) sessionStorage.removeItem(key);
+    for (const key of ['friday-session-id', 'friday-client-id', 'friday-active-feature', 'friday-new-pi-run-id', 'friday-open-pi-session-path']) sessionStorage.removeItem(key);
     window.location.replace('/login');
   } catch (error) {
     elements.logout.disabled = false;
@@ -2630,7 +2642,6 @@ elements.logout.addEventListener('click', async () => {
 
 const workspaceShell = initializeWorkspaceShell({ navigate: setFeature, getFeature: () => state.activeFeature });
 syncScopeSelectors();
-updateTopbar();
 updateControls();
 void fridayChat.start();
 void setFeature(state.activeFeature);

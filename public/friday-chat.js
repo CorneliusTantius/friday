@@ -13,9 +13,20 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
   const contextUsage = document.querySelector('#friday-context-usage');
   const contextProgress = document.querySelector('#friday-context-progress');
   const contextLabel = document.querySelector('#friday-context-label');
+  const compactionStatus = document.querySelector('#friday-compaction-status');
   const announcement = document.querySelector('#friday-announcement');
+  const POLL_INTERVAL_MS = 2_000;
 
   function renderContextUsage(usage) {
+    const warningText = {
+      failed: 'Automatic compaction failed; your message is retained. Retry or shorten the conversation before continuing.',
+      'unknown-window': 'The 75% compaction threshold is unavailable for this model; SDK automatic compaction and overflow recovery remain enabled.',
+      configuration: 'The 75% compaction threshold could not be configured; SDK automatic compaction and overflow recovery remain enabled.',
+    }[usage?.compactionWarning] || '';
+    if (compactionStatus) {
+      compactionStatus.hidden = !warningText;
+      compactionStatus.textContent = warningText;
+    }
     if (!contextUsage || !contextProgress || !contextLabel) return;
     const tokens = Number.isFinite(usage?.tokens) ? usage.tokens : null;
     const windowSize = Number.isFinite(usage?.contextWindow) ? usage.contextWindow : null;
@@ -46,6 +57,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
   let historySessionId = null;
   let optimistic = [];
   let optimisticSequence = 0;
+  let sendError = '';
   let busy = false;
   let canAbort = false;
   let stopping = false;
@@ -64,6 +76,10 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
   let lifecycleVersion = 0;
   let reachable = false;
   let scrollToLatestOnVisibleRender = false;
+  let followsLatest = true;
+  let scrollFramePending = false;
+  let scrollResizeObserver = null;
+  let observedLastBlock = null;
 
   function renderChatQueue() {
     if (!chatQueue) return;
@@ -92,7 +108,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
         dismiss.type = 'button';
         dismiss.className = 'secondary';
         dismiss.textContent = 'Dismiss';
-        dismiss.addEventListener('click', () => { optimistic = optimistic.filter((entry) => entry !== item); renderChatQueue(); });
+        dismiss.addEventListener('click', () => { optimistic = optimistic.filter((entry) => entry !== item); renderChatQueue(); updateControls(); });
         row.append(dismiss);
       }
       chatQueue.append(row);
@@ -120,10 +136,16 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
       ? `${taskStages[delegatedTask.status]}${delegatedTask.label ? `: ${delegatedTask.label}` : ''}`
       : null;
     const activeTaskStatus = delegatedTask && ['queued', 'running', 'reviewing', 'outcome-unknown'].includes(delegatedTask.status);
-    const statusText = loading ? 'Connecting…' : busy ? taskStatus || 'Friday is coordinating…' : configuring ? 'Updating settings…' : activeTaskStatus ? taskStatus : reachable ? 'Ready' : 'Reconnecting…';
+    const failedQueueItem = [...optimistic].reverse().find((item) => item.status === 'failed');
+    const failure = sendError || failedQueueItem?.error || '';
+    const taskError = delegatedTask && ['blocked', 'outcome-unknown'].includes(delegatedTask.status)
+      || ['failed', 'queue-full', 'interrupted'].includes(delegatedTask?.review?.stage);
+    const statusText = failure ? 'Send failed' : loading ? 'Connecting…' : busy ? taskStatus || 'Friday is coordinating…' : configuring ? 'Updating settings…' : taskError ? taskStatus || 'Task error' : activeTaskStatus ? taskStatus : reachable ? 'Ready' : 'Reconnecting…';
+    const statusState = failure || taskError ? 'error' : loading ? 'connecting' : busy || activeTaskStatus ? 'working' : configuring ? 'updating' : reachable ? 'ready' : 'reconnecting';
     if (status.textContent !== statusText) status.textContent = statusText;
+    if (status.dataset.state !== statusState) status.dataset.state = statusState;
     const taskDetail = delegatedTask?.status === 'completed' ? delegatedTask.summary : delegatedTask?.summary || delegatedTask?.detail;
-    const statusTitle = taskStatus
+    const statusTitle = failure ? `Send failed: ${failure}` : taskStatus
       ? `${taskStatus}${taskReview ? ` · ${taskReview}` : ''}${taskDetail ? ` — ${taskDetail}` : ''}`
       : statusText;
     if (status.title !== statusTitle) status.title = statusTitle;
@@ -249,13 +271,45 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
   function scrollToLatest() {
     if (!messages.isConnected || !messages.getClientRects().length) return false;
     messages.scrollTop = messages.scrollHeight;
+    followsLatest = true;
     return true;
   }
+
+  function scheduleScrollToLatest() {
+    if (scrollFramePending) return;
+    scrollFramePending = true;
+    requestAnimationFrame(() => {
+      scrollFramePending = false;
+      if (followsLatest || scrollToLatestOnVisibleRender) {
+        if (scrollToLatest()) scrollToLatestOnVisibleRender = false;
+      }
+    });
+  }
+
+  function observeLatestBlock() {
+    if (!scrollResizeObserver) return;
+    const latest = messages.lastElementChild;
+    if (latest === observedLastBlock) return;
+    if (observedLastBlock) scrollResizeObserver.unobserve(observedLastBlock);
+    observedLastBlock = latest;
+    if (latest) scrollResizeObserver.observe(latest);
+  }
+
+  if (typeof window.ResizeObserver === 'function') {
+    scrollResizeObserver = new window.ResizeObserver(() => {
+      if (followsLatest || scrollToLatestOnVisibleRender) scheduleScrollToLatest();
+    });
+    scrollResizeObserver.observe(messages);
+  }
+  messages.addEventListener('scroll', () => { followsLatest = nearBottom(); }, { passive: true });
 
   function updateMessage(article, message) {
     const className = `message ${message.role}`;
     if (article.className !== className) article.className = className;
     if (article.dataset.renderRole !== message.role) article.dataset.renderRole = message.role;
+    const label = article.querySelector('.message-label');
+    const labelText = message.role === 'user' ? 'You' : message.role === 'event' ? 'Friday · Task update' : 'Friday';
+    if (label.textContent !== labelText) label.textContent = labelText;
     const content = article.querySelector('.message-content');
     if (article.renderedContent !== message.content) {
       content.replaceChildren();
@@ -270,18 +324,10 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
     body.className = 'message-body';
     const label = document.createElement('div');
     label.className = 'message-label';
-    label.textContent = message.role === 'user' ? 'You' : message.role === 'event' ? 'Friday · Task update' : 'Friday';
     const content = document.createElement('div');
     content.className = 'message-content';
     body.append(label, content);
-    if (message.role === 'user') article.append(body);
-    else {
-      const avatar = document.createElement('div');
-      avatar.className = 'message-avatar';
-      avatar.textContent = 'F';
-      avatar.setAttribute('aria-hidden', 'true');
-      article.append(avatar, body);
-    }
+    article.append(body);
     article.renderType = 'message';
     updateMessage(article, message);
     return article;
@@ -405,7 +451,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
   }
 
   function render() {
-    const stick = scrollToLatestOnVisibleRender || nearBottom();
+    const stick = scrollToLatestOnVisibleRender || followsLatest || nearBottom();
     const blocks = historyBlocks();
     if (!blocks.length) {
       if (!messages.querySelector('.welcome')) {
@@ -418,7 +464,8 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
         welcome.append(title, copy);
         messages.replaceChildren(welcome);
       }
-      if (scrollToLatestOnVisibleRender && scrollToLatest()) scrollToLatestOnVisibleRender = false;
+      observeLatestBlock();
+      if (scrollToLatestOnVisibleRender) scheduleScrollToLatest();
       return;
     }
 
@@ -439,8 +486,11 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
       const atIndex = messages.children[index] || null;
       if (atIndex !== item) messages.insertBefore(item, atIndex);
     }
-    if (stick) messages.scrollTop = messages.scrollHeight;
-    if (scrollToLatestOnVisibleRender && scrollToLatest()) scrollToLatestOnVisibleRender = false;
+    observeLatestBlock();
+    if (stick) {
+      if (scrollToLatest()) scrollToLatestOnVisibleRender = false;
+      scheduleScrollToLatest();
+    }
   }
 
   function historyUrl(fullHistory) {
@@ -593,7 +643,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
     pollTimer = null;
   }
 
-  function schedulePoll(delay = busy || delegatedTasks.some((task) => ['queued', 'running', 'reviewing', 'outcome-unknown'].includes(task.status)) ? 2_000 : 15_000) {
+  function schedulePoll(delay = POLL_INTERVAL_MS) {
     stopPolling();
     if (!started || !isVisible()) return;
     pollTimer = setTimeout(() => void poll(), delay);
@@ -646,9 +696,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
   function enterView() {
     scrollToLatestOnVisibleRender = true;
     if (scrollToLatest()) scrollToLatestOnVisibleRender = false;
-    requestAnimationFrame(() => {
-      if (scrollToLatest()) scrollToLatestOnVisibleRender = false;
-    });
+    scheduleScrollToLatest();
     const transcript = started ? sync({ withStatus: true }) : start();
     return Promise.all([transcript, onEnter?.()]).finally(() => schedulePoll());
   }
@@ -743,7 +791,8 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
 
   input.addEventListener('input', resizeInput);
   input.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+    if (window.matchMedia?.('(max-width: 600px)').matches) return;
     event.preventDefault();
     if (!send.disabled) form.requestSubmit();
   });
@@ -752,11 +801,13 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
     const message = input.value.trim();
     if (!message || loading || configuring) return;
     const item = { localId: ++optimisticSequence, content: message, after: history.filter((entry) => entry.role === 'user').length + optimistic.length, status: 'sending' };
+    sendError = '';
     optimistic.push(item);
     input.value = '';
     resizeInput();
     render();
-    messages.scrollTop = messages.scrollHeight;
+    scrollToLatest();
+    scheduleScrollToLatest();
     updateControls();
     try {
       const response = await apiJson('/api/friday/chat', {
@@ -773,6 +824,8 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
       render();
       if (!input.value) input.value = message;
       resizeInput();
+      sendError = error.message;
+      updateControls();
       toast(error.message, 'error');
     } finally {
       try { await sync({ withStatus: true }); }

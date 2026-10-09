@@ -11,9 +11,11 @@ const sessionCards = await readFile(new URL('../public/friday-pi-session-cards.j
 const chat = await readFile(new URL('../public/friday-chat.js', import.meta.url), 'utf8');
 const localCalendar = await readFile(new URL('../public/local-calendar.js', import.meta.url), 'utf8');
 const calendarView = await readFile(new URL('../public/calendar-view.js', import.meta.url), 'utf8');
-const socials = await readFile(new URL('../public/socials.js', import.meta.url), 'utf8');
+const fridayCalendarTools = await readFile(new URL('../src/friday/friday-calendar-tools.js', import.meta.url), 'utf8');
+const fridayPrompt = await readFile(new URL('../src/friday/friday-system-prompt.js', import.meta.url), 'utf8');
 const server = await readFile(new URL('../src/server.js', import.meta.url), 'utf8');
 const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
+const prototype = await readFile(new URL('../mockup.html', import.meta.url), 'utf8');
 const login = await readFile(new URL('../public/login.html', import.meta.url), 'utf8');
 
 test('Pi staff names are session titles and generated names require explicit acceptance', () => {
@@ -31,8 +33,87 @@ test('Pi staff names are session titles and generated names require explicit acc
   assert.doesNotMatch(app, /displayName|staff-name-suggestion/);
 });
 
+test('Pi Agent session cards omit recent-message previews and preserve full-chat actions', () => {
+  assert.match(html, /id="pi-session-overview"[^>]*aria-labelledby="pi-session-overview-title"/);
+  assert.match(html, /id="pi-session-cards"[^>]*aria-label="Saved sessions"/);
+  assert.match(html, /class="workspace-field pi-workspace-field"/);
+  assert.match(html, /id="pi-chat-view" hidden/);
+  assert.match(html, /id="pi-back-to-sessions"[^>]*hidden>All sessions/);
+  assert.match(app, /className = `pi-session-card\$\{item\.path === currentPath \? ' selected' : ''\}`/);
+  assert.match(app, /className = `session-state \$\{sessionStatus\.className\}`/);
+  assert.match(app, /Open conversation/);
+  assert.match(app, /card\.append\(heading, meta, actions\)/);
+  assert.doesNotMatch(app, /sessionPreview|pi-session-preview|pi-preview-message|\/api\/session\/preview/);
+  assert.match(app, /function openSession\(sessionPath\)[\s\S]*await Promise\.all\(\[loadHistory/);
+  assert.match(app, /rename\.addEventListener\('click', \(\) => void manageSession\('rename', item\)\)/);
+  assert.match(app, /remove\.addEventListener\('click', \(\) => void manageSession\('delete', item\)\)/);
+  assert.match(app, /function showPiOverview\(\)/);
+  assert.match(app, /function showPiChat\(\)/);
+  assert.match(css, /\.pi-session-cards \{ display:grid; grid-template-columns:repeat\(auto-fill/);
+  assert.match(css, /\.pi-session-card-heading \{ display:flex; min-width:0; align-items:center;/);
+  assert.match(css, /\.pi-session-card-heading h3 \{ min-width:0; margin:0; overflow-wrap:anywhere;[^}]*white-space:normal/);
+  assert.match(css, /\.pi-session-card-heading \.session-state \{ flex:none; white-space:nowrap; \}/);
+  assert.doesNotMatch(css, /pi-session-preview|pi-preview-message|pi-preview-content|pi-preview-retry/);
+  assert.match(css, /\.pi-session-card \{ display:flex; min-width:0; flex-direction:column;/);
+  assert.match(app, /heading\.append\(title, statusLabel\)/);
+  assert.doesNotMatch(server, /sessionPreview|readSessionPreview|\/api\/session\/preview/);
+});
+
+test('Pi overview removes its redundant header and keeps creation and active-session controls discoverable', () => {
+  const piStart = html.indexOf('<section id="pi-feature"');
+  const piFeature = html.slice(piStart, html.indexOf('</section>', piStart));
+  const overviewStart = html.indexOf('<section id="pi-session-overview"', piStart);
+  const overviewEnd = html.indexOf('</section>', overviewStart);
+  const overview = html.slice(overviewStart, overviewEnd);
+  const chatStart = html.indexOf('<div id="pi-chat-view"', piStart);
+  const chatView = html.slice(chatStart, html.indexOf('<section id="files-feature"', chatStart));
+  assert.doesNotMatch(piFeature, /<header class="header">|<h1>Pi agent<\/h1>|<span class="eyebrow">Pi Agent<\/span>/);
+  assert.match(overview, /<h2 id="pi-session-overview-title"[^>]*>Your sessions<\/h2>/);
+  assert.match(overview, /<div class="pi-overview-actions">[\s\S]*?<button id="reset"[^>]*aria-label="New Pi session"[\s\S]*?New session[\s\S]*?<button id="refresh-sessions"/);
+  assert.equal((html.match(/id="reset"/g) || []).length, 1, 'the existing New session flow has one button');
+  assert.match(chatView, /<header class="pi-active-session-header">\s*<button id="pi-back-to-sessions"[^>]*hidden>All sessions<\/button>\s*<h2 id="pi-active-session-title">Current session<\/h2>/);
+  assert.match(chatView, /<span id="status" class="status" role="status" aria-live="polite">Starting…<\/span>/);
+  assert.doesNotMatch(chatView, /id="reset"/);
+  assert.match(app, /const currentSession = items\.find\(\(item\) => item\.path === currentPath\);\s*elements\.piActiveSessionTitle\.textContent = currentSession\?\.name \|\| currentSession\?\.title/);
+  assert.match(app, /piActiveSessionTitle\.textContent = currentPiSessions\.find\(\(item\) => item\.path === sessionPath\)\?\.name \|\| 'Opening session…'/);
+  assert.match(app, /elements\.reset\.addEventListener\('click'/);
+  assert.match(css, /\.pi-overview-actions \{ display:flex; flex:0 0 auto; align-items:center;/);
+  assert.match(css, /\.pi-active-session-header h2 \{ min-width:0; flex:1;[^}]*overflow-wrap:anywhere/);
+  assert.match(css, /#pi-chat-view\[hidden\] \{ display:none; \}/);
+  assert.match(css, /#pi-back-to-sessions \{ flex:0 0 auto; white-space:nowrap; \}/);
+  assert.match(css, /@media \(max-width:600px\)[\s\S]*\.pi-overview-actions \{ flex:1 1 100%; \}/);
+});
+
+test('global command search is removed while navigation and assistant shortcuts remain', () => {
+  assert.doesNotMatch(html, /app-topbar|workspace-topbar|topbar-page/);
+  assert.doesNotMatch(css, /\.app-topbar|#topbar-page|topbar-breadcrumb/);
+  assert.doesNotMatch(html, /id="shell-command-(?:dialog|input|trigger)"|id="command-close"/);
+  assert.doesNotMatch(app, /shell-command|commandInput|commandResults|openCommands|renderCommands|commandFeature|event\.key\.toLowerCase\(\) === 'k'/);
+  assert.match(app, /event\.key\.toLowerCase\(\) === 'j'/, 'the assistant shortcut remains');
+  assert.match(app, /for \(const button of featureButtons\) button\.addEventListener\('click', \(\) => void setFeature/);
+  assert.match(html, /<nav class="shell-mobile-shortcuts" aria-label="Mobile shortcuts">/);
+  assert.doesNotMatch(css, /shell-search-trigger|shell-command-dialog|shell-command-input|command-results|command-footer|#command-empty|\bkbd\b/);
+  assert.doesNotMatch(prototype, /search-trigger|command-dialog|command-input|command-results|commandDialog|openCommand|command palette|Ctrl K|===\s*'k'/i, 'the standalone Friday prototype also has no dead command search');
+  assert.match(prototype, /Ctrl J/);
+});
+
+test('global app header is removed and Friday assistant access remains in the sidebar', () => {
+  const sidebarStart = html.indexOf('<aside id="workspace-sidebar" class="sidebar workspace-sidebar"');
+  const sidebarEnd = html.indexOf('<main id="main-content"', sidebarStart);
+  const sidebar = html.slice(sidebarStart, sidebarEnd);
+  assert.doesNotMatch(html, /app-topbar|workspace-topbar|topbar-page/);
+  assert.match(sidebar, /<div class="sidebar-footer">\s*<button class="feature shell-assistant-toggle" type="button" data-shell-drawer="assistant" aria-label="Open Friday assistant" aria-controls="assistant-rail" aria-expanded="false">[\s\S]*?<span>Friday assistant<\/span><\/button>/);
+  assert.match(html, /<nav class="shell-mobile-shortcuts" aria-label="Mobile shortcuts">[\s\S]*?data-shell-drawer="sidebar"[^>]*>[^<]*<svg[\s\S]*?More<\/button>/);
+  assert.doesNotMatch(app, /updateTopbar|topbar-page|workspace-topbar/);
+  assert.doesNotMatch(css, /\.app-topbar|#topbar-page|workspace-topbar|topbar-breadcrumb/);
+  assert.match(css, /\.shell \{ grid-template-columns:235\.4px minmax\(0,1fr\) 320px; grid-template-rows:minmax\(0,1fr\); \}/);
+  assert.match(css, /\.feature-shell \{ grid-column:2; grid-row:1;/);
+  assert.match(css, /\.assistant-rail \{ grid-column:3; grid-row:1;/);
+  assert.match(css, /\.sidebar-footer \.shell-assistant-toggle \{ width:100%; justify-content:flex-start/);
+});
+
 test('public workspace UI contract has every feature, form, and shell integration', () => {
-  for (const id of ['friday-feature','pi-feature','files-feature','dashboard-feature','repos-feature','notes-feature','finances-feature','socials-feature','calendar-feature','settings-feature','friday-form','friday-chat-queue','friday-stop','chat-form','file-save','finance-form','clone-repo-form','workspace-sidebar','assistant-rail','shell-command-dialog','shell-command-input']) {
+  for (const id of ['friday-feature','pi-feature','files-feature','dashboard-feature','repos-feature','notes-feature','finances-feature','socials-feature','calendar-feature','settings-feature','friday-form','friday-chat-queue','friday-compaction-status','friday-stop','chat-form','file-save','finance-form','clone-repo-form','workspace-sidebar','assistant-rail']) {
     assert.equal((html.match(new RegExp(`\\bid=["']${id}["']`, 'g')) || []).length, 1, `expected one #${id}`);
   }
   assert.match(html, /data-shell-drawer="assistant"/);
@@ -51,14 +132,15 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(chat, /Cancel queued message/);
   assert.match(chat, /function cancelQueuedMessage/);
   assert.match(chat, /runtime\.chatQueue/);
-  assert.match(css, /\.pi-layout \{ grid-template-columns:260px minmax\(0,1fr\); \}/);
-  assert.match(css, /\.pi-layout \{ grid-template-columns:225px minmax\(0,1fr\); \}/);
+  assert.match(css, /\.pi-layout \{ grid-template-columns:minmax\(0,1fr\); \}/);
+  assert.match(css, /\.pi-layout \{ display: grid; grid-template-columns: minmax\(0, 1fr\); \}/);
   assert.match(css, /@media \(max-width:1000px\)[\s\S]*\.pi-layout,\.files-layout,\.notes-layout \{ display:block; \}/);
-  assert.match(css, /@media \(max-width:1000px\)[\s\S]*\.pi-sidebar[^}]*width:min\(84vw,310px\)/);
   assert.match(sessionCards, /Edit staff profile/);
-  assert.match(sessionCards, /Expertise \(optional; one per line\)/);
-  assert.match(sessionCards, /Responsibilities \(one per line\)/);
-  assert.match(sessionCards, /Workload: \$\{session\.workload\?\.openTasks/);
+  assert.match(sessionCards, /labels = \{ expertise: 'Expertise', responsibilities: 'Responsibilities'/);
+  assert.match(sessionCards, /if \(name === 'responsibilities'\) input\.maxLength = 500/);
+  assert.match(sessionCards, /One per line · 500 characters total maximum/);
+  assert.doesNotMatch(sessionCards, /`Expertise:|`Responsibilities:/);
+  assert.match(sessionCards, /state\.profile\.textContent = `Workload: \$\{session\.workload\?\.openTasks/);
   assert.match(chat, /Friday · Task update/);
   const pollRefresh = app.slice(app.indexOf('async function pollHistory'), app.indexOf('function startPolling'));
   assert.match(pollRefresh, /loadHistory\(\{ limit: data\.busy \? 10 : null \}\)/);
@@ -71,7 +153,9 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(app, /function scheduleFridaySessionListPolling/);
   assert.match(app, /fridaySessionsRefreshAgain/);
   assert.match(chat, /function schedulePoll/);
+  assert.match(chat, /const POLL_INTERVAL_MS = 2_000/);
   assert.match(chat, /document\.addEventListener\('visibilitychange'/);
+  assert.match(css, /\.friday-task-board \{[^}]*align-content:start/);
   assert.doesNotMatch(chat, /EventSource|events\/token/);
   assert.match(sessionCards, /session\.opening \? 'Opening'/);
   assert.match(sessionCards, /session\.running \? 'Open' : 'Saved'/);
@@ -89,21 +173,17 @@ test('public workspace UI contract has every feature, form, and shell integratio
   for (const feature of ['friday', 'pi', 'repos', 'calendar', 'socials']) assert.match(workspaceNav, new RegExp(`data-feature="${feature}"`));
   assert.doesNotMatch(yourSpaceNav, /data-feature="calendar"|data-feature="socials"/);
   assert.match(html, /data-feature="calendar"/);
-  const socialsPage = html.slice(html.indexOf('id="socials-feature"'), html.indexOf('id="calendar-feature"'));
+  const socialsPage = html.match(/<section id="socials-feature"[^>]*>([\s\S]*?)<\/section>/)?.[1];
   const calendarPage = html.slice(html.indexOf('id="calendar-feature"'), html.indexOf('id="settings-feature"'));
-  const connections = html.slice(html.indexOf('class="settings-group connections-settings-group"'), html.indexOf('class="settings-group friday-settings-group"'));
-  for (const id of ['gmail-connect', 'gmail-status', 'gmail-disconnect', 'slack-connect', 'slack-status', 'slack-disconnect']) {
-    assert.equal((html.match(new RegExp(`\\bid="${id}"`, 'g')) || []).length, 1, `#${id} exists only once`);
-    assert.ok(connections.includes(`id="${id}"`), `#${id} is in System Settings Connections`);
-  }
-  assert.match(connections, /Authorize Gmail with Google/);
-  assert.match(connections, /Google access and refresh tokens stay in private files on this host/);
-  assert.match(connections, /Authorize Slack workspace/);
-  assert.match(connections, /workspace-admin approval may be required/);
-  assert.match(connections, /Slack bot token privately on this host/);
-  assert.match(connections, /does not sign you in to Friday/);
-  assert.doesNotMatch(socialsPage, /gmail-connect|gmail-status|gmail-disconnect|slack-connect|slack-status|slack-disconnect|calendar-connect|calendar-status|calendar-event-list/);
-  assert.match(socialsPage, /gmail-inbox-status[\s\S]*gmail-message-list[\s\S]*slack-channels-status[\s\S]*slack-channel-list/);
+  assert.equal(socialsPage?.trim(), '', 'Socials remains a blank feature target');
+  assert.doesNotMatch(html, /Slack|slack|socials\.js|connections-settings-group/i);
+  assert.doesNotMatch(server, /slack|socials\.js|\/api\/socials\//i);
+  assert.doesNotMatch(fridayCalendarTools, /slack/i);
+  assert.doesNotMatch(fridayPrompt, /slack/i);
+  assert.doesNotMatch(html, /gmail|Gmail/i, 'Gmail is removed from user-facing pages');
+  assert.doesNotMatch(server, /gmail|Gmail|FRIDAY_GMAIL/);
+  assert.doesNotMatch(fridayCalendarTools, /gmail|Gmail/);
+  assert.doesNotMatch(fridayPrompt, /gmail|Gmail/);
   for (const id of ['calendar-month-grid', 'calendar-month-days', 'calendar-mobile-date', 'calendar-mobile-agenda', 'calendar-event-form', 'calendar-title', 'calendar-start', 'calendar-end', 'calendar-event-list']) assert.match(calendarPage, new RegExp(`id="${id}"`));
   assert.doesNotMatch(calendarPage, /Google|Authorize|Connect Calendar/);
   assert.match(localCalendar, /api\/calendar\/events/);
@@ -116,12 +196,7 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(localCalendar, /monthDays\.querySelector\(/);
   assert.match(localCalendar, /function beginCreate\(\)/);
   assert.match(calendarView, /export function shiftMonth/);
-  assert.ok(server.includes('href="/?feature=settings"'), 'Gmail and Slack OAuth callbacks return to Settings');
   assert.ok(server.includes("join(paths.dataDir, 'calendar', 'events.json')"), 'local events are stored under private Friday data');
-  assert.match(socials, /friday:feature-change/);
-  assert.match(socials, /api\/socials\/gmail\/messages/);
-  assert.doesNotMatch(socials, /message\.snippet/);
-  assert.match(socials, /api\/socials\/gmail\/status/);
   assert.match(chat, /apiJson\('\/api\/friday\/chat'/);
   for (const route of ['/styles.css', '/app.js']) assert.ok(html.includes(`"${route}"`));
   assert.ok(app.includes("import('./friday-chat.js')"));
@@ -134,6 +209,95 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(css, /:focus-visible\s*\{\s*outline:2px solid var\(--accent\)/);
   assert.match(css, /@media \(prefers-reduced-motion:reduce\)[\s\S]*\.feature:hover,button:active:not\(:disabled\) \{ transform:none !important; \}/);
   assert.match(css, /@keyframes view-fade \{ from \{ opacity:0; transform:translateY\(4px\)/);
+});
+
+test('mobile navigation uses the bottom More drawer with no top header or hamburger', () => {
+  const shortcutsStart = html.indexOf('<nav class="shell-mobile-shortcuts"');
+  const shortcutsEnd = html.indexOf('</nav>', shortcutsStart) + '</nav>'.length;
+  const shortcuts = html.slice(shortcutsStart, shortcutsEnd);
+  assert.doesNotMatch(html, /app-topbar|workspace-topbar|shell-menu-toggle|aria-label="Open navigation"/);
+  assert.match(shortcuts, /data-shell-drawer="sidebar" aria-controls="workspace-sidebar" aria-expanded="false"[^>]*>[\s\S]*?More<\/button>/);
+  for (const destination of ['Pi', 'Friday', 'Dashboard', 'Finance', 'More']) assert.match(shortcuts, new RegExp(`${destination}<\\/button>`));
+  assert.match(app, /for \(const button of document\.querySelectorAll\('\[data-shell-drawer\]'\)\)/);
+  assert.match(css, /\.sidebar\.shell-drawer-open \{ transform:none; visibility:visible; \}/);
+  assert.match(css, /\.shell\[data-feature="friday"\].*grid-template-columns:235\.4px minmax\(0,1fr\)/);
+  assert.match(css, /@media \(max-width:600px\)[\s\S]*\.shell-mobile-shortcuts \{ display:flex; position:fixed;/);
+});
+
+test('main feature content uses shared responsive padding and wider navigation sidebar', () => {
+  assert.match(css, /--main-content-inset-block: 32px;[\s\S]*--main-content-inset-inline: 32px;/);
+  assert.match(css, /#main-content \{ padding:var\(--main-content-inset-block\) var\(--main-content-inset-inline\); \}/);
+  assert.match(css, /@media \(min-width:1700px\)[\s\S]*--main-content-inset-block:40px; --main-content-inset-inline:40px;/);
+  assert.match(css, /@media \(max-width:1390px\)[\s\S]*--main-content-inset-block:28px; --main-content-inset-inline:24px;/);
+  assert.match(css, /@media \(max-width:600px\)[\s\S]*--main-content-inset-block:0px; --main-content-inset-inline:0px;/);
+  assert.match(css, /\.feature-page \{ padding:0; \}/);
+  assert.match(css, /\.app \{[^}]*padding: 0; \}/);
+  assert.match(css, /\.feature-page \{ padding:23px 16px 18px; \}/);
+  assert.match(css, /\.feature-page \{ padding:19px 12px 14px; \}/);
+  assert.match(css, /\.app \{ padding-block-end:max\(.8rem,env\(safe-area-inset-bottom\)\); \}/);
+  assert.match(css, /@media \(min-width:1700px\)[\s\S]*\.shell \{ grid-template-columns:235\.4px minmax\(0,1fr\) 355px;/);
+  assert.match(css, /\.shell \{ grid-template-columns:235\.4px minmax\(0,1fr\) 320px;/);
+  assert.match(css, /\.shell \{ grid-template-columns:209px minmax\(0,1fr\) 285px;/);
+  assert.match(css, /grid-template-columns:77px minmax\(0,1fr\)/);
+  assert.match(css, /\.sidebar \{ position:fixed;[^}]*width:264px;/);
+});
+
+test('Friday chat omits the avatar without a reserved column and retains sender identification', () => {
+  assert.doesNotMatch(chat, /message-avatar|textContent = 'F'/);
+  assert.match(chat, /const labelText = message\.role === 'user' \? 'You' : message\.role === 'event' \? 'Friday · Task update' : 'Friday'/);
+  assert.match(chat, /if \(label\.textContent !== labelText\) label\.textContent = labelText/);
+  assert.match(css, /\.friday-app \.message \{ grid-template-columns:minmax\(0,1fr\); gap:0; \}/);
+  assert.match(css, /\.message-avatar \{ display: grid; width: 1\.75rem/);
+});
+
+test('Friday automatic-compaction failures are surfaced accessibly without provider error text', () => {
+  assert.match(html, /id="friday-compaction-status" class="compaction-status" role="status" aria-live="polite" hidden/);
+  assert.match(chat, /failed: 'Automatic compaction failed; your message is retained\./);
+  assert.match(chat, /'unknown-window': 'The 75% compaction threshold is unavailable/);
+  assert.match(chat, /configuration: 'The 75% compaction threshold could not be configured/);
+  assert.match(chat, /compactionStatus\.textContent = warningText/);
+});
+
+test('Friday chat removes its redundant title and places accessible live status above the composer input', () => {
+  const headerStart = html.indexOf('<header class="header friday-chat-header">');
+  const headerEnd = html.indexOf('</header>', headerStart);
+  const header = html.slice(headerStart, headerEnd);
+  assert.doesNotMatch(header, /<h1>|id="friday-status"/);
+  assert.match(header, /data-shell-drawer="sidebar"[^>]*aria-label="Open Friday conversations"/);
+  assert.match(header, /id="friday-pi-sessions-toggle"/);
+  assert.match(header, /class="assistant-rail-tools"/);
+  const formStart = html.indexOf('<form id="friday-form"');
+  const formEnd = html.indexOf('</form>', formStart);
+  const form = html.slice(formStart, formEnd);
+  const statusRow = html.slice(html.indexOf('<div class="friday-composer-status-row">'), formStart);
+  assert.match(statusRow, /<div class="friday-composer-status-row">\s*<span id="friday-status" class="status" role="status" aria-live="polite">Connecting…<\/span>\s*<div id="friday-compaction-status" class="compaction-status" role="status" aria-live="polite" hidden><\/div>\s*<\/div>\s*$/);
+  assert.match(form, /<textarea id="friday-message"/);
+  assert.doesNotMatch(form, /friday-status|friday-compaction-status/);
+  assert.equal((html.match(/id="friday-status"/g) || []).length, 1);
+  assert.equal((html.match(/id="friday-compaction-status"/g) || []).length, 1);
+  assert.match(css, /\.friday-composer-status-row \{ display:flex;[^}]*flex-wrap:wrap/);
+  assert.match(css, /#friday-status\[data-state="ready"\][^{]*\{[^}]*color:var\(--accent\)/);
+  assert.match(css, /#friday-status\[data-state="error"\][^{]*\{[^}]*color:var\(--red\)/);
+  assert.match(css, /\.compaction-status \{ max-width:100%; flex:1 1 100%;/);
+  assert.doesNotMatch(css, /#friday-status \{[^}]*position:absolute/);
+  assert.match(css, /\.shell\[data-feature="friday"\] \.friday-app > \.friday-chat-header \{ display:none; \}/);
+  assert.match(css, /@media \(max-width:1170px\)[\s\S]*\.shell\[data-feature="friday"\] \.friday-app > \.friday-chat-header \{ display:flex;/);
+});
+
+test('Friday composer hints newline on mobile and retains desktop Enter/IME policy', () => {
+  assert.match(html, /<textarea id="friday-message"[^>]*enterkeyhint="enter"[^>]*>/);
+  assert.match(html, /<button id="friday-send" class="send-button" type="submit"/);
+  assert.match(chat, /event\.key !== 'Enter' \|\| event\.shiftKey \|\| event\.isComposing \|\| event\.keyCode === 229/);
+  assert.match(chat, /window\.matchMedia\?\.\('\(max-width: 600px\)'\)\.matches/);
+});
+
+test('Friday chat follows latest updates after layout while retaining explicit scroll intent', () => {
+  assert.match(html, /<section id="friday-messages" class="messages" aria-label="Friday conversation">/);
+  assert.match(chat, /const stick = scrollToLatestOnVisibleRender \|\| followsLatest \|\| nearBottom\(\)/);
+  assert.match(chat, /requestAnimationFrame\(\(\) =>/);
+  assert.match(chat, /window\.ResizeObserver/);
+  assert.match(chat, /messages\.addEventListener\('scroll', \(\) => \{ followsLatest = nearBottom\(\); \}/);
+  assert.match(css, /\.friday-app \.messages \{ scroll-behavior:auto; \}/);
 });
 
 test('Friday conversations submenu opens only from its explicit keyboard-accessible toggle', () => {
@@ -203,12 +367,16 @@ test('Friday workspace path is selectable code and new-conversation controls sta
   assert.match(app, /apiJson\('\/api\/session\/reset'/);
 });
 
-test('staff cards show repository visibility but never edit or display legacy repo affinity', () => {
+test('staff cards combine selectable repository visibility and profile editing in one dropdown', () => {
   assert.match(app, /createFridayPiSessionCards/);
+  assert.match(app, /onSaveVisibility: async \(session, hiddenRepositories\)/);
   assert.match(sessionCards, /Visible repositories/);
   assert.match(sessionCards, /session\.availableRepositories/);
   assert.match(sessionCards, /session\.visibleRepositories/);
-  assert.match(sessionCards, /friday-repo-visibility/);
+  assert.match(sessionCards, /Staff profile and repositories/);
+  assert.match(sessionCards, /Edit staff profile/);
+  assert.match(sessionCards, /friday-repo-visibility-form/);
+  assert.match(sessionCards, /Save visibility/);
   assert.match(sessionCards, /not a filesystem sandbox/);
   assert.doesNotMatch(sessionCards, /Repo affinity|repositories: textLines/);
 });
@@ -239,7 +407,10 @@ test('task descriptions do not duplicate expanded previews and sidebar cards sta
   assert.match(css, /\.friday-task-details\[open\] \.friday-task-open-label \{ display:inline; \}/);
   assert.match(css, /\.friday-task-row \{[^}]*border:1px solid var\(--border\)[^}]*background:/);
   assert.match(css, /\.session-item\.friday-session-item \{[^}]*border-color:var\(--border\)[^}]*background:/);
-  assert.match(css, /\.friday-session-item \.friday-staff-summary \{[^}]*border-top/);
+  assert.match(css, /\.friday-session-item \.friday-session-open \{[^}]*display:grid; grid-template-columns:minmax\(0,1fr\) auto/);
+  assert.match(css, /\.friday-session-item \.session-title \{[^}]*overflow-wrap:anywhere; white-space:normal/);
+  assert.match(css, /\.friday-session-item \.friday-session-status-row \{ display:flex;[^}]*justify-content:space-between/);
+  assert.match(css, /\.friday-session-item \.friday-staff-workload \{[^}]*font-size:11px; white-space:nowrap/);
   assert.match(css, /\.friday-session-item \.friday-staff-editor \{/);
   assert.match(css, /@media \(max-width:1170px\)[\s\S]*\.friday-pi-sidebar\.open/);
 });

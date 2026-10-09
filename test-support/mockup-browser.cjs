@@ -25,7 +25,7 @@ async function runBrowserCheck(repositoryRoot) {
         close() { this.readyState = 2; }
       };
     });
-    const errors = [], mutations = [], socialRequestFailures = [];
+    const errors = [], mutations = [], socialRequests = [];
     const model = { provider: 'test', id: 'model', name: 'Test model' };
     const status = { busy: false, canAbort: false, running: true, piRunning: true, workspace: '/workspace', preferredWorkspace: '/workspace', model, contextUsage: { tokens: 1200, contextWindow: 100000, percent: 1.2 } };
     const entries = [{ id: 'entry-1', type: 'expense', amount: 50000, category: 'Food', description: 'Lunch', date: new Date().toLocaleDateString('en-CA') }];
@@ -47,9 +47,8 @@ async function runBrowserCheck(repositoryRoot) {
       }
       let body = {};
       if (request.method() !== 'GET') mutations.push({ endpoint, method: request.method(), body: request.postData() ? request.postDataJSON() : null });
-      if (endpoint === '/api/socials/gmail/status') body = { configured: true, connected: false, email: null, scope: null };
-      else if (endpoint === '/api/socials/slack/status') body = { configured: true, connected: false, workspace: null, selectedChannels: [] };
-      else if (endpoint === '/api/calendar/events') {
+      if (endpoint.startsWith('/api/socials/')) socialRequests.push({ endpoint, method: request.method() });
+      if (endpoint === '/api/calendar/events') {
         if (request.method() === 'POST') calendarEvents.push({ ...request.postDataJSON(), id: '123e4567-e89b-42d3-a456-426614174000' });
         body = request.method() === 'POST' ? { event: calendarEvents.at(-1) } : { events: calendarEvents };
       } else if (/^\/api\/calendar\/events\//.test(endpoint)) {
@@ -102,17 +101,9 @@ async function runBrowserCheck(repositoryRoot) {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
     });
     page.on('pageerror', error => errors.push(error.message));
-    page.on('console', message => {
-      if (message.type() === 'error' && (message.location().url || '').endsWith('/socials.js')) errors.push(message.text());
-    });
-    page.on('requestfailed', request => {
-      const url = new URL(request.url());
-      if (url.pathname.startsWith('/api/socials/')) socialRequestFailures.push(`${url.pathname}: ${request.failure()?.errorText || 'request failed'}`);
-    });
+
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator('.dashboard-hero').waitFor();
-    await page.waitForFunction(() => ['#gmail-status', '#slack-status'].every(selector => !document.querySelector(selector).textContent.includes('Checking connection')));
-    assert.deepEqual(await page.locator('#gmail-status, #slack-status').allTextContents(), ['Not connected', 'Not connected']);
     assert.equal(await page.locator('#dashboard-temperature').textContent(), 'Highest sensor: 45.0 °C', 'initial temperature is rendered immediately without waiting for polling');
     await page.waitForFunction(() => [...document.querySelectorAll('.dashboard-metric')].some(card => card.querySelector('.dashboard-metric-label')?.textContent === 'Host CPU' && card.querySelector('.dashboard-metric-detail')?.textContent === 'MSI'));
     assert.equal(await page.locator('.dashboard-metric').filter({ hasText: 'Active agents' }).locator('.dashboard-metric-value').textContent(), '2');
@@ -120,38 +111,51 @@ async function runBrowserCheck(repositoryRoot) {
     assert.equal(await page.locator('.dashboard-metric').filter({ hasText: 'Host CPU' }).locator('.dashboard-metric-value').textContent(), '15%');
     assert.deepEqual(await page.locator('.dashboard-resource-gauge label').allTextContents(), ['CPU: 15%', 'RAM: 41%']);
     assert.deepEqual(await page.locator('.dashboard-resource-gauge progress').evaluateAll(items => items.slice(0, 2).map(item => item.getAttribute('aria-valuetext'))), ['15%', '41%']);
-    async function checkShellLayout(width, height, expectedTopbarHeight) {
+    async function checkShellLayout(width, height) {
       const layout = await page.evaluate(() => {
         const box = selector => document.querySelector(selector).getBoundingClientRect();
         const root = getComputedStyle(document.documentElement);
-        const topbar = box('.app-topbar');
+        const main = box('#main-content');
         const sidebar = box('#workspace-sidebar');
+        const mainStyle = getComputedStyle(document.querySelector('#main-content'));
         const shell = box('.workspace-shell');
-        const controls = [...document.querySelectorAll('.app-topbar button, .app-topbar a, .app-topbar input, .app-topbar select')].filter(el => getComputedStyle(el).display !== 'none').map(el => {
-          const r = el.getBoundingClientRect();
-          return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
-        });
-        return { bg: root.backgroundColor, accent: root.getPropertyValue('--accent').trim(), display: root.getPropertyValue('--display').trim(), mono: root.getPropertyValue('--mono').trim(), topbar: { left: topbar.left, right: topbar.right, top: topbar.top, bottom: topbar.bottom, height: topbar.height }, sidebar: { top: sidebar.top, bottom: sidebar.bottom }, shell: { top: shell.top, bottom: shell.bottom }, controls };
+        return { bg: root.backgroundColor, accent: root.getPropertyValue('--accent').trim(), display: root.getPropertyValue('--display').trim(), mono: root.getPropertyValue('--mono').trim(), topbarCount: document.querySelectorAll('.app-topbar').length, documentWidth: document.documentElement.scrollWidth, main: { top: main.top, paddingTop: parseFloat(mainStyle.paddingTop), paddingRight: parseFloat(mainStyle.paddingRight), paddingBottom: parseFloat(mainStyle.paddingBottom), paddingLeft: parseFloat(mainStyle.paddingLeft) }, sidebar: { top: sidebar.top, bottom: sidebar.bottom, width: sidebar.width }, shell: { top: shell.top, bottom: shell.bottom } };
       });
       assert.equal(layout.bg, 'rgb(11, 14, 17)', 'Root background theme');
       assert.equal(layout.accent, '#72d9e5', 'Accent theme');
       assert.ok(layout.display && layout.mono, 'Display and mono theme fonts are defined');
-      assert.ok(Math.abs(layout.topbar.height - expectedTopbarHeight) <= 1, `Topbar height ${width}x${height}: ${layout.topbar.height}, expected ${expectedTopbarHeight}`);
-      for (const r of layout.controls) assert.ok(r.left >= layout.topbar.left - 1 && r.right <= layout.topbar.right + 1 && r.top >= layout.topbar.top - 1 && r.bottom <= layout.topbar.bottom + 1, `Topbar control outside topbar ${width}x${height}: ${JSON.stringify(r)}`);
+      assert.equal(layout.topbarCount, 0, `No global topbar remains at ${width}x${height}`);
+      assert.ok(Math.abs(layout.main.top - layout.shell.top) <= 1, `Main content has no reserved topbar gap ${width}x${height}: ${JSON.stringify(layout)}`);
+      const expectedSidebarWidth = width > 1390 ? 235.4 : width > 800 ? 209 : width > 600 ? 77 : 264;
+      const expectedBlockInset = width >= 1700 ? 40 : width > 1390 ? 32 : width > 600 ? 28 : 0;
+      const expectedInlineInset = width >= 1700 ? 40 : width > 1390 ? 32 : width > 600 ? 24 : 0;
+      assert.ok(Math.abs(layout.sidebar.width - expectedSidebarWidth) <= 1, `Sidebar is 10% wider at ${width}px: ${JSON.stringify(layout)}`);
+      for (const [side, expected] of [['paddingTop', expectedBlockInset], ['paddingBottom', expectedBlockInset], ['paddingLeft', expectedInlineInset], ['paddingRight', expectedInlineInset]]) {
+        assert.ok(Math.abs(layout.main[side] - expected) <= 1, `Main content ${side} at ${width}px is ${expected}px: ${JSON.stringify(layout)}`);
+      }
+      assert.ok(layout.documentWidth <= width, `No horizontal overflow at ${width}x${height}: ${JSON.stringify(layout)}`);
       if (width > 600) assert.ok(Math.abs(layout.sidebar.top - layout.shell.top) <= 1 && Math.abs(layout.sidebar.bottom - layout.shell.bottom) <= 1, `Sidebar does not span shell height ${width}x${height}: ${JSON.stringify(layout)}`);
     }
-    await checkShellLayout(1440, 1000, 71);
+    await checkShellLayout(1440, 1000);
+    for (const [width, height] of [[1800, 1000], [1280, 900]]) {
+      await page.setViewportSize({ width, height });
+      await checkShellLayout(width, height);
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
     assert.equal(await page.locator('#assistant-rail').evaluate(el => el.hidden), true, 'Desktop assistant rail starts collapsed');
     await page.waitForFunction(() => !document.querySelector('#friday-message').disabled);
     await page.evaluate(() => { window.originalFridayForm = document.querySelector('#friday-form'); });
     async function navigate(feature) {
       await page.keyboard.press('Escape');
-      await page.keyboard.press('Control+k');
-      await page.locator('#shell-command-input').fill(feature);
-      await page.locator(`[data-command-feature="${feature}"]`).click();
+      await page.locator(`#workspace-sidebar [data-feature="${feature}"]`).first().click();
       await page.waitForTimeout(80);
       assert.equal(await page.locator('.workspace-shell').getAttribute('data-feature'), feature);
     }
+    await navigate('socials');
+    assert.equal(await page.locator('#socials-feature').evaluate(el => el.hidden), false, 'Socials navigation still opens its feature');
+    assert.equal(await page.locator('#socials-feature').evaluate(el => el.textContent.trim()), '', 'Socials is intentionally blank');
+    assert.deepEqual(socialRequests, [], 'Socials emits no connector API requests');
+    await navigate('dashboard');
     const fridayAgent = page.locator('[data-feature="friday"]');
     const submenuToggle = page.locator('#friday-submenu-toggle');
     await page.locator('#friday-nav-entry').hover();
@@ -253,10 +257,10 @@ async function runBrowserCheck(repositoryRoot) {
     }
     for (const width of [360, 390, 600, 800, 1024, 1280, 1440, 1920]) {
       await page.setViewportSize({ width, height: 900 });
-      for (const feature of ['dashboard', 'friday', 'pi', 'files', 'repos', 'notes', 'finances', 'calendar', 'settings']) {
+      for (const feature of ['dashboard', 'friday', 'pi', 'files', 'repos', 'notes', 'finances', 'socials', 'calendar', 'settings']) {
         await navigate(feature);
         await checkBounds(width, feature);
-        await checkShellLayout(width, 900, width <= 600 ? 0 : 71);
+        await checkShellLayout(width, 900);
         assert.equal(await page.locator(`.feature[data-feature="${feature}"]`).getAttribute('aria-current'), 'page');
         if (feature === 'calendar') {
           assert.equal(await page.locator('#calendar-month-grid').isVisible(), width > 600, `Month grid visibility at ${width}px`);
@@ -322,6 +326,13 @@ async function runBrowserCheck(repositoryRoot) {
         const moreButton = page.locator('.shell-mobile-shortcuts [data-shell-drawer="sidebar"]');
         await moreButton.click();
         assert.equal(await page.locator('#workspace-sidebar').evaluate(el => el.inert), false);
+        const assistantToggle = page.locator('#workspace-sidebar .shell-assistant-toggle');
+        assert.equal(await assistantToggle.isVisible(), true, 'the Friday assistant remains available in the More drawer');
+        await assistantToggle.click();
+        await page.locator('#assistant-rail.shell-drawer-open').waitFor();
+        await page.keyboard.press('Escape');
+        assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('.shell-mobile-shortcuts [data-shell-drawer="sidebar"]')), true, 'assistant close restores focus to the visible More control');
+        await moreButton.click();
         await page.keyboard.press('Shift+Tab');
         assert.equal(await page.evaluate(() => document.activeElement.id), 'logout', await page.evaluate(() => document.activeElement.outerHTML));
         await page.keyboard.press('Escape');
@@ -331,7 +342,7 @@ async function runBrowserCheck(repositoryRoot) {
     }
     for (const [width, height] of [[320, 700], [667, 375]]) {
       await page.setViewportSize({ width, height });
-      await checkShellLayout(width, height, width <= 600 ? 0 : 71);
+      await checkShellLayout(width, height);
       await navigate('dashboard');
       await checkBounds(width, 'dashboard');
     }
@@ -455,7 +466,7 @@ async function runBrowserCheck(repositoryRoot) {
     await page.waitForURL(`http://127.0.0.1:${server.address().port}/`);
     await page.locator('.dashboard-hero').waitFor();
     assert.equal(loginAttempts, 2);
-    assert.deepEqual(socialRequestFailures, [], `Socials API network failures: ${socialRequestFailures.join('; ')}`);
+    assert.deepEqual(socialRequests, [], `Socials must not call connector APIs: ${JSON.stringify(socialRequests)}`);
     assert.deepEqual(errors, [], `Browser JavaScript errors: ${errors.join('; ')}`);
   } finally {
     await browser?.close();

@@ -58,37 +58,33 @@
         </nav>
 
         <div class="sidebar-footer">
+          <button class="feature shell-assistant-toggle" type="button" data-shell-drawer="assistant" aria-label="Open Friday assistant" aria-controls="assistant-rail" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3z"/></svg><span>Friday assistant</span></button>
           <button id="logout" class="logout-button" type="button" aria-label="Sign out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H5v16h5M14 8l4 4-4 4M8 12h10"/></svg><span>Sign out</span></button>
         </div>
       </aside>
 
-      <header class="app-topbar workspace-topbar">
-        <button class="icon-button shell-menu-toggle" type="button" data-shell-drawer="sidebar" aria-label="Open navigation" aria-controls="workspace-sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-        <div class="topbar-breadcrumb"><svg class="topbar-home" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10H3zM9 20v-7h6v7"/></svg><span class="topbar-root">Workspace</span><span class="topbar-slash">/</span><span id="topbar-page">Dashboard</span></div>
-        <button id="shell-command-trigger" class="shell-search-trigger" type="button" aria-label="Search or run a command"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search</span><kbd>⌘ K</kbd></button>
-        <button class="secondary shell-assistant-toggle" type="button" data-shell-drawer="assistant" aria-label="Open Friday assistant" aria-controls="assistant-rail" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3z"/></svg>Friday</button>
-      </header>
-
       <main id="main-content" class="feature-shell" tabindex="-1">
         <section id="friday-feature" class="feature-layout friday-layout">
           <div class="app friday-app">
-            <header class="header">
+            <header class="header friday-chat-header">
               <div class="header-title">
                 <button class="drawer-toggle icon-button" type="button" data-shell-drawer="sidebar" aria-label="Open Friday conversations" aria-controls="workspace-sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
-                <div><h1>Friday</h1></div>
               </div>
               <div class="friday-header-actions">
                 <div class="assistant-rail-tools"><button class="icon-button" type="button" data-navigate="friday" title="Open conversations" aria-label="Open Friday conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H8l-4 3z"/></svg></button><button class="icon-button assistant-close" type="button" data-shell-close aria-label="Close assistant">×</button></div>
-                <span id="friday-status" class="status" role="status" aria-live="polite">Connecting…</span>
                 <button id="friday-pi-sessions-toggle" class="drawer-toggle icon-button" type="button" data-open-drawer="friday-pi-sidebar" aria-label="Open Pi conversations" title="Pi conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/><path d="M15 4v16"/></svg></button>
               </div>
             </header>
             <section id="friday-messages" class="messages" aria-label="Friday conversation"></section>
             <section id="friday-chat-queue" class="friday-chat-queue" aria-label="Queued Friday messages" role="status" aria-live="polite" hidden></section>
             <div id="friday-announcement" class="sr-only" role="status" aria-live="polite"></div>
+            <div class="friday-composer-status-row">
+              <span id="friday-status" class="status" role="status" aria-live="polite">Connecting…</span>
+              <div id="friday-compaction-status" class="compaction-status" role="status" aria-live="polite" hidden></div>
+            </div>
             <form id="friday-form" class="composer">
               <label class="sr-only" for="friday-message">Message Friday</label>
-              <textarea id="friday-message" rows="1" maxlength="20000" placeholder="Talk to Friday…" required></textarea>
+              <textarea id="friday-message" rows="1" maxlength="20000" enterkeyhint="enter" placeholder="Talk to Friday…" required></textarea>
               <div class="composer-footer">
                 <div class="agent-control-stack">
                   <div class="agent-controls">
@@ -121,42 +117,34 @@
         </section>
 
         <section id="pi-feature" class="feature-layout pi-layout" hidden>
-          <aside class="context-sidebar pi-sidebar" id="pi-sidebar" aria-label="Agent sessions">
-            <div class="context-heading">
+          <section class="app">
+            <label class="workspace-field pi-workspace-field">
               <span>Workspace</span>
-              <button class="mobile-close icon-button" type="button" data-close-drawer aria-label="Close sessions">×</button>
-            </div>
-            <label class="workspace-field">
-              <span class="sr-only">Workspace path</span>
               <input id="workspace" list="workspace-options" autocomplete="off" spellcheck="false" placeholder="Workspace path…">
               <datalist id="workspace-options"></datalist>
             </label>
-
-            <section class="session-panel" aria-label="Sessions">
-              <div class="panel-heading">
-                <span>Recent sessions</span>
-                <button id="refresh-sessions" class="icon-button" type="button" title="Refresh sessions" aria-label="Refresh sessions">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
-                </button>
-              </div>
-              <div id="session-list" class="session-list" aria-label="Saved sessions"></div>
-            </section>
-          </aside>
-
-          <section class="app">
-            <header class="header">
-              <div class="header-title">
-                <button class="drawer-toggle icon-button" type="button" data-open-drawer="pi-sidebar" aria-label="Open sessions">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-                </button>
+            <section id="pi-session-overview" class="pi-session-overview" aria-labelledby="pi-session-overview-title">
+              <header class="feature-header page-header pi-overview-header">
                 <div>
-                  <h1>Pi agent</h1>
+                  <h2 id="pi-session-overview-title" tabindex="-1">Your sessions</h2>
+                  <p>Choose a conversation to continue, or start a new one.</p>
                 </div>
-              </div>
-              <button id="reset" class="secondary compact" type="button" aria-label="New Pi session" title="New Pi session">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-                <span>New session</span>
-              </button>
+                <div class="pi-overview-actions">
+                  <button id="reset" class="secondary compact pi-new-session" type="button" aria-label="New Pi session" title="New Pi session">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                    <span>New session</span>
+                  </button>
+                  <button id="refresh-sessions" class="icon-button" type="button" title="Refresh sessions" aria-label="Refresh sessions">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg>
+                  </button>
+                </div>
+              </header>
+              <div id="pi-session-cards" class="pi-session-cards" aria-label="Saved sessions"></div>
+            </section>
+            <div id="pi-chat-view" hidden>
+            <header class="pi-active-session-header">
+              <button id="pi-back-to-sessions" class="secondary compact" type="button" hidden>All sessions</button>
+              <h2 id="pi-active-session-title">Current session</h2>
             </header>
             <section id="pi-session-name-suggestion" class="pi-session-name-suggestion" aria-live="polite" hidden>
               <span>Suggested name for <strong id="pi-session-current-name"></strong>: <strong id="pi-session-name-value"></strong></span>
@@ -194,6 +182,7 @@
                 </div>
               </div>
             </form>
+            </div>
           </section>
         </section>
 
@@ -285,21 +274,7 @@
             <div id="finance-status" class="feature-notice" role="status" aria-live="polite"></div><div id="finance-list" class="finance-list" aria-label="Financial entries"></div>
           </section>
         </section>
-        <section id="socials-feature" class="feature-page socials-page" hidden>
-          <header class="feature-header page-header"><div><span class="eyebrow">Your space</span><h1>Socials</h1><p>Connect services Friday can access on your behalf.</p></div></header>
-          <section class="socials-card" aria-labelledby="gmail-heading">
-            <div class="socials-card-heading"><div><span class="socials-provider-mark" aria-hidden="true">G</span><div><h2 id="gmail-heading">Gmail Inbox</h2></div></div><div class="socials-actions"><button id="gmail-refresh" class="secondary" type="button" hidden>Refresh inbox</button></div></div>
-            <p id="gmail-inbox-status" class="socials-workflow-status" role="status" aria-live="polite">Manage Gmail access in System Settings → Connections.</p>
-            <div id="gmail-message-list" class="gmail-message-list" aria-label="Inbox messages"></div>
-            <button id="gmail-next-page" class="secondary" type="button" hidden>Load more</button>
-          </section>
-          <section class="socials-card" aria-labelledby="slack-heading">
-            <div class="socials-card-heading"><div><span class="socials-provider-mark" aria-hidden="true">S</span><div><h2 id="slack-heading">Slack Channels</h2></div></div><div class="socials-actions"><button id="slack-refresh-channels" class="secondary" type="button" hidden>Refresh channels</button></div></div>
-            <p id="slack-channels-status" class="socials-workflow-status" role="status" aria-live="polite">Manage Slack access in System Settings → Connections.</p>
-            <div id="slack-channel-list" class="gmail-message-list" aria-label="Select Slack channels"></div>
-            <div class="socials-actions"><button id="slack-save-channels" class="secondary" type="button" hidden>Save selected channels</button></div>
-          </section>
-        </section>
+        <section id="socials-feature" class="feature-page" hidden></section>
         <section id="calendar-feature" class="feature-page calendar-page" hidden>
           <header class="feature-header page-header"><div><span class="eyebrow">Your space</span><h1>Calendar</h1><p>Plan and manage events stored privately on this Friday host.</p></div><button id="calendar-refresh" class="secondary" type="button">Refresh</button></header>
           <div class="local-calendar-layout">
@@ -346,29 +321,12 @@
           <header class="feature-header page-header">
             <div>
               <span class="eyebrow">Friday OS</span>
-              <h1>System</h1>
-              <p>Runtime, connection, and device health.</p>
+              <h1>System Settings</h1>
+              <p>Manage accounts, chat and runtime preferences, and server configuration.</p>
             </div>
             <button id="refresh-settings" class="secondary compact" type="button">Refresh</button>
           </header>
           <div class="settings-groups">
-            <details class="settings-group connections-settings-group">
-              <summary class="settings-group-summary"><div><h2 id="connections-heading">Connections</h2><p>Manage connected accounts and provider access.</p></div><span class="settings-chevron" aria-hidden="true">⌄</span></summary>
-              <div class="settings-group-content">
-                <div class="integration-settings-grid">
-                  <section class="integration-setting" aria-labelledby="gmail-connection-heading">
-                    <div class="integration-setting-heading"><h3 id="gmail-connection-heading">Gmail</h3><p id="gmail-status" role="status" aria-live="polite">Checking connection…</p></div>
-                    <div class="socials-actions"><button id="gmail-connect" type="button">Authorize Gmail with Google</button><button id="gmail-disconnect" class="secondary danger-button" type="button" hidden>Disconnect</button></div>
-                    <p>Use Google’s account sign-in and consent screen to authorize Gmail API access; this does not sign you in to Friday. Friday requests read-only Inbox headers and unread status. Google access and refresh tokens stay in private files on this host. Friday fetches metadata on demand; it does not read message bodies, send mail, or cache message history.</p>
-                  </section>
-                  <section class="integration-setting" aria-labelledby="slack-connection-heading">
-                    <div class="integration-setting-heading"><h3 id="slack-connection-heading">Slack</h3><p id="slack-status" role="status" aria-live="polite">Checking connection…</p></div>
-                    <div class="socials-actions"><button id="slack-connect" type="button">Authorize Slack workspace</button><button id="slack-disconnect" class="secondary danger-button" type="button" hidden>Disconnect</button></div>
-                    <p>Use Slack’s OAuth screen to authorize/install Friday in a workspace; workspace-admin approval may be required. This is separate from Friday app login. Friday stores the Slack bot token privately on this host. Access is read-only and limited to selected public channels: no DMs, search, or posting. Chat excerpts may remain in transcripts and enabled GitHub snapshots, but not daily memory or connector cache.</p>
-                  </section>
-                </div>
-              </div>
-            </details>
             <details class="settings-group friday-settings-group">
               <summary class="settings-group-summary"><div><h2 id="friday-settings-heading">Friday Chat</h2><p>General conversation, workspace, and provider.</p></div><span class="settings-chevron" aria-hidden="true">⌄</span></summary>
               <div class="settings-group-content">
@@ -423,18 +381,10 @@
       <button type="button" data-navigate="finances" data-shell-shortcut><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 5-7"/></svg>Finance</button>
       <button type="button" data-shell-drawer="sidebar" aria-controls="workspace-sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>More</button>
     </nav>
-    <dialog id="shell-command-dialog" aria-label="Search pages and commands">
-      <label class="sr-only" for="shell-command-input">Search pages and commands</label>
-      <input id="shell-command-input" type="search" placeholder="Where would you like to go?" autocomplete="off">
-      <div class="command-results"></div>
-      <p id="command-empty" hidden>No pages found. Try “files” or “agents”.</p>
-      <footer class="command-footer">↑ ↓ navigate &nbsp; ↵ open &nbsp; esc close<button class="text-button" type="button" id="command-close">Close</button></footer>
-    </dialog>
     <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
     <div id="announcement" class="sr-only" aria-live="polite" aria-atomic="true"></div>
     <script src="/highlight.min.js" defer></script>
     <script src="/app.js" type="module"></script>
-    <script src="/socials.js" type="module"></script>
     <script src="/local-calendar.js" type="module"></script>
   </body>
 </html>

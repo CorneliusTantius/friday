@@ -30,6 +30,7 @@ class FakeElement {
     this.visible = true;
     this.parentElement = null;
     this.storedScrollTop = 0;
+    this.layoutHeightAdjustment = 0;
     this.classList = {
       toggle: (name, force) => {
         const enabled = force === undefined ? !this.classNames.has(name) : force;
@@ -45,10 +46,15 @@ class FakeElement {
   get options() { return this.children; }
   get isConnected() { return true; }
   get clientHeight() { return this.visible ? 200 : 0; }
-  get scrollHeight() { return this.children.length * 120; }
+  get scrollHeight() { return this.children.length * 120 + this.layoutHeightAdjustment; }
   get scrollTop() { return this.storedScrollTop; }
   set scrollTop(value) { this.scrollWriteCount += 1; if (this.visible) this.storedScrollTop = value; }
   addEventListener(type, listener) { this.listeners.set(type, listener); }
+  dispatch(type, event = {}) { return this.listeners.get(type)?.(event); }
+  requestSubmit(submitter = null) {
+    this.lastSubmit = this.listeners.get('submit')?.({ submitter, preventDefault() {} });
+    return this.lastSubmit;
+  }
   focus() { this.focused = true; }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   getAttribute(name) { return this.attributes.get(name) ?? null; }
@@ -127,7 +133,7 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   globalThis.clearTimeout = (id) => timers.delete(id);
   const ids = [
     'friday-messages', 'friday-form', 'friday-message', 'friday-send', 'friday-stop', 'friday-chat-queue', 'friday-model',
-    'friday-thinking-level', 'friday-status', 'friday-task-panel', 'friday-task-board', 'friday-context-usage', 'friday-context-progress',
+    'friday-thinking-level', 'friday-status', 'friday-compaction-status', 'friday-task-panel', 'friday-task-board', 'friday-context-usage', 'friday-context-progress',
     'friday-context-label', 'friday-announcement',
   ];
   const elements = new Map(ids.map((id) => [id, new FakeElement(id)]));
@@ -140,7 +146,7 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
     createElement: (tag) => new FakeElement(tag),
     addEventListener: (type, listener) => documentListeners.set(type, listener),
   };
-  globalThis.window = {};
+  globalThis.window = { matchMedia: (query) => ({ matches: mobileView && query === '(max-width: 600px)' }) };
   globalThis.requestAnimationFrame = (callback) => setImmediate(callback);
   t.after(() => {
     globalThis.document = previousDocument;
@@ -158,9 +164,12 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   const historyRequests = [];
   let delegatedTask = null;
   let chatJobs = [];
+  let failNextSend = false;
   const queuedPosts = [];
   const cancelledJobs = [];
   let historyOverride = null;
+  let delayedLayoutGrowth = 0;
+  let mobileView = false;
   const pendingHistory = [];
   const historyWire = (items) => {
     let prefix = '';
@@ -195,6 +204,7 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
     }
     if (path === '/api/friday/status') return { busy: fridayBusy, canAbort: fridayBusy, chatQueue: chatJobs, contextUsage: null, delegatedTask, tasks: delegatedTask ? [delegatedTask] : [] };
     if (path === '/api/friday/chat' && options.method === 'POST') {
+      if (failNextSend) { failNextSend = false; throw new Error('Network unavailable'); }
       const id = `123e4567-e89b-42d3-a456-42661417400${queuedPosts.length + 1}`;
       queuedPosts.push({ id, message: JSON.parse(options.body).message });
       chatJobs.push({ id, status: 'queued', position: chatJobs.length + 1 });
@@ -218,6 +228,9 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
       const rendered = new FakeElement('rendered-markdown');
       rendered.textContent = text;
       element.append(rendered);
+      const growth = delayedLayoutGrowth;
+      delayedLayoutGrowth = 0;
+      if (growth) setImmediate(() => { transcript.layoutHeightAdjustment += growth; });
     },
     toast: () => {},
     onEnter: async () => { piStatusRefreshes += 1; displayedPiStatus = 'Open · idle'; },
@@ -242,11 +255,17 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   assert.equal(historyReads, 2, 'entering an already-started idle session must fetch history again');
   assert.match(historyRequests.at(-1), /sessionId=friday-session-a&afterId=/, 'polls send the current session and latest known message cursor');
   assert.equal(transcript.children.length, history.length, 'entry reconciles stale messages against backend history');
+  const assistantReply = transcript.children.find((message) => message.className === 'message assistant' && treeText(message).includes('Current backend reply'));
+  assert.equal(assistantReply.children.length, 1, 'Friday assistant messages render without an avatar or reserved avatar column');
+  assert.equal(assistantReply.children[0].className, 'message-body');
+  assert.equal(assistantReply.children[0].children[0].textContent, 'Friday', 'sender identification remains visible');
   assert.match(treeText(transcript), /Current backend reply/);
   assert.doesNotMatch(treeText(transcript), /Cached/);
   assert.equal(transcript.scrollTop, transcript.scrollHeight, 'first visible entry should land at the latest backend message');
+  assert.equal(elements.get('friday-status').textContent, 'Ready');
+  assert.equal(elements.get('friday-status').dataset.state, 'ready');
   assert.equal(timers.size, 1, 'a visible Friday chat schedules status and transcript polling');
-  assert.equal([...timers.values()][0].delay, 15_000, 'idle polling uses a sensible slower interval');
+  assert.equal([...timers.values()][0].delay, 2_000, 'visible idle conversations poll often enough to show new messages promptly');
   await new Promise((resolve) => setImmediate(resolve));
   const readsBeforeHidden = historyReads;
   const mutationsBeforeIdlePoll = transcript.mutationCount;
@@ -325,6 +344,7 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   assert.doesNotMatch(treeText(transcript), /Old in-flight/);
 
   transcript.scrollTop = 120;
+  transcript.dispatch('scroll');
   const heldPosition = transcript.scrollTop;
   history = [...latestHistory, { role: 'assistant', content: 'Streaming update' }];
   await chat.refreshTranscript();
@@ -360,6 +380,26 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   assert.match(treeText(partialArticle), /partial/);
   assert.equal(partialArticle.querySelector('.message-content').children.length, 1, 'partial markdown replaces stale rendered nodes instead of accumulating duplicates');
   assert.deepEqual([composer.value, composer.selectionStart, composer.selectionEnd, composer.scrollTop], ['typed while Friday updates', 5, 12, 16]);
+
+  transcript.scrollTop = transcript.scrollHeight;
+  delayedLayoutGrowth = 260;
+  history = [...history.slice(0, -1), { ...history.at(-1), content: `${history.at(-1).content} reflow` }];
+  await pollNow();
+  assert.equal(transcript.scrollTop, transcript.scrollHeight, 'a post-render layout growth keeps a following reader at the latest message');
+
+  history = [...history,
+    { role: 'event', content: 'Friday · Task update: Build billing API review started.' },
+    { role: 'assistant', content: 'The background task review found the requested changes.' },
+  ];
+  const [backgroundPollId, backgroundPoll] = timers.entries().next().value;
+  timers.delete(backgroundPollId);
+  backgroundPoll.callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(treeText(transcript), /Friday · Task update: Build billing API review started/);
+  assert.match(treeText(transcript), /background task review found/);
+  assert.equal(transcript.children.length, history.length, 'scheduled polling appends each background-review update once');
+  assert.deepEqual([composer.value, composer.selectionStart, composer.selectionEnd, composer.scrollTop], ['typed while Friday updates', 5, 12, 16], 'background updates preserve the active draft and selection');
 
   const calls = [
     { id: 'call-1', name: 'read_file', arguments: { path: 'a.js' } },
@@ -405,11 +445,11 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   assert.match(treeText(piInspectionGroup), /Run is idle/);
   assert.match(treeText(piInspectionGroup), /Recent conversation excerpt/);
 
-  const channelCall = { id: 'slack-call', name: 'slack_read_channel', arguments: { channelId: 'C1' } };
+  const calendarCall = { id: 'calendar-call', name: 'calendar_list_events', arguments: { timeMin: '2025-01-01T00:00:00Z', timeMax: '2025-01-02T00:00:00Z' } };
   history = [
-    { role: 'assistant', id: 'mixed-tool-step', toolCalls: [statusCall, channelCall, readCall] },
+    { role: 'assistant', id: 'mixed-tool-step', toolCalls: [statusCall, calendarCall, readCall] },
     { role: 'tool', toolCallId: statusCall.id, toolName: statusCall.name, content: 'Run status failed.', isError: true },
-    { role: 'tool', toolCallId: channelCall.id, toolName: channelCall.name, content: 'Slack read failed.', isError: true },
+    { role: 'tool', toolCallId: calendarCall.id, toolName: calendarCall.name, content: 'Calendar read failed.', isError: true },
   ];
   await chat.refreshTranscript();
   assert.equal(transcript.children.length, 3, 'a non-Pi call separates adjacent Pi management groups');
@@ -417,7 +457,7 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   assert.equal(transcript.children[1].toolList.children.length, 1);
   assert.equal(transcript.children[2].toolList.children.length, 1);
   assert.match(treeText(transcript.children[0]), /pi_sessions · error/);
-  assert.match(treeText(transcript.children[1]), /slack_read_channel · error/);
+  assert.match(treeText(transcript.children[1]), /calendar_list_events · error/);
   assert.match(treeText(transcript.children[2]), /pi_sessions · running/);
 
   const wireMessage = (sequence, role, content) => {
@@ -434,7 +474,7 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   };
   await pollNow();
   assert.equal(transcript.children.length, 5, 'out-of-order and duplicate IDs merge into one ordered transcript');
-  assert.match(treeText(transcript), /pi_sessions[\s\S]*slack_read_channel[\s\S]*pi_sessions[\s\S]*Out-of-order assistant[\s\S]*Duplicate ID resolved/);
+  assert.match(treeText(transcript), /pi_sessions[\s\S]*calendar_list_events[\s\S]*pi_sessions[\s\S]*Out-of-order assistant[\s\S]*Duplicate ID resolved/);
   assert.doesNotMatch(treeText(transcript), /discard duplicate/);
   backendSessionId = 'friday-session-b';
   history = [{ role: 'user', content: 'New session transcript' }];
@@ -446,6 +486,7 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   delegatedTask = { id: 'task-completed', status: 'running', label: 'Build billing API', detail: 'Build the billing API.' };
   await chat.enterView();
   assert.equal(elements.get('friday-status').textContent, 'Pi is working: Build billing API');
+  assert.equal(elements.get('friday-status').dataset.state, 'working');
   delegatedTask = { id: 'task-completed', status: 'reviewing', label: 'Build billing API', detail: 'Build the billing API.', review: { stage: 'queued', queuedAt: new Date(Date.now() - 65_000).toISOString() } };
   await chat.refreshTranscript();
   assert.equal(elements.get('friday-status').textContent, 'Friday is reviewing: Build billing API');
@@ -509,10 +550,18 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   assert.equal(elements.get('friday-stop').hidden, false, 'stopping the active response is a separate control');
   const form = elements.get('friday-form');
   const submit = form.listeners.get('submit');
+  const keydown = composer.listeners.get('keydown');
+  const enterEvent = (overrides = {}) => ({
+    key: 'Enter', shiftKey: false, isComposing: false, keyCode: 13, defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; }, ...overrides,
+  });
+  transcript.scrollTop = 120;
+  transcript.dispatch('scroll');
   composer.value = 'follow-up while busy';
   composer.listeners.get('input')();
   assert.equal(elements.get('friday-send').disabled, false);
   await submit({ preventDefault() {} });
+  assert.equal(transcript.scrollTop, transcript.scrollHeight, 'sending a message follows the conversation even after reading older content');
   assert.equal(queuedPosts.at(-1).message, 'follow-up while busy');
   assert.equal(chatJobs.find((job) => job.id === queuedPosts.at(-1).id).status, 'queued');
   composer.value = 'another follow-up';
@@ -533,5 +582,41 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(cancelledJobs, [queuedJob.id], 'only the specifically queued message is cancelled');
   assert.deepEqual(chatJobs.map((job) => job.id), [activeJob.id], 'cancellation leaves the active message untouched');
+  mobileView = false;
+  composer.value = 'desktop Enter sends';
+  composer.listeners.get('input')();
+  const desktopEnter = enterEvent();
+  keydown(desktopEnter);
+  assert.equal(desktopEnter.defaultPrevented, true, 'desktop Enter keeps its send behavior');
+  await form.lastSubmit;
+  assert.equal(queuedPosts.at(-1).message, 'desktop Enter sends');
+  const beforeNonSendEnter = queuedPosts.length;
+  for (const composing of [enterEvent({ shiftKey: true }), enterEvent({ isComposing: true }), enterEvent({ keyCode: 229 })]) {
+    keydown(composing);
+    assert.equal(composing.defaultPrevented, false, 'Shift+Enter and IME Enter preserve native text editing');
+  }
+  assert.equal(queuedPosts.length, beforeNonSendEnter, 'Shift+Enter and IME Enter never submit');
+  mobileView = true;
+  composer.value = 'mobile first line';
+  composer.listeners.get('input')();
+  const mobileEnter = enterEvent();
+  keydown(mobileEnter);
+  assert.equal(mobileEnter.defaultPrevented, false, 'mobile Enter is left to the textarea to insert a newline');
+  const beforeInput = { inputType: 'insertLineBreak', defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+  composer.dispatch('beforeinput', beforeInput);
+  assert.equal(beforeInput.defaultPrevented, false, 'mobile keyboard beforeinput line breaks are not blocked');
+  assert.equal(queuedPosts.length, beforeNonSendEnter, 'mobile Enter never submits');
+  composer.value = 'mobile first line\nmobile second line';
+  composer.listeners.get('input')();
+  await submit({ preventDefault() {}, submitter: elements.get('friday-send') });
+  assert.equal(queuedPosts.at(-1).message, 'mobile first line\nmobile second line', 'the Send button submits multiline mobile text');
+  failNextSend = true;
+  composer.value = 'retry after failure';
+  composer.listeners.get('input')();
+  await submit({ preventDefault() {} });
+  assert.equal(composer.value, 'retry after failure', 'failed sends retain the unsent message for retry');
+  assert.equal(elements.get('friday-status').textContent, 'Send failed');
+  assert.equal(elements.get('friday-status').dataset.state, 'error');
+  assert.match(elements.get('friday-status').title, /Network unavailable/);
   chat.stop();
 });

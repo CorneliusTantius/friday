@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SessionManager, shouldCompact } from '@earendil-works/pi-coding-agent';
 import { FridaySdkSession, fridayHistory } from '../src/friday/friday-sdk-session.js';
 import { fridaySystemPrompt } from '../src/friday/friday-system-prompt.js';
 
@@ -281,7 +282,7 @@ test('Friday SDK adds curated memory context and conversation-scoped Pi tools', 
     memory: { readMemory: async () => { memoryRead = true; return '# User preferences\\nConcise answers'; } },
     piControl: {
       listConversations: async () => [],
-      createSession: async (input) => { created = input; createContext = { userMessage: input.userMessage, previousAssistantMessage: input.previousAssistantMessage }; return { runId: '123e4567-e89b-12d3-a456-426614174000', name: input.purpose, workspace: root }; },
+      createSession: async (input) => { created = input; createContext = { userMessage: input.userMessage, previousAssistantMessage: input.previousAssistantMessage }; return { runId: '123e4567-e89b-12d3-a456-426614174000', name: input.name, workspace: root }; },
       renameSession: async (input) => { renameContext = input; return { runId: input.runId, previousName: 'Build task', name: input.name }; },
       sendPrompt: async (input) => { queued = input; return { taskId: '123e4567-e89b-12d3-a456-426614174002', runId: '123e4567-e89b-12d3-a456-426614174000', queueId: '123e4567-e89b-12d3-a456-426614174001', position: 1 }; },
       reportTask: async (value) => value,
@@ -304,7 +305,7 @@ test('Friday SDK adds curated memory context and conversation-scoped Pi tools', 
           session.messages.push({ role: 'user', content: message });
           if (message.startsWith('now create a new pi session')) {
             const manageTool = value.customTools.find((tool) => tool.name === 'pi_manage_session');
-            await manageTool.execute('tool-call', { action: 'create', purpose: 'friday-ui', domain: 'friday-ui' }, undefined, undefined, undefined);
+            await manageTool.execute('tool-call', { action: 'create', name: 'Friday Project Staff', purpose: 'Work on the Friday project', domain: 'Friday project development' }, undefined, undefined, undefined);
             session.messages.push({ role: 'assistant', content: 'Created.' });
           } else if (message.startsWith('Please rename') || message.startsWith('rename that session')) {
             const manageTool = value.customTools.find((tool) => tool.name === 'pi_manage_session');
@@ -335,8 +336,9 @@ test('Friday SDK adds curated memory context and conversation-scoped Pi tools', 
   const createRequest = 'now create a new pi session for friday-ui';
   await adapter.chat(createRequest);
   assert.deepEqual(createContext, { userMessage: createRequest, previousAssistantMessage: '' });
-  assert.equal(created.purpose, 'friday-ui');
-  assert.equal(created.domain, 'friday-ui');
+  assert.equal(created.name, 'Friday Project Staff');
+  assert.equal(created.purpose, 'Work on the Friday project');
+  assert.equal(created.domain, 'Friday project development');
   const renameRequest = 'rename that session Friday Project 2';
   await adapter.chat(renameRequest);
   assert.equal(renameContext.name, 'Friday Project 2');
@@ -361,6 +363,99 @@ test('Friday SDK adds curated memory context and conversation-scoped Pi tools', 
   await adapter.stop();
 });
 
+test('Friday automatic compaction follows the 75% SDK threshold per model/window and keeps SDK summaries persistent', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'friday-sdk-compaction-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configDir = join(root, 'config');
+  await mkdir(configDir, { recursive: true });
+  const settingsPath = join(configDir, 'settings.json');
+  await writeFile(settingsPath, JSON.stringify({ compaction: { enabled: false, keepRecentTokens: 2_000 } }));
+  let models = [
+    { provider: 'mock', id: 'small', contextWindow: 4_000 },
+    { provider: 'mock', id: 'large', contextWindow: 200_000 },
+  ];
+  let settingsManager;
+  let sessionEvent;
+  const modelRuntime = { refresh: async () => {}, getAvailableSnapshot: () => models };
+  const session = {
+    model: models[0], messages: [], modelRuntime,
+    subscribe: (listener) => { sessionEvent = listener; return () => {}; },
+    setModel: async (model) => { session.model = model; },
+    setThinkingLevel: async (level) => { session.thinkingLevel = level; },
+    prompt: async (message) => { session.messages.push({ role: 'user', content: message }); },
+    getContextUsage: () => ({ tokens: 3_000, contextWindow: session.model.contextWindow, percent: 75 }),
+    dispose() {},
+  };
+  const adapter = new FridaySdkSession({
+    cwd: join(root, 'workspace'), agentDir: configDir, dataDir: join(root, 'data'), model: models[0], modelRefreshIntervalMs: 5,
+    createModelRuntime: async () => modelRuntime,
+    createSession: async (options) => { settingsManager = options.settingsManager; return { session }; },
+  });
+  await adapter.start();
+  const smallSettings = settingsManager.getCompactionSettings(models[0]);
+  assert.equal(smallSettings.enabled, true, 'Friday enables SDK auto-compaction without changing saved settings');
+  assert.equal(smallSettings.reserveTokens, 1_001);
+  assert.equal(smallSettings.keepRecentTokens, 2_000, 'existing context-retention preference remains intact');
+  assert.equal(shouldCompact(2_999, 4_000, smallSettings), false, 'below 75% does not trigger');
+  assert.equal(shouldCompact(3_000, 4_000, smallSettings), true, 'exactly 75% triggers');
+  assert.equal(shouldCompact(3_001, 4_000, smallSettings), true, 'above 75% triggers');
+
+  await adapter.setModel('mock', 'large');
+  const largeSettings = settingsManager.getCompactionSettings(models[1]);
+  assert.equal(largeSettings.reserveTokens, 50_001, 'model changes recompute reserve from the new window');
+  assert.equal(shouldCompact(149_999, 200_000, largeSettings), false);
+  assert.equal(shouldCompact(150_000, 200_000, largeSettings), true);
+  models = [models[0], { ...models[1], contextWindow: 300_000 }];
+  for (let attempt = 0; attempt < 30 && settingsManager.getCompactionSettings(models[1]).reserveTokens !== 75_001; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(settingsManager.getCompactionSettings(models[1]).reserveTokens, 75_001, 'a refreshed active-model window updates its reserve');
+  assert.equal(shouldCompact(224_999, 300_000, settingsManager.getCompactionSettings(models[1])), false);
+  assert.equal(shouldCompact(225_000, 300_000, settingsManager.getCompactionSettings(models[1])), true);
+
+  models = [{ ...models[0], contextWindow: 8_000 }, models[1]];
+  await adapter.setModel(models[0]);
+  const resizedSettings = settingsManager.getCompactionSettings(models[0]);
+  assert.equal(resizedSettings.reserveTokens, 2_001, 'a refreshed window on the same model also recomputes the threshold');
+  assert.equal(shouldCompact(5_999, 8_000, resizedSettings), false);
+  assert.equal(shouldCompact(6_000, 8_000, resizedSettings), true);
+  await adapter.setThinkingLevel('low');
+  const afterThinkingSave = settingsManager.getCompactionSettings(models[0]);
+  assert.equal(afterThinkingSave.enabled, true);
+  assert.equal(afterThinkingSave.reserveTokens, 2_001, 'Friday reapplies its policy after SDK setting writes');
+  await adapter.setModel({ provider: 'mock', id: 'unknown-window', contextWindow: 0 });
+  assert.equal((await adapter.getContextUsage()).compactionWarning, 'unknown-window', 'an unusable context window is surfaced instead of inventing a 75% threshold');
+  await adapter.chat('prompt with unavailable context metadata');
+  assert.ok(session.messages.some((message) => message.content === 'prompt with unavailable context metadata'));
+  await adapter.setModel(models[0]);
+
+  const savedSettings = JSON.parse(await readFile(settingsPath, 'utf8'));
+  assert.equal(savedSettings.compaction.enabled, false, 'the Friday-only runtime override is not persisted globally');
+  assert.equal(savedSettings.compaction.keepRecentTokens, 2_000);
+  assert.equal(savedSettings.compaction.modelOverrides, undefined);
+
+  const manager = adapter.sessionManager;
+  manager.appendMessage({ role: 'user', content: 'before compaction', timestamp: new Date().toISOString() });
+  manager.appendMessage({ role: 'assistant', content: 'kept before the summary', timestamp: new Date().toISOString() });
+  const firstKeptEntryId = manager.getBranch().at(-1).id;
+  manager.appendCompaction('Persisted SDK summary', firstKeptEntryId, 3_000);
+  manager.appendMessage({ role: 'user', content: 'after compaction', timestamp: new Date().toISOString() });
+  const reopened = SessionManager.open(manager.getSessionFile(), adapter.dataDir, adapter.cwd);
+  const branch = reopened.getBranch();
+  assert.ok(branch.some((entry) => entry.type === 'compaction' && entry.summary === 'Persisted SDK summary'));
+  assert.ok(branch.some((entry) => entry.type === 'message' && entry.message.content === 'after compaction'), 'the same session continues after its persisted summary');
+
+  sessionEvent({ type: 'compaction_end', reason: 'threshold', errorMessage: 'secret/provider detail', aborted: false });
+  const failedUsage = await adapter.getContextUsage();
+  assert.equal(failedUsage.compactionWarning, 'failed', 'SDK compaction failures are surfaced to Friday status');
+  assert.doesNotMatch(JSON.stringify(failedUsage), /secret\/provider detail/, 'provider error details are not exposed');
+  await adapter.chat('prompt survives compaction failure');
+  assert.ok(session.messages.some((message) => message.content === 'prompt survives compaction failure'), 'compaction failure does not discard later prompts');
+  sessionEvent({ type: 'compaction_end', reason: 'threshold', result: { summary: 'ok' }, aborted: false });
+  assert.equal((await adapter.getContextUsage()).compactionWarning, undefined, 'a successful SDK compaction clears the warning');
+  await adapter.stop();
+});
+
 test('SDK session initializes once, disables tools, and disposes', async () => {
   let options;
   let disposed = false;
@@ -369,7 +464,7 @@ test('SDK session initializes once, disables tools, and disposes', async () => {
     messages: [],
     subscribe: (listener) => { session.emit = listener; return () => {}; },
     prompt: async (text) => { session.messages.push({ role: 'assistant', content: [{ type: 'text', text } ] }); },
-    modelRuntime: { getAvailableSnapshot: () => [{ provider: 'mock', id: 'next-model' }] },
+    modelRuntime: { getAvailableSnapshot: () => [{ provider: 'mock', id: 'next-model', contextWindow: 80_000 }] },
     getAvailableThinkingLevels: () => ['off', 'low', 'high'],
     getContextUsage: () => ({ tokens: 40_000, contextWindow: 200_000, percent: 20 }),
     setModel: async (model) => { session.model = model; },
@@ -397,11 +492,11 @@ test('SDK session initializes once, disables tools, and disposes', async () => {
   assert.deepEqual(events, [event]);
   assert.equal(adapter.isRunning, true);
   assert.equal(adapter.currentThinkingLevel, 'low');
-  assert.deepEqual(await adapter.availableModels(), [{ provider: 'mock', id: 'next-model' }]);
+  assert.deepEqual(await adapter.availableModels(), [{ provider: 'mock', id: 'next-model', contextWindow: 80_000 }]);
   assert.deepEqual(await adapter.availableThinkingLevels(), ['off', 'low', 'high']);
   await adapter.setModel('mock', 'next-model');
   await adapter.setThinkingLevel('high');
-  assert.deepEqual(session.model, { provider: 'mock', id: 'next-model' });
+  assert.deepEqual(session.model, { provider: 'mock', id: 'next-model', contextWindow: 80_000 });
   assert.equal(session.level, 'high');
   await adapter.stop();
   assert.equal(disposed, true);

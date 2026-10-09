@@ -57,10 +57,14 @@ rl.on('line', line => {
   respond({});
  }
  else if (req.type === 'prompt') {
+  respond({});
   messages.push({ role: 'user', content: req.message });
   if (req.message === 'compaction summary test') messages.push({ role: 'compactionSummary', summary: 'The earlier implementation plan and decisions.', tokensBefore: 90000, timestamp: Date.now() });
-  send({ type: 'agent_start' }); send({ type: 'message_start', message: { role: 'assistant' } });
-  const finish = () => { if (activeAbort) clearTimeout(activeAbort.timer); activeAbort = null; const content = 'Friday: ' + req.message; messages.push({ role: 'assistant', content }); send({ type: 'message_end', message: { role: 'assistant', content } }); send({ type: 'agent_end' }); send({ type: 'agent_settled' }); respond({}); };
+  send({ type: 'agent_start' });
+  send({ type: 'message_start', message: { role: 'user', content: [{ type: 'text', text: req.message }] } });
+  send({ type: 'message_end', message: { role: 'user', content: [{ type: 'text', text: req.message }] } });
+  send({ type: 'message_start', message: { role: 'assistant' } });
+  const finish = () => { if (activeAbort) clearTimeout(activeAbort.timer); activeAbort = null; const content = 'Friday: ' + req.message; messages.push({ role: 'assistant', content }); send({ type: 'message_end', message: { role: 'assistant', content } }); send({ type: 'agent_end' }); send({ type: 'agent_settled' }); };
   if (req.message === 'long-running test') { const timer = setTimeout(finish, 2500); activeAbort = { timer, finish }; } else finish();
  }
  else if (req.type === 'abort') { activeAbort?.finish(); respond({}); }
@@ -151,6 +155,24 @@ rl.on('line', line => {
   assert.deepEqual(fridayPiConversations.sessions.find(({ id }) => id === 'legacy-flat').visibleRepositories, ['repo-a', 'repo-b'], 'legacy sessions are visible by default without a stored override');
   assert.equal(selectedPiConversation.running, false, 'a saved session without an open runtime is reported as saved');
   assert.equal(selectedPiConversation.opening, false);
+  const labelUrl = `/api/friday/pi-conversations/${selectedPiConversation.runId}/label`;
+  const labelResponse = await request(labelUrl, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: 'Release review' }),
+  });
+  assert.equal(labelResponse.status, 200);
+  const labeled = (await (await request('/api/friday/pi-conversations')).json()).sessions.find(({ runId }) => runId === selectedPiConversation.runId);
+  assert.equal(labeled.navigationLabel, 'Release review');
+  assert.equal(labeled.name, selectedPiConversation.name, 'navigation labels do not rename session identity');
+  const clearedLabel = await request(labelUrl, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: '' }),
+  });
+  assert.equal(clearedLabel.status, 200);
+  const cleared = (await (await request('/api/friday/pi-conversations')).json()).sessions.find(({ runId }) => runId === selectedPiConversation.runId);
+  assert.equal(cleared.navigationLabel, null);
+  const invalidLabel = await request(labelUrl, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: 'x'.repeat(81) }),
+  });
+  assert.equal(invalidLabel.status, 400);
   const profileResponse = await request(`/api/friday/pi-conversations/${selectedPiConversation.runId}/profile`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ expertise: ['Node.js'], responsibilities: ['API ownership'], repositories: ['friday'], displayName: 'Legacy alias', capacity: 2 }),
