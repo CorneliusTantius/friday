@@ -86,6 +86,26 @@ test('repository visibility defaults to all, persists per run, and preserves sta
   assert.deepEqual((await createPiRunRegistry({ file }).getRun(firstRun)).hiddenRepositories, [], 'rechecking all repos persists explicitly');
 });
 
+test('user-set staff display names persist per exact run and are not added to existing profiles', async () => {
+  const { file } = await setup();
+  const registry = createPiRunRegistry({ file });
+  const legacyId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/legacy-alias', name: 'Existing title' });
+  const namedId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/named-alias', name: 'Another title' });
+  const profile = { expertise: [], responsibilities: [], repositories: [], capacity: 2 };
+  await registry.updateRunProfile(legacyId, profile);
+  assert.equal((await registry.getRun(legacyId)).displayName, undefined);
+  await registry.updateRunProfile(namedId, { ...profile, displayName: 'Maya' });
+  const restored = createPiRunRegistry({ file });
+  assert.equal((await restored.getRun(namedId)).name, 'Another title', 'alias does not rename the conversation');
+  assert.equal((await restored.getRun(namedId)).displayName, 'Maya');
+  assert.equal((await restored.getRun(legacyId)).displayName, undefined, 'existing sessions receive no assigned aliases');
+  await restored.updateRunProfile(namedId, profile);
+  assert.equal((await createPiRunRegistry({ file }).getRun(namedId)).displayName, 'Maya', 'unrelated profile saves preserve the alias');
+  await restored.updateRunProfile(namedId, { ...profile, displayName: '' });
+  assert.equal((await createPiRunRegistry({ file }).getRun(namedId)).displayName, undefined, 'empty alias clears only this run’s alias');
+  assert.throws(() => restored.updateRunProfile(namedId, { ...profile, displayName: 'x'.repeat(61) }), /Invalid Pi staff display name/);
+});
+
 test('batch ensures preserve IDs and persist in one update', async () => {
   const { file } = await setup();
   const registry = createPiRunRegistry({ file });

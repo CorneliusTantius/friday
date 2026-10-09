@@ -13,8 +13,8 @@ function setup() {
   const contexts = { create: [], rename: [], profile: [], delete: [], stop: [] };
   const tools = createFridayPiTools({
     listConversations: async () => { calls.list.push(true); return [
-      { id: 's1', name: 'Build task', domain: 'platform', purpose: 'maintain platform', modified: 'today', messageCount: 4, runId: id, running: true, busy: false, queuedPrompts: 0, expertise: ['Node.js'], responsibilities: ['API'], repositories: ['repo-a', 'repo-b'], visibleRepositories: ['repo-a'], capacity: 2, workload: { openTasks: 1 }, tasks: [{ id: taskId, label: 'Add export', status: 'running' }], hiddenField: 'not exposed' },
-      { id: 's2', name: 'Unprofiled', modified: 'today', messageCount: 0, runId: '123e4567-e89b-12d3-a456-426614174004' },
+      { id: 's1', name: 'Build task', displayName: 'Maya', domain: 'platform', purpose: 'maintain platform', modified: 'today', messageCount: 4, runId: id, running: true, busy: false, queuedPrompts: 0, expertise: ['Node.js'], responsibilities: ['API'], repositories: ['repo-a', 'repo-b'], visibleRepositories: ['repo-a'], capacity: 2, workload: { openTasks: 1 }, tasks: [{ id: taskId, label: 'Add export', status: 'running' }], hiddenField: 'not exposed' },
+      { id: 's2', name: 'Unprofiled', displayName: 'Maya', modified: 'today', messageCount: 0, runId: '123e4567-e89b-12d3-a456-426614174004' },
     ]; },
     getRunStatus: async (runId) => { calls.status.push(runId); return { runId, exists: false, opening: false, workspace: '/other-workspace', running: false }; },
     readConversation: async (value) => { calls.read.push(value); return { runId: value.runId, messages: [{ role: 'assistant', content: 'Pi reply' }] }; },
@@ -48,8 +48,8 @@ test('Friday exposes five Pi tools, removes agent-facing wait, and keeps actions
   assert.equal(tools[1].parameters.properties.action.anyOf.length, 4);
 
   assert.deepEqual(await invoke(tools[0], { action: 'list' }), text(JSON.stringify([
-    { id: 's1', name: 'Build task', domain: 'platform', purpose: 'maintain platform', modified: 'today', messageCount: 4, runId: id, running: true, busy: false, queuedPrompts: 0, expertise: ['Node.js'], responsibilities: ['API'], repositories: ['repo-a', 'repo-b'], visibleRepositories: ['repo-a'], capacity: 2, workload: { openTasks: 1 }, tasks: [{ id: taskId, label: 'Add export', status: 'running' }] },
-    { id: 's2', name: 'Unprofiled', modified: 'today', messageCount: 0, runId: '123e4567-e89b-12d3-a456-426614174004', expertise: [], responsibilities: [], repositories: [], visibleRepositories: [], capacity: 2, workload: { openTasks: 0 }, tasks: [] },
+    { id: 's1', name: 'Build task', displayName: 'Maya', domain: 'platform', purpose: 'maintain platform', modified: 'today', messageCount: 4, runId: id, running: true, busy: false, queuedPrompts: 0, expertise: ['Node.js'], responsibilities: ['API'], repositories: ['repo-a', 'repo-b'], visibleRepositories: ['repo-a'], capacity: 2, workload: { openTasks: 1 }, tasks: [{ id: taskId, label: 'Add export', status: 'running' }] },
+    { id: 's2', name: 'Unprofiled', displayName: 'Maya', modified: 'today', messageCount: 0, runId: '123e4567-e89b-12d3-a456-426614174004', expertise: [], responsibilities: [], repositories: [], visibleRepositories: [], capacity: 2, workload: { openTasks: 0 }, tasks: [] },
   ])));
   assert.deepEqual(calls.list, [true]);
   assert.deepEqual(await invoke(tools[0], { action: 'status', runId: id }), text({ runId: id, exists: false, opening: false, workspace: '/other-workspace', running: false }));

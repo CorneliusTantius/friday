@@ -143,6 +143,35 @@ test('session cards retain expansion, focus and unsaved controls across polls an
   assert.equal(find(container.children[1], (node) => node.tagName === 'input' && node.value === 'repo-b').checked, true);
 });
 
+test('staff aliases save by exact runId, persist on refresh, and fall back to the session title', async () => {
+  const documentRef = new FakeDocument();
+  const container = documentRef.createElement('div');
+  let sessions = [session('run-a', { name: 'Build task', displayName: null })];
+  const saved = [];
+  let cards;
+  cards = createFridayPiSessionCards({
+    container, documentRef, formatDate: (value) => value, onOpen() {},
+    async onSaveVisibility() {},
+    async onSaveProfile(current, profile) {
+      saved.push({ runId: current.runId, displayName: profile.displayName });
+      sessions = sessions.map((item) => item.runId === current.runId ? { ...item, displayName: profile.displayName || null } : item);
+    },
+    async onRefresh() { cards.render(sessions); }, toast() {},
+  });
+  cards.render(sessions);
+  const card = container.children[0];
+  assert.equal(find(card, (node) => node.className === 'session-title').textContent, 'Build task', 'missing alias falls back to actual session title');
+  const alias = find(card, (node) => node.tagName === 'input' && node.name === 'displayName');
+  alias.value = 'Maya'; await alias.dispatch('input');
+  const form = find(card, (node) => node.tagName === 'form' && node.className === 'friday-staff-profile-form');
+  await form.dispatch('submit');
+  assert.deepEqual(saved, [{ runId: 'run-a', displayName: 'Maya' }]);
+  assert.equal(find(card, (node) => node.className === 'session-title').textContent, 'Maya');
+  assert.match(card.textContent, /Session: Build task/);
+  cards.render([session('run-b', { name: 'Another task', displayName: null })]);
+  assert.equal(find(container.children[0], (node) => node.className === 'session-title').textContent, 'Another task', 'another exact session remains unnamed');
+});
+
 test('a poll response started before a save cannot render over the newer state', async () => {
   let revision = 1;
   let release;
