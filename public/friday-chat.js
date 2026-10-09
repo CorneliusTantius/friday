@@ -143,6 +143,16 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
     return `${labels[review.stage]}${age ? ` · ${age}` : ''}${review.errorCode ? ` · ${review.errorCode}` : ''}`;
   }
 
+  function applyRuntimeStatus(runtime) {
+    busy = runtime.busy;
+    delegatedTask = runtime.delegatedTask || null;
+    delegatedTasks = Array.isArray(runtime.tasks) ? runtime.tasks : delegatedTask ? [delegatedTask] : [];
+    canAbort = runtime.canAbort === true;
+    applyState(runtime);
+    renderContextUsage(runtime.contextUsage);
+    updateControls();
+  }
+
   function renderTaskBoard() {
     if (!taskBoard) return;
     const visible = delegatedTasks.slice(0, 8);
@@ -520,9 +530,15 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
 
   async function syncOnce({ withStatus = false, fullHistory = false } = {}) {
     const version = lifecycleVersion;
+    const runtimePromise = withStatus
+      ? apiJson('/api/friday/status').then((runtime) => {
+        if (started && version === lifecycleVersion) applyRuntimeStatus(runtime);
+        return runtime;
+      })
+      : Promise.resolve(null);
     const [data, runtime] = await Promise.all([
       apiJson(historyUrl(fullHistory)),
-      withStatus ? apiJson('/api/friday/status') : null,
+      runtimePromise,
     ]);
     if (!started || version !== lifecycleVersion) return;
     reachable = true;
@@ -539,10 +555,6 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
       return true;
     });
     if (runtime) {
-      busy = runtime.busy;
-      delegatedTask = runtime.delegatedTask || null;
-      delegatedTasks = Array.isArray(runtime.tasks) ? runtime.tasks : delegatedTask ? [delegatedTask] : [];
-      canAbort = runtime.canAbort === true;
       const jobs = new Map((Array.isArray(runtime.chatQueue) ? runtime.chatQueue : []).map((job) => [job.id, job]));
       optimistic = optimistic.filter((item) => {
         if (!item.id) return true;

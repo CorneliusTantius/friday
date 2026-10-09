@@ -105,7 +105,7 @@ function treeText(element) {
   return [element.textContent, ...element.children.map(treeText)].join(' ');
 }
 
-test('Friday chat scrolls to latest on first visible entry and re-entry, but preserves an upward reading position during updates', async (t) => {
+test('Friday chat polls idle task states, scrolls on entry, and preserves scroll and task details during updates', async (t) => {
   const previousDocument = globalThis.document;
   const previousWindow = globalThis.window;
   const previousRaf = globalThis.requestAnimationFrame;
@@ -250,6 +250,45 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   assert.equal(historyReads, readsBeforeHidden + 1, 'returning to a visible tab immediately reconciles history');
   assert.equal(transcript.mutationCount, mutationsBeforeIdlePoll, 'an unchanged cursor response leaves transcript DOM untouched');
   assert.equal(transcript.scrollWriteCount, scrollWritesBeforeIdlePoll, 'an unchanged poll does not adjust transcript scroll');
+
+  const taskHistory = deferred();
+  pendingHistory.push(taskHistory);
+  delegatedTask = { id: 'idle-completion', label: 'Idle task', status: 'queued', detail: 'Queued while Friday is idle.' };
+  const [idleTimerId, idleTimer] = timers.entries().next().value;
+  timers.delete(idleTimerId);
+  idleTimer.callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const idleTaskBoard = elements.get('friday-task-board');
+  assert.equal(elements.get('friday-task-panel').hidden, false, 'idle status polling reveals the task panel');
+  assert.match(treeText(idleTaskBoard), /Idle task · queued/, 'queued task state renders before the transcript request resolves');
+  idleTaskBoard.children[0].children.find((child) => child.className === 'friday-task-details').open = true;
+  idleTaskBoard.scrollTop = 24;
+  taskHistory.resolve(historyResponse(historyRequests.at(-1)));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const pollIdleTaskState = async (status, extra = {}, historyGate = null) => {
+    if (historyGate) pendingHistory.push(historyGate);
+    delegatedTask = { id: 'idle-completion', label: 'Idle task', status, detail: 'Task is in progress.', ...extra };
+    const [timerId, timer] = timers.entries().next().value;
+    timers.delete(timerId);
+    timer.callback();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.match(treeText(idleTaskBoard), new RegExp(`Idle task · ${status}`), `${status} task state renders from idle polling`);
+    const statusLabels = { queued: 'Pi task queued', running: 'Pi is working', reviewing: 'Friday is reviewing', completed: 'Task complete' };
+    assert.match(elements.get('friday-status').title, new RegExp(`${statusLabels[status]}: Idle task`), `${status} status title updates before transcript history`);
+    assert.equal(idleTaskBoard.children[0].children.find((child) => child.className === 'friday-task-details').open, true, 'status updates preserve the expanded task details');
+    assert.equal(idleTaskBoard.scrollTop, 24, 'status updates preserve task-board scroll');
+  };
+  await pollIdleTaskState('running');
+  await pollIdleTaskState('reviewing', { review: { stage: 'active', startedAt: new Date().toISOString() } });
+  const completionHistory = deferred();
+  await pollIdleTaskState('completed', { summary: 'Verified while Friday was idle.' }, completionHistory);
+  assert.match(elements.get('friday-status').title, /Task complete: Idle task/, 'completed task status is applied before history synchronization finishes');
+  completionHistory.resolve(historyResponse(historyRequests.at(-1)));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
 
   const staleResponse = deferred();
   pendingHistory.push(staleResponse);
