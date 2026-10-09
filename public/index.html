@@ -82,7 +82,6 @@
               </div>
             </header>
             <section id="friday-messages" class="messages" aria-label="Friday conversation"></section>
-            <section id="friday-task-board" class="friday-task-board" aria-label="Delegated task updates" role="status" aria-live="polite" hidden></section>
             <div id="friday-announcement" class="sr-only" role="status" aria-live="polite"></div>
             <form id="friday-form" class="composer">
               <label class="sr-only" for="friday-message">Message Friday</label>
@@ -103,9 +102,13 @@
               </div>
             </form>
           </div>
-          <aside class="context-sidebar friday-pi-sidebar" id="friday-pi-sidebar" aria-label="Pi conversations">
-            <div class="context-heading"><span>Pi conversations</span><div><button id="friday-pi-sessions-refresh" class="icon-button" type="button" title="Refresh Pi conversations" aria-label="Refresh Pi conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button><button class="mobile-close icon-button" type="button" data-close-drawer aria-label="Close Pi conversations">×</button></div></div>
+          <aside class="context-sidebar friday-pi-sidebar" id="friday-pi-sidebar" aria-label="Conversations and tasks">
+            <div class="context-heading"><span>Conversations</span><div><button id="friday-pi-sessions-refresh" class="icon-button" type="button" title="Refresh Pi conversations" aria-label="Refresh Pi conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button><button class="mobile-close icon-button" type="button" data-close-drawer aria-label="Close Pi conversations">×</button></div></div>
             <div id="friday-pi-session-list" class="session-list" aria-label="Saved Pi conversations"></div>
+            <section id="friday-task-panel" class="friday-task-panel" aria-labelledby="friday-task-heading" hidden>
+              <h2 id="friday-task-heading" class="friday-task-heading">Tasks</h2>
+              <div id="friday-task-board" class="friday-task-board" role="status" aria-live="polite"></div>
+            </section>
           </aside>
         </section>
 

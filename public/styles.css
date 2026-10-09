@@ -160,9 +160,16 @@ svg { display: block; width: 1.15rem; height: 1.15rem; fill: none; stroke: curre
 .friday-staff-profile-form { display:grid; gap:.5rem; margin-top:.5rem; }
 .friday-staff-profile-form label { display:grid; gap:.2rem; color:var(--muted); font-size:11px; }
 .friday-staff-profile-form textarea,.friday-staff-profile-form input { width:100%; min-width:0; font-size:12px; }
-.friday-task-board { display:grid; gap:.4rem; max-height:8rem; overflow:auto; border-top:1px solid var(--border); background:var(--surface); padding:.5rem 1rem; }
-.friday-task-row { display:grid; gap:.15rem; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.friday-pi-sidebar > .session-list { flex:1 1 0; min-height:5rem; }
+.friday-task-panel { display:flex; min-height:5rem; max-height:42%; flex:0 1 42%; flex-direction:column; gap:.4rem; overflow:hidden; border-top:1px solid var(--border); padding-top:.55rem; }
+.friday-task-panel[hidden] { display:none; }
+.friday-task-heading { flex:0 0 auto; margin:0; color:var(--text-2); font:10px var(--mono); letter-spacing:1px; }
+.friday-task-board { display:grid; min-height:0; flex:1 1 auto; gap:.4rem; overflow:auto; padding:.1rem .25rem; }
+.friday-task-row { display:grid; min-width:0; gap:.15rem; color:var(--muted); font-size:12px; }
 .friday-task-row strong { color:var(--text-2); text-transform:capitalize; }
+.friday-task-details { min-width:0; }
+.friday-task-details summary { display:block; overflow:hidden; cursor:pointer; text-overflow:ellipsis; white-space:nowrap; }
+.friday-task-details p { margin:.3rem 0 0; overflow-wrap:anywhere; white-space:pre-wrap; }
 .friday-task-row.completed strong { color:var(--accent); }
 .friday-task-row.blocked strong,.friday-task-row.outcome-unknown strong { color:var(--red); }
 .message.event .message-label { color:var(--accent); }

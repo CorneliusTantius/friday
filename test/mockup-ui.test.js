@@ -135,6 +135,24 @@ test('staff cards expose per-session repository visibility separately from repo 
   assert.match(sessionCards, /Repo affinity \(staff-fit metadata; one per line\)/);
 });
 
+test('Friday sidebar groups scrollable conversations above tasks with expandable one-line details', () => {
+  const sidebarStart = html.indexOf('<aside class="context-sidebar friday-pi-sidebar"');
+  const sidebarEnd = html.indexOf('</aside>', sidebarStart);
+  const sidebar = html.slice(sidebarStart, sidebarEnd);
+  const conversationsHeading = sidebar.indexOf('<span>Conversations</span>');
+  const conversations = sidebar.indexOf('id="friday-pi-session-list"');
+  const tasksHeading = sidebar.indexOf('id="friday-task-heading"');
+  const tasks = sidebar.indexOf('id="friday-task-board"');
+  assert.ok(conversationsHeading >= 0 && conversationsHeading < conversations && conversations < tasksHeading && tasksHeading < tasks);
+  const chatColumn = html.slice(html.indexOf('<div class="app friday-app">'), sidebarStart);
+  assert.doesNotMatch(chatColumn, /id="friday-task-board"/);
+  assert.match(css, /\.friday-pi-sidebar > \.session-list \{ flex:1 1 0; min-height:5rem; \}/);
+  assert.match(css, /\.friday-task-board \{[^}]*overflow:auto/);
+  assert.match(css, /\.friday-task-details summary \{[^}]*text-overflow:ellipsis; white-space:nowrap/);
+  assert.match(css, /\.friday-task-panel\[hidden\] \{ display:none; \}/);
+  assert.match(css, /@media \(max-width:1170px\)[\s\S]*\.friday-pi-sidebar \.mobile-close/);
+});
+
 test('settings start collapsed and Files and Notes expose accessible code/tree navigation', () => {
   assert.match(html, /<details class="settings-group friday-settings-group">/);
   assert.match(html, /<details class="settings-group pi-settings-group">/);

@@ -7,6 +7,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
   const thinking = document.querySelector('#friday-thinking-level');
   const status = document.querySelector('#friday-status');
   const taskBoard = document.querySelector('#friday-task-board');
+  const taskPanel = document.querySelector('#friday-task-panel');
   const contextUsage = document.querySelector('#friday-context-usage');
   const contextProgress = document.querySelector('#friday-context-progress');
   const contextLabel = document.querySelector('#friday-context-label');
@@ -114,21 +115,33 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
   function renderTaskBoard() {
     if (!taskBoard) return;
     const visible = delegatedTasks.slice(0, 8);
+    if (taskPanel) taskPanel.hidden = visible.length === 0;
     const revision = JSON.stringify(visible.map((task) => [task.id, task.label, task.status, task.summary, task.detail, task.review]));
     if (revision === taskBoardRevision) return;
     taskBoardRevision = revision;
-    taskBoard.hidden = visible.length === 0;
+    const scrollTop = taskBoard.scrollTop;
+    const expanded = new Set(Array.from(taskBoard.children)
+      .filter((row) => row.dataset.taskId && row.children.some((child) => child.className === 'friday-task-details' && child.open))
+      .map((row) => row.dataset.taskId));
     taskBoard.replaceChildren();
     for (const task of visible) {
       const row = document.createElement('div'); row.className = `friday-task-row ${task.status}`;
+      row.dataset.taskId = task.id;
       const review = reviewStatusText(task);
       const heading = document.createElement('strong'); heading.textContent = `${task.label || 'Pi task'} · ${task.status}`;
       const taskDetail = task.status === 'completed' ? task.summary : task.summary || task.detail;
-      const detail = document.createElement('span'); detail.textContent = [taskDetail, review].filter(Boolean).join(' · ');
+      const description = [taskDetail, review].filter(Boolean).join(' · ');
       row.append(heading);
-      if (detail.textContent) row.append(detail);
+      if (description) {
+        const details = document.createElement('details'); details.className = 'friday-task-details'; details.open = expanded.has(task.id);
+        const summary = document.createElement('summary'); summary.textContent = description; summary.title = description;
+        details.append(summary);
+        if (taskDetail) { const full = document.createElement('p'); full.textContent = taskDetail; details.append(full); }
+        row.append(details);
+      }
       taskBoard.append(row);
     }
+    taskBoard.scrollTop = scrollTop;
   }
 
   function resizeInput() {

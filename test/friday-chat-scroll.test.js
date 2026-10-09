@@ -116,7 +116,7 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   globalThis.clearTimeout = (id) => timers.delete(id);
   const ids = [
     'friday-messages', 'friday-form', 'friday-message', 'friday-send', 'friday-model',
-    'friday-thinking-level', 'friday-status', 'friday-task-board', 'friday-context-usage', 'friday-context-progress',
+    'friday-thinking-level', 'friday-status', 'friday-task-panel', 'friday-task-board', 'friday-context-usage', 'friday-context-progress',
     'friday-context-label', 'friday-announcement',
   ];
   const elements = new Map(ids.map((id) => [id, new FakeElement(id)]));
@@ -382,12 +382,33 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   assert.match(elements.get('friday-status').title, /Review active · [0-9]+s/);
   delegatedTask = {
     id: 'task-completed', status: 'completed', label: 'Build billing API',
+    summary: 'Verified the billing API export, updated the generated types, and added integration coverage.',
     detail: 'Pi finished; Friday is checking the result against the original request.',
     review: { stage: 'finished', finishedAt: new Date().toISOString() },
   };
   await chat.refreshTranscript();
-  assert.doesNotMatch(treeText(elements.get('friday-task-board')), /Pi finished; Friday is checking/);
+  const taskBoard = elements.get('friday-task-board');
+  assert.equal(elements.get('friday-task-panel').hidden, false);
+  assert.doesNotMatch(treeText(taskBoard), /Pi finished; Friday is checking/);
   assert.doesNotMatch(elements.get('friday-status').title, /Pi finished; Friday is checking/);
+  const taskRow = taskBoard.children[0];
+  assert.match(taskRow.children[0].textContent, /Build billing API · completed/);
+  const taskDetails = taskRow.children.find((child) => child.className === 'friday-task-details');
+  assert.ok(taskDetails, 'full task description is available through a native disclosure');
+  assert.match(taskDetails.children[0].textContent, /Verified the billing API export/);
+  assert.equal(taskDetails.children[1].textContent, delegatedTask.summary);
+  taskDetails.open = true;
+  taskBoard.scrollTop = 36;
+  let taskChildren = taskBoard.children;
+  Object.defineProperty(taskBoard, 'children', {
+    configurable: true,
+    get: () => new Proxy(taskChildren, { get: (target, key) => key === 'filter' ? undefined : Reflect.get(target, key, target) }),
+    set: (value) => { taskChildren = value; },
+  });
+  delegatedTask = { ...delegatedTask, review: { ...delegatedTask.review, errorCode: 'checked' } };
+  await chat.refreshTranscript();
+  assert.equal(taskBoard.children[0].children.find((child) => child.className === 'friday-task-details').open, true, 'polling preserves expanded task details');
+  assert.equal(taskBoard.scrollTop, 36, 'polling preserves the task list scroll position');
   assert.equal([...timers.values()][0].delay, 2_000, 'busy Friday conversations poll more frequently');
   chat.stop();
 });
