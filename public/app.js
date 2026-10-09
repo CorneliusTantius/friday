@@ -27,6 +27,7 @@ const elements = {
   financeSubmit: $('#finance-submit'), financeCancel: $('#finance-cancel'),
   fridayPiSessionList: $('#friday-pi-session-list'), fridayPiSessionsRefresh: $('#friday-pi-sessions-refresh'),
   fridayPiSessionsToggle: $('#friday-pi-sessions-toggle'), fridayReviewMemory: $('#friday-review-memory'),
+  fridayNavEntry: $('#friday-nav-entry'), fridaySubmenuToggle: $('#friday-submenu-toggle'),
   financeSummaryPeriod: $('#finance-summary-period'), financeMonth: $('#finance-month'),
   financeTypeFilter: $('#finance-type-filter'), financeCategoryFilter: $('#finance-category-filter'),
   financeExport: $('#finance-export'),
@@ -1859,6 +1860,7 @@ function initializeWorkspaceShell({ navigate, getFeature }) {
   for (const query of [narrowSidebar, narrowAssistant]) query.addEventListener('change', () => { close(false); sync(); });
   return {
     openAssistant() { open(assistant); void fridayChat.enterView().catch((error) => toast(error.message, 'error')); },
+    closeNavigation() { if (drawer === sidebar) close(); },
     updateFeature(name) {
       close(false);
       shell.dataset.feature = name;
@@ -1916,6 +1918,7 @@ async function setFeature(name, { startPiPolling = true } = {}) {
   if (['files', 'pi-files'].includes(state.activeFeature) && !['files', 'pi-files'].includes(name) && !confirmDiscardFileChanges()) return;
   if (!featureViews.has(name)) return;
   state.activeFeature = name;
+  fridayMenuOverride = null;
   if (name !== 'pi') stopPolling();
   if (name !== 'friday') {
     fridayChat.pause();
@@ -1948,6 +1951,7 @@ async function setFeature(name, { startPiPolling = true } = {}) {
   }
   document.dispatchEvent(new CustomEvent('friday:feature-change', { detail: name }));
   workspaceShell.updateFeature(name);
+  syncFridaySubmenu();
   const fridayEntry = name === 'friday' ? fridayChat.enterView() : null;
   $('#system-devices-view').hidden = false;
   try {
@@ -1988,6 +1992,7 @@ function openDrawer(id) {
 function closeDrawer() {
   document.querySelector('.context-sidebar.open')?.classList.remove('open');
   elements.drawerBackdrop.hidden = true;
+  workspaceShell.closeNavigation();
 }
 
 function resizeComposer() {
@@ -2109,6 +2114,19 @@ async function openPiConversationFromFriday(session) {
 
 const fridaySessionList = $('#friday-session-list');
 let activeFridaySession = null;
+let fridayMenuHovered = false;
+let fridayMenuOverride = null;
+function syncFridaySubmenu() {
+  const focus = document.activeElement;
+  const focused = elements.fridayNavEntry.contains(focus) && focus !== elements.fridaySubmenuToggle;
+  const hovered = fridayMenuHovered && matchMedia('(hover: hover)').matches && fridayMenuOverride !== false;
+  const active = state.activeFeature === 'friday' && fridayMenuOverride !== false;
+  const open = active || hovered || focused || fridayMenuOverride === true;
+  elements.fridayNavEntry.classList.toggle('submenu-open', open);
+  elements.fridaySubmenuToggle.setAttribute('aria-expanded', String(open));
+  elements.fridaySubmenuToggle.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} Friday conversations`);
+  elements.fridaySubmenuToggle.title = `${open ? 'Hide' : 'Show'} Friday conversations`;
+}
 let fridaySessionsSync = null;
 let fridaySessionsRefreshAgain = false;
 function refreshFridaySessions() {
@@ -2150,7 +2168,7 @@ async function refreshFridaySessionsOnce() {
     open.addEventListener('click', async () => {
       try {
         await apiJson(`/api/friday/sessions/${encodeURIComponent(id)}/open`, { method: 'POST' });
-        activeFridaySession = id; await fridayChat.enterView(); closeDrawer();
+        activeFridaySession = id; await Promise.all([fridayChat.enterView(), refreshFridaySessions()]); closeDrawer();
       } catch (error) { toast(error.message, 'error'); }
     });
     const actions = document.createElement('div'); actions.className = 'session-actions friday-session-actions';
@@ -2206,6 +2224,24 @@ $('#friday-new-conversation').addEventListener('click', async () => {
   catch (error) { toast(error.message, 'error'); }
 });
 void refreshFridaySessions().catch((error) => toast(error.message, 'error'));
+
+elements.fridayNavEntry.addEventListener('pointerenter', (event) => {
+  if (event.pointerType === 'touch') return;
+  fridayMenuHovered = true; syncFridaySubmenu();
+});
+elements.fridayNavEntry.addEventListener('pointerleave', (event) => {
+  if (event.pointerType === 'touch') return;
+  fridayMenuHovered = false; syncFridaySubmenu();
+});
+elements.fridayNavEntry.addEventListener('focusin', (event) => {
+  if (event.target !== elements.fridaySubmenuToggle) fridayMenuOverride = null;
+  syncFridaySubmenu();
+});
+elements.fridayNavEntry.addEventListener('focusout', () => setTimeout(syncFridaySubmenu, 0));
+elements.fridaySubmenuToggle.addEventListener('click', () => {
+  fridayMenuOverride = elements.fridaySubmenuToggle.getAttribute('aria-expanded') === 'true' ? false : true;
+  syncFridaySubmenu();
+});
 
 for (const button of featureButtons) button.addEventListener('click', () => void setFeature(button.dataset.feature));
 for (const button of document.querySelectorAll('[data-file-scope]')) button.addEventListener('click', () => selectFileScope(button.dataset.fileScope));

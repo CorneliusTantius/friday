@@ -29,7 +29,18 @@
           </div>
           <div class="nav-group workspace-nav-group">
             <span class="nav-group-title workspace-nav-heading">Workspace</span>
-            <button class="feature" type="button" data-feature="friday" aria-label="Friday Agent"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5L12 2Z"/><path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15Z"/></svg><span>Friday Agent</span></button>
+            <div id="friday-nav-entry" class="friday-nav-entry">
+              <button class="feature" type="button" data-feature="friday" aria-label="Friday Agent" aria-controls="friday-sidebar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 2.5 6.5L21 11l-6.5 2.5L12 20l-2.5-6.5L3 11l6.5-2.5L12 2Z"/><path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15Z"/></svg><span>Friday Agent</span></button>
+              <button id="friday-submenu-toggle" class="friday-submenu-toggle" type="button" aria-label="Show Friday conversations" aria-controls="friday-sidebar" aria-expanded="false" title="Show Friday conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
+              <aside id="friday-sidebar" class="friday-nav-menu" aria-label="Friday conversations">
+                <div class="context-heading"><span>Conversations</span></div>
+                <label class="workspace-field friday-directory-field"><span>Workspace directory</span><input id="friday-workspace-directory" type="text" disabled readonly placeholder="Loading directory…" aria-label="Friday workspace directory, view only"></label>
+                <button id="friday-new-conversation" class="secondary" type="button">＋ New Conversation</button>
+                <button id="friday-review-memory" class="secondary" type="button">Review daily memory notes</button>
+                <div class="panel-heading"><span>Recent conversations</span><button id="friday-refresh-sessions" class="icon-button" type="button" title="Refresh conversations" aria-label="Refresh conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button></div>
+                <div id="friday-session-list" class="session-list" aria-label="Saved conversations"></div>
+              </aside>
+            </div>
             <button class="feature" type="button" data-feature="pi" aria-label="Pi Agent"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M8 7v10m8-10v10"/></svg><span>Pi Agent</span></button>
             <button class="feature" type="button" data-feature="repos" aria-label="Repositories"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h4l2 2h7A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-10Z"/><path d="M3.5 10h17"/></svg><span>Repositories</span></button>
             <button class="feature" type="button" data-feature="calendar" aria-label="Calendar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v3m14-3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13H4V6a1 1 0 0 1 1-1Z"/><path d="M8 13h2m4 0h2m-8 4h2"/></svg><span>Calendar</span></button>
@@ -61,18 +72,10 @@
 
       <main id="main-content" class="feature-shell" tabindex="-1">
         <section id="friday-feature" class="feature-layout friday-layout">
-          <aside class="context-sidebar friday-sidebar" id="friday-sidebar" aria-label="Friday conversations">
-            <div class="context-heading"><span>Conversations</span><button class="mobile-close icon-button" type="button" data-close-drawer aria-label="Close conversations">×</button></div>
-            <label class="workspace-field friday-directory-field"><span>Workspace directory</span><input id="friday-workspace-directory" type="text" disabled readonly placeholder="Loading directory…" aria-label="Friday workspace directory, view only"></label>
-            <button id="friday-new-conversation" class="secondary" type="button">＋ New Conversation</button>
-            <button id="friday-review-memory" class="secondary" type="button">Review daily memory notes</button>
-            <div class="panel-heading"><span>Recent conversations</span><button id="friday-refresh-sessions" class="icon-button" type="button" title="Refresh conversations" aria-label="Refresh conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg></button></div>
-            <div id="friday-session-list" class="session-list" aria-label="Saved conversations"></div>
-          </aside>
           <div class="app friday-app">
             <header class="header">
               <div class="header-title">
-                <button class="drawer-toggle icon-button" type="button" data-open-drawer="friday-sidebar" aria-label="Open conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+                <button class="drawer-toggle icon-button" type="button" data-shell-drawer="sidebar" aria-label="Open Friday conversations" aria-controls="workspace-sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
                 <div><h1>Friday</h1></div>
               </div>
               <div class="friday-header-actions">

@@ -30,6 +30,11 @@ async function runBrowserCheck(repositoryRoot) {
     const status = { busy: false, canAbort: false, running: true, piRunning: true, workspace: '/workspace', preferredWorkspace: '/workspace', model, contextUsage: { tokens: 1200, contextWindow: 100000, percent: 1.2 } };
     const entries = [{ id: 'entry-1', type: 'expense', amount: 50000, category: 'Food', description: 'Lunch', date: new Date().toLocaleDateString('en-CA') }];
     const calendarEvents = [];
+    const fridaySessions = [
+      { id: 'friday-existing', name: 'Original conversation', modified: new Date().toISOString(), messageCount: 2 },
+      { id: 'friday-other', name: 'Other conversation', modified: new Date().toISOString(), messageCount: 1 },
+    ];
+    let currentFridaySession = 'friday-other';
     let fileContent = '# A workspace note';
     let dashboardUnavailable = false;
     await page.route('https://fonts.**/**', route => route.abort());
@@ -60,7 +65,20 @@ async function runBrowserCheck(repositoryRoot) {
       else if (endpoint.endsWith('/status')) body = status;
       else if (endpoint.endsWith('/events/token')) body = { token: 'test' };
       else if (endpoint.endsWith('/workspaces')) body = { workspaces: [{ path: '/workspace', label: 'Workspace' }] };
-      else if (endpoint.endsWith('/sessions')) body = { sessions: [], workspace: '/workspace', currentSession: '/session.jsonl' };
+      else if (endpoint === '/api/friday/sessions') {
+        if (request.method() === 'POST') {
+          const session = { id: 'friday-created', name: 'New conversation', modified: new Date().toISOString(), messageCount: 0 };
+          fridaySessions.unshift(session); currentFridaySession = session.id; body = { id: session.id };
+        } else body = { sessions: fridaySessions, workspace: '/workspace', currentSession: currentFridaySession };
+      } else if (/^\/api\/friday\/sessions\/[^/]+/.test(endpoint)) {
+        const [, rawId, action] = endpoint.match(/^\/api\/friday\/sessions\/([^/]+)(?:\/(open))?$/) || [];
+        const id = decodeURIComponent(rawId || '');
+        const index = fridaySessions.findIndex(session => session.id === id);
+        if (action === 'open' && request.method() === 'POST') currentFridaySession = id;
+        else if (request.method() === 'PATCH' && index >= 0) fridaySessions[index].name = request.postDataJSON().name;
+        else if (request.method() === 'DELETE' && index >= 0) fridaySessions.splice(index, 1);
+        body = request.method() === 'DELETE' ? { deleted: true, id } : { session: fridaySessions[index] };
+      } else if (endpoint.endsWith('/sessions')) body = { sessions: [], workspace: '/workspace', currentSession: '/session.jsonl' };
       else if (endpoint.endsWith('/pi-conversations')) body = { sessions: [] };
       else if (endpoint.endsWith('/files/content')) {
         if (request.method() === 'PUT') fileContent = request.postDataJSON().content;
@@ -133,6 +151,55 @@ async function runBrowserCheck(repositoryRoot) {
       await page.waitForTimeout(80);
       assert.equal(await page.locator('.workspace-shell').getAttribute('data-feature'), feature);
     }
+    await page.locator('#friday-nav-entry').hover();
+    await page.locator('#friday-submenu-toggle[aria-expanded="true"]').waitFor();
+    assert.equal(await page.locator('#friday-session-list').isVisible(), true, 'Hover opens the conversation submenu');
+    await page.locator('#friday-submenu-toggle').click();
+    await page.locator('#friday-submenu-toggle[aria-expanded="false"]').waitFor();
+    assert.equal(await page.locator('#friday-session-list').isVisible(), false, 'The toggle can dismiss a menu even while the trigger is hovered');
+    await page.mouse.move(1400, 900);
+    await page.locator('#friday-submenu-toggle[aria-expanded="false"]').waitFor();
+    await page.locator('[data-feature="friday"]').focus();
+    await page.locator('#friday-submenu-toggle[aria-expanded="true"]').waitFor();
+    assert.equal(await page.locator('#friday-session-list').isVisible(), true, 'Keyboard focus opens the conversation submenu');
+    await navigate('friday');
+    assert.equal(await page.locator('#friday-session-list').isVisible(), true, 'The active Friday page keeps conversations visible');
+    assert.equal(await page.locator('#friday-sidebar').evaluate(el => el.closest('#friday-feature')), null, 'Conversations are not a second feature column');
+    const fridayBounds = await page.evaluate(() => {
+      const chat = document.querySelector('#friday-feature .friday-app').getBoundingClientRect();
+      const panel = document.querySelector('#friday-pi-sidebar').getBoundingClientRect();
+      return { chatRight: chat.right, panelLeft: panel.left, panelWidth: panel.width, featureWidth: document.querySelector('#friday-feature').getBoundingClientRect().width };
+    });
+    assert.ok(fridayBounds.panelWidth >= 320 && fridayBounds.panelWidth <= fridayBounds.featureWidth * 0.4, `Friday right sidebar remains about 35%: ${JSON.stringify(fridayBounds)}`);
+    assert.ok(fridayBounds.chatRight <= fridayBounds.panelLeft + 1, `Friday chat has the vacated left-column space: ${JSON.stringify(fridayBounds)}`);
+    await page.locator('.friday-session-open').first().click();
+    assert.equal(await page.locator('.friday-session-open').first().getAttribute('aria-current'), 'true', 'Opening a conversation updates selected-session state');
+    assert.equal(await page.locator('.friday-session-open').nth(1).getAttribute('aria-current'), 'false');
+    page.once('dialog', dialog => { assert.equal(dialog.type(), 'prompt'); void dialog.accept('Renamed conversation'); });
+    await page.getByRole('button', { name: 'Rename Original conversation' }).click();
+    await page.getByText('Renamed conversation', { exact: true }).waitFor();
+    page.once('dialog', dialog => { assert.equal(dialog.type(), 'confirm'); void dialog.accept(); });
+    await page.getByRole('button', { name: 'Delete Renamed conversation' }).click();
+    await page.getByText('No conversations yet', { exact: true }).waitFor();
+    await page.locator('#friday-new-conversation').click();
+    await page.getByText('New conversation', { exact: true }).waitFor();
+    assert.ok(mutations.some(item => item.endpoint === '/api/friday/sessions/friday-existing' && item.method === 'PATCH'));
+    assert.ok(mutations.some(item => item.endpoint === '/api/friday/sessions/friday-existing' && item.method === 'DELETE'));
+    assert.ok(mutations.some(item => item.endpoint === '/api/friday/sessions' && item.method === 'POST'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await navigate('friday');
+    await page.locator('.shell-mobile-shortcuts [data-shell-drawer="sidebar"]').click();
+    await page.locator('#workspace-sidebar.shell-drawer-open').waitFor();
+    await page.locator('#friday-nav-entry').dispatchEvent('pointerleave', { pointerType: 'mouse' });
+    await page.locator('#friday-nav-entry').dispatchEvent('pointerenter', { pointerType: 'touch' });
+    await page.locator('#friday-submenu-toggle').evaluate(el => el.click());
+    await page.locator('#friday-submenu-toggle[aria-expanded="false"]').waitFor();
+    assert.equal(await page.locator('#friday-session-list').isVisible(), false, 'Touch toggle closes the active-page submenu');
+    await page.locator('#friday-submenu-toggle').evaluate(el => el.click());
+    await page.locator('#friday-submenu-toggle[aria-expanded="true"]').waitFor();
+    assert.equal(await page.locator('#friday-session-list').isVisible(), true, 'Touch toggle reopens the submenu');
+    await page.keyboard.press('Escape');
+
     async function checkBounds(width, feature) {
       const bounds = await page.evaluate(() => {
         const main = document.querySelector('#main-content');

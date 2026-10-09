@@ -112,7 +112,7 @@ svg { display: block; width: 1.15rem; height: 1.15rem; fill: none; stroke: curre
 .logout-button:disabled { cursor: wait; opacity: .55; }
 .feature-shell, .feature-layout { min-width: 0; min-height: 0; height: 100%; }
 .pi-layout { display: grid; grid-template-columns: 258px minmax(0, 1fr); }
-.friday-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr) 240px; }
+.friday-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 35%); }
 .friday-sidebar, .friday-pi-sidebar { gap: .65rem; }
 .friday-pi-sidebar { border-right: 0; border-left: 1px solid var(--border); }
 .friday-header-actions { display: flex; align-items: center; gap: .5rem; }
@@ -149,10 +149,23 @@ svg { display: block; width: 1.15rem; height: 1.15rem; fill: none; stroke: curre
 .local-calendar-event .socials-actions { flex:none; }
 .calendar-event-actions button { min-height:44px; }
 .friday-header-actions #friday-pi-sessions-toggle { display: none; }
-.friday-sidebar > .secondary { justify-content: flex-start; }
+.friday-nav-entry { position: relative; min-width: 0; }
+.friday-nav-entry > .feature { padding-right: 2.8rem; }
+.friday-submenu-toggle { position: absolute; z-index: 1; top: 3px; right: 3px; display: grid; width: 30px; height: 34px; place-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.friday-submenu-toggle:hover { background: rgba(255,255,255,.06); color: var(--text); }
+.friday-submenu-toggle:focus-visible { outline: 2px solid var(--accent); }
+.friday-submenu-toggle svg { width: 15px; height: 15px; transition: transform .18s ease; }
+.friday-submenu-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.friday-nav-menu { display: none; min-width: 0; }
+#friday-sidebar { height: min(42dvh,360px); min-height: 210px; max-height: 42dvh; }
+.friday-nav-entry.submenu-open > .friday-nav-menu { display: flex; min-width: 0; flex-direction: column; gap: .55rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: .65rem; box-shadow: var(--shadow); }
+.friday-nav-menu > .secondary { width: 100%; justify-content: flex-start; }
+.friday-nav-menu > .session-list { min-height: 0; flex: 1 1 0; }
+.friday-session-item, .friday-session-open { min-width: 0; }
+.friday-session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-item.friday-session-item { min-width: 0; gap:.4rem; border-color:var(--border); background:rgba(255,255,255,.025); padding:.45rem .5rem; }
 .session-item.friday-session-item:hover { border-color:var(--border-strong); background:rgba(255,255,255,.05); }
-.friday-session-item .friday-session-open { min-width: 0; gap:.25rem; padding:.1rem .1rem .25rem; }
+.friday-session-item .friday-session-open { gap:.25rem; padding:.1rem .1rem .25rem; }
 .friday-session-item .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .friday-session-item .friday-staff-summary { border-top:1px solid var(--border); padding:.35rem .15rem .1rem; }
 .friday-session-item .friday-staff-tasks { margin:.15rem .15rem .25rem; border:1px solid var(--border); border-radius:7px; background:rgba(255,255,255,.025); padding:.3rem .35rem .3rem 1.45rem; }
@@ -667,7 +680,7 @@ select:focus-visible, textarea:focus-visible { outline:2px solid var(--accent); 
 .file-preview .feature-header { gap:12px; }.file-preview .feature-header p { white-space:normal; overflow-wrap:anywhere; }
 .context-sidebar { background:#10161a; padding:16px 12px; gap:12px; }
 .context-heading,.panel-heading { font:10px var(--mono); letter-spacing:1px; }
-.friday-layout { grid-template-columns:220px minmax(400px,1fr) minmax(320px,35%); }
+.friday-layout { grid-template-columns:minmax(0,1fr) minmax(320px,35%); }
 .pi-layout { grid-template-columns:260px minmax(0,1fr); }
 .files-layout,.notes-layout { grid-template-columns:220px minmax(0,1fr); }
 .app { width:100%; max-width:none; }.header { min-height:76px; }
@@ -794,14 +807,14 @@ progress { color:var(--accent); border:0; border-radius:4px; overflow:hidden; ba
   .files-layout,.notes-layout,.pi-layout { grid-template-columns:190px minmax(0,1fr); }.pi-layout { grid-template-columns:225px minmax(0,1fr); }
   .app,.file-preview { padding-inline:16px; }
   .agent-controls select { width:125px; }
-  .friday-layout { grid-template-columns:210px minmax(400px,1fr) minmax(320px,35%); }
+  .friday-layout { grid-template-columns:minmax(0,1fr) minmax(320px,35%); }
 }
 @media (max-width:1170px) {
   .shell,.shell[data-feature="friday"],.shell[data-feature="pi"] { grid-template-columns:190px minmax(0,1fr); }
   .assistant-rail { position:fixed; z-index:60; inset:0 0 0 auto; width:340px; max-width:100%; visibility:hidden; transform:translateX(102%); transition:transform .25s; box-shadow:var(--shadow); }
   .assistant-rail.shell-drawer-open { visibility:visible; transform:none; }.assistant-close { display:grid; font-size:22px; }
   .assistant-rail .friday-app { height:100dvh; }
-  .friday-layout { grid-template-columns:220px minmax(0,1fr); }
+  .friday-layout { grid-template-columns:minmax(0,1fr); }
   .local-calendar-layout { grid-template-columns:minmax(0,1fr); }
   .calendar-month-grid th { font-size:9px; }
   .calendar-month-grid td { padding:1px; }
@@ -833,8 +846,8 @@ progress { color:var(--accent); border:0; border-radius:4px; overflow:hidden; ba
   .app-topbar { padding-inline:16px; gap:10px; }.topbar-breadcrumb { gap:8px; font-size:11px; }.shell-search-trigger { width:185px; }
   .dashboard-columns,.dashboard-stack { gap:12px; }
   .dashboard-metric-label { font-size:11px; }.dashboard-metric-detail { font-size:10px; }
-  .friday-layout { display:block; }.friday-sidebar { position:fixed; z-index:40; inset:0 auto 0 0; width:min(84vw,310px); visibility:hidden; transform:translateX(-105%); background:var(--surface); transition:transform .22s; }
-  .friday-sidebar.open { transform:none; visibility:visible; }.friday-layout .drawer-toggle { display:grid; }
+  .friday-layout { display:block; }
+  .friday-app .header-title .drawer-toggle { display:grid; }
 }
 @media (max-width:600px) {
   .local-calendar-month { min-width:0; padding:12px; }

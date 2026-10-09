@@ -76,7 +76,7 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(sessionCards, /session\.opening \? 'Opening'/);
   assert.match(sessionCards, /session\.running \? 'Open' : 'Saved'/);
   assert.match(sessionCards, /Working.*queued/);
-  assert.match(app, /activeFridaySession = id; await fridayChat\.enterView\(\);/);
+  assert.match(app, /activeFridaySession = id; await Promise\.all\(\[fridayChat\.enterView\(\), refreshFridaySessions\(\)\]\);/);
   assert.match(app, /openAssistant\(\) \{ open\(assistant\); void fridayChat\.enterView\(\)\.catch/);
   assert.match(app, /fridayChat\.enterView\(\)\.catch/);
   assert.match(app, /\['socials', \$\('#socials-feature'\)\]/);
@@ -136,15 +136,43 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(css, /@keyframes view-fade \{ from \{ opacity:0; transform:translateY\(4px\)/);
 });
 
-test('Friday right sidebar uses 35% of desktop layout while retaining mobile drawers', () => {
-  assert.match(html, /id="friday-pi-sidebar"/);
-  assert.match(css, /\.friday-layout \{ grid-template-columns:220px minmax\(400px,1fr\) minmax\(320px,35%\); \}/);
-  assert.match(css, /@media \(max-width:1390px\)[\s\S]*\.friday-layout \{ grid-template-columns:210px minmax\(400px,1fr\) minmax\(320px,35%\); \}/);
+test('Friday conversations move into an active, hover/focus, and touch-toggle submenu', () => {
+  const navStart = html.indexOf('id="friday-nav-entry"');
+  const navEnd = html.indexOf('</div>', html.indexOf('id="friday-sidebar"', navStart));
+  const submenu = html.slice(navStart, html.indexOf('</aside>', navStart) + '</aside>'.length);
+  const fridayFeature = html.slice(html.indexOf('id="friday-feature"'), html.indexOf('id="pi-feature"'));
+  assert.ok(navStart >= 0 && navEnd > navStart);
+  assert.equal((html.match(/id="friday-sidebar"/g) || []).length, 1);
+  assert.equal((html.match(/id="friday-session-list"/g) || []).length, 1);
+  assert.match(submenu, /data-feature="friday"[^>]*aria-controls="friday-sidebar"/);
+  assert.match(submenu, /id="friday-submenu-toggle"[^>]*aria-controls="friday-sidebar"[^>]*aria-expanded="false"/);
+  assert.match(submenu, /id="friday-session-list"/);
+  assert.doesNotMatch(fridayFeature, /friday-sidebar|friday-session-list/);
+  for (const id of ['friday-new-conversation', 'friday-review-memory', 'friday-refresh-sessions', 'friday-session-list']) assert.match(submenu, new RegExp(`id="${id}"`));
+  assert.match(css, /\.friday-layout \{ grid-template-columns:minmax\(0,1fr\) minmax\(320px,35%\); \}/);
+  assert.match(css, /@media \(max-width:1390px\)[\s\S]*\.friday-layout \{ grid-template-columns:minmax\(0,1fr\) minmax\(320px,35%\); \}/);
+  assert.match(css, /\.friday-nav-entry\.submenu-open > \.friday-nav-menu \{ display: flex;/);
+  assert.match(css, /#friday-sidebar \{ height: min\(42dvh,360px\); min-height: 210px; max-height: 42dvh; \}/);
+  assert.doesNotMatch(css, /\.friday-nav-entry\.submenu-open > \.friday-nav-menu \{ position: absolute/);
   const tablet = css.slice(css.indexOf('@media (max-width:1170px)'), css.indexOf('@media (max-width:1000px)'));
-  assert.match(tablet, /\.friday-layout \{ grid-template-columns:220px minmax\(0,1fr\); \}/);
+  assert.match(tablet, /\.friday-layout \{ grid-template-columns:minmax\(0,1fr\); \}/);
   assert.match(tablet, /\.friday-pi-sidebar \{ position:fixed;[\s\S]*width:min\(84vw,310px\)/);
-  const mobile = css.slice(css.indexOf('@media (max-width:800px)'));
-  assert.match(mobile, /\.friday-layout \{ display:block; \}/);
+  const narrow = css.slice(css.indexOf('@media (max-width:800px)'), css.indexOf('@media (max-width:600px)'));
+  assert.match(narrow, /\.friday-app \.header-title \.drawer-toggle \{ display:grid; \}/);
+  assert.doesNotMatch(narrow, /#friday-sidebar \{ position:absolute/);
+  const mobile = css.slice(css.indexOf('@media (max-width:600px)'));
+  assert.doesNotMatch(mobile, /#friday-sidebar[^}]*position:absolute/);
+  assert.match(app, /fridayMenuHovered = true; syncFridaySubmenu\(\)/);
+  assert.match(app, /fridayMenuOverride !== false/);
+  assert.match(app, /fridayNavEntry\.addEventListener\('focusin'/);
+  assert.match(app, /fridayMenuOverride = elements\.fridaySubmenuToggle\.getAttribute\('aria-expanded'\) === 'true' \? false : true/);
+  assert.match(app, /aria-expanded', String\(open\)/);
+  assert.match(app, /fridayNavEntry\.addEventListener\('pointerleave'/);
+  assert.match(app, /if \(event\.pointerType === 'touch'\) return/);
+  for (const action of ['Rename', 'Delete']) assert.match(app, new RegExp(`textContent = '${action}'`));
+  assert.match(app, /confirm\(`Delete/);
+  assert.match(app, /open\.setAttribute\('aria-current', id === activeFridaySession \? 'true' : 'false'\)/);
+  assert.match(html, /id="friday-pi-sidebar"/);
 });
 
 test('staff cards show repository visibility but never edit or display legacy repo affinity', () => {
