@@ -284,7 +284,11 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   await pollIdleTaskState('running');
   await pollIdleTaskState('reviewing', { review: { stage: 'active', startedAt: new Date().toISOString() } });
   const completionHistory = deferred();
-  await pollIdleTaskState('completed', { summary: 'Verified while Friday was idle.' }, completionHistory);
+  await pollIdleTaskState('completed', {
+    summary: 'Verified while Friday was idle.',
+    review: { stage: 'finished', finishedAt: new Date().toISOString() },
+  }, completionHistory);
+  assert.match(elements.get('friday-task-board').children[0].children[1].children[0].children[0].children.find((child) => child.className === 'friday-task-review-status').textContent, /^Review finished/);
   assert.match(elements.get('friday-status').title, /Task complete: Idle task/, 'completed task status is applied before history synchronization finishes');
   completionHistory.resolve(historyResponse(historyRequests.at(-1)));
   await new Promise((resolve) => setImmediate(resolve));
@@ -425,16 +429,33 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   assert.doesNotMatch(treeText(transcript), /Out-of-order assistant|Duplicate ID resolved/);
 
   fridayBusy = true;
-  delegatedTask = { status: 'running', label: 'Build billing API' };
+  delegatedTask = { id: 'task-completed', status: 'running', label: 'Build billing API', detail: 'Build the billing API.' };
   await chat.enterView();
   assert.equal(elements.get('friday-status').textContent, 'Pi is working: Build billing API');
-  delegatedTask = { status: 'reviewing', label: 'Build billing API', review: { stage: 'queued', queuedAt: new Date(Date.now() - 65_000).toISOString() } };
+  delegatedTask = { id: 'task-completed', status: 'reviewing', label: 'Build billing API', detail: 'Build the billing API.', review: { stage: 'queued', queuedAt: new Date(Date.now() - 65_000).toISOString() } };
   await chat.refreshTranscript();
   assert.equal(elements.get('friday-status').textContent, 'Friday is reviewing: Build billing API');
   assert.match(elements.get('friday-status').title, /Review waiting · 1m/);
-  delegatedTask = { status: 'reviewing', label: 'Build billing API', review: { stage: 'active', startedAt: new Date(Date.now() - 5_000).toISOString() } };
-  await chat.refreshTranscript();
-  assert.match(elements.get('friday-status').title, /Review active · [0-9]+s/);
+  const taskBoardBeforeComplete = elements.get('friday-task-board');
+  taskBoardBeforeComplete.children[0].children.find((child) => child.className === 'friday-task-details').open = true;
+  taskBoardBeforeComplete.scrollTop = 18;
+  const realNow = Date.now;
+  let reviewClock = realNow();
+  Date.now = () => reviewClock;
+  try {
+    delegatedTask = { id: 'task-completed', status: 'reviewing', label: 'Build billing API', detail: 'Build the billing API.', review: { stage: 'active', startedAt: new Date(reviewClock - 5_000).toISOString() } };
+    await pollNow();
+    const reviewAge = () => elements.get('friday-task-board').children[0].children[1].children[0].children[0].children.find((child) => child.className === 'friday-task-review-status').textContent;
+    const initialReviewAge = reviewAge();
+    reviewClock += 3_000;
+    await pollNow();
+    assert.notEqual(reviewAge(), initialReviewAge, 'the visible review age refreshes when the task payload is unchanged');
+    assert.match(elements.get('friday-status').title, /Review active · [0-9]+s/);
+    assert.equal(taskBoardBeforeComplete.children[0].children.find((child) => child.className === 'friday-task-details').open, true, 'review age updates preserve expanded details');
+    assert.equal(taskBoardBeforeComplete.scrollTop, 18, 'review age updates preserve task-board scroll');
+  } finally {
+    Date.now = realNow;
+  }
   delegatedTask = {
     id: 'task-completed', status: 'completed', label: 'Build billing API',
     summary: 'Verified the billing API export, updated the generated types, and added integration coverage.',

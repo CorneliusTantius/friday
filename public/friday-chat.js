@@ -157,7 +157,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
     if (!taskBoard) return;
     const visible = delegatedTasks.slice(0, 8);
     if (taskPanel) taskPanel.hidden = visible.length === 0;
-    const revision = JSON.stringify(visible.map((task) => [task.id, task.label, task.status, task.summary, task.detail, task.review]));
+    const revision = JSON.stringify(visible.map((task) => [task.id, task.label, task.status, task.summary, task.detail, task.review, reviewStatusText(task)]));
     if (revision === taskBoardRevision) return;
     taskBoardRevision = revision;
     const scrollTop = taskBoard.scrollTop;
