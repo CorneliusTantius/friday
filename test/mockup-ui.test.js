@@ -136,7 +136,7 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(css, /@keyframes view-fade \{ from \{ opacity:0; transform:translateY\(4px\)/);
 });
 
-test('Friday conversations move into an active, hover/focus, and touch-toggle submenu', () => {
+test('Friday conversations submenu opens only from its explicit keyboard-accessible toggle', () => {
   const navStart = html.indexOf('id="friday-nav-entry"');
   const navEnd = html.indexOf('</div>', html.indexOf('id="friday-sidebar"', navStart));
   const submenu = html.slice(navStart, html.indexOf('</aside>', navStart) + '</aside>'.length);
@@ -162,13 +162,13 @@ test('Friday conversations move into an active, hover/focus, and touch-toggle su
   assert.doesNotMatch(narrow, /#friday-sidebar \{ position:absolute/);
   const mobile = css.slice(css.indexOf('@media (max-width:600px)'));
   assert.doesNotMatch(mobile, /#friday-sidebar[^}]*position:absolute/);
-  assert.match(app, /fridayMenuHovered = true; syncFridaySubmenu\(\)/);
-  assert.match(app, /fridayMenuOverride !== false/);
-  assert.match(app, /fridayNavEntry\.addEventListener\('focusin'/);
-  assert.match(app, /fridayMenuOverride = elements\.fridaySubmenuToggle\.getAttribute\('aria-expanded'\) === 'true' \? false : true/);
-  assert.match(app, /aria-expanded', String\(open\)/);
-  assert.match(app, /fridayNavEntry\.addEventListener\('pointerleave'/);
-  assert.match(app, /if \(event\.pointerType === 'touch'\) return/);
+  assert.match(html, /id="friday-submenu-toggle" class="friday-submenu-toggle" type="button" aria-label="Show Friday conversations" aria-controls="friday-sidebar" aria-expanded="false"/);
+  assert.match(app, /let fridaySubmenuExpanded = false/);
+  assert.match(app, /classList\.toggle\('submenu-open', fridaySubmenuExpanded\)/);
+  assert.match(app, /fridaySubmenuExpanded = !fridaySubmenuExpanded/);
+  assert.match(app, /aria-expanded', String\(fridaySubmenuExpanded\)/);
+  assert.doesNotMatch(app, /fridayMenuHovered|fridayMenuOverride/);
+  assert.doesNotMatch(app, /fridayNavEntry\.addEventListener\('(pointerenter|pointerleave|focusin|focusout)'/);
   for (const action of ['Rename', 'Delete']) assert.match(app, new RegExp(`textContent = '${action}'`));
   assert.match(app, /confirm\(`Delete/);
   assert.match(app, /open\.setAttribute\('aria-current', id === activeFridaySession \? 'true' : 'false'\)/);

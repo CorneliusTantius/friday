@@ -1920,7 +1920,6 @@ async function setFeature(name, { startPiPolling = true } = {}) {
   if (['files', 'pi-files'].includes(state.activeFeature) && !['files', 'pi-files'].includes(name) && !confirmDiscardFileChanges()) return;
   if (!featureViews.has(name)) return;
   state.activeFeature = name;
-  fridayMenuOverride = null;
   if (name !== 'pi') stopPolling();
   if (name !== 'friday') {
     fridayChat.pause();
@@ -2117,18 +2116,12 @@ async function openPiConversationFromFriday(session) {
 const fridaySessionList = $('#friday-session-list');
 const fridaySessionDetailsOpen = new Set();
 let activeFridaySession = null;
-let fridayMenuHovered = false;
-let fridayMenuOverride = null;
+let fridaySubmenuExpanded = false;
 function syncFridaySubmenu() {
-  const focus = document.activeElement;
-  const focused = elements.fridayNavEntry.contains(focus) && focus !== elements.fridaySubmenuToggle;
-  const hovered = fridayMenuHovered && matchMedia('(hover: hover)').matches && fridayMenuOverride !== false;
-  const active = state.activeFeature === 'friday' && fridayMenuOverride !== false;
-  const open = active || hovered || focused || fridayMenuOverride === true;
-  elements.fridayNavEntry.classList.toggle('submenu-open', open);
-  elements.fridaySubmenuToggle.setAttribute('aria-expanded', String(open));
-  elements.fridaySubmenuToggle.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} Friday conversations`);
-  elements.fridaySubmenuToggle.title = `${open ? 'Hide' : 'Show'} Friday conversations`;
+  elements.fridayNavEntry.classList.toggle('submenu-open', fridaySubmenuExpanded);
+  elements.fridaySubmenuToggle.setAttribute('aria-expanded', String(fridaySubmenuExpanded));
+  elements.fridaySubmenuToggle.setAttribute('aria-label', `${fridaySubmenuExpanded ? 'Hide' : 'Show'} Friday conversations`);
+  elements.fridaySubmenuToggle.title = `${fridaySubmenuExpanded ? 'Hide' : 'Show'} Friday conversations`;
 }
 let fridaySessionsSync = null;
 let fridaySessionsRefreshAgain = false;
@@ -2234,21 +2227,8 @@ $('#friday-new-conversation').addEventListener('click', async () => {
 });
 void refreshFridaySessions().catch((error) => toast(error.message, 'error'));
 
-elements.fridayNavEntry.addEventListener('pointerenter', (event) => {
-  if (event.pointerType === 'touch') return;
-  fridayMenuHovered = true; syncFridaySubmenu();
-});
-elements.fridayNavEntry.addEventListener('pointerleave', (event) => {
-  if (event.pointerType === 'touch') return;
-  fridayMenuHovered = false; syncFridaySubmenu();
-});
-elements.fridayNavEntry.addEventListener('focusin', (event) => {
-  if (event.target !== elements.fridaySubmenuToggle) fridayMenuOverride = null;
-  syncFridaySubmenu();
-});
-elements.fridayNavEntry.addEventListener('focusout', () => setTimeout(syncFridaySubmenu, 0));
 elements.fridaySubmenuToggle.addEventListener('click', () => {
-  fridayMenuOverride = elements.fridaySubmenuToggle.getAttribute('aria-expanded') === 'true' ? false : true;
+  fridaySubmenuExpanded = !fridaySubmenuExpanded;
   syncFridaySubmenu();
 });
 
