@@ -175,6 +175,16 @@ test('Friday conversations move into an active, hover/focus, and touch-toggle su
   assert.match(html, /id="friday-pi-sidebar"/);
 });
 
+test('Friday session details start collapsed and preserve only explicit expansion across refreshes', () => {
+  assert.match(app, /const fridaySessionDetailsOpen = new Set\(\)/);
+  assert.match(app, /const details = document\.createElement\('details'\); details\.className = 'friday-session-disclosure'/);
+  assert.match(app, /details\.open = fridaySessionDetailsOpen\.has\(id\)/);
+  assert.match(app, /details\.addEventListener\('toggle', \(\) => \{\s*if \(details\.open\) fridaySessionDetailsOpen\.add\(id\); else fridaySessionDetailsOpen\.delete\(id\);/);
+  assert.match(app, /item\.append\(open, details\)/);
+  assert.match(css, /\.friday-session-disclosure > summary \{[^}]*cursor:pointer/);
+  assert.match(css, /\.friday-session-disclosure > \.session-meta \{[^}]*display:block/);
+});
+
 test('Friday workspace path is selectable code and new-conversation controls stay compact and accessible', () => {
   const fridayNewStart = html.indexOf('<button id="friday-new-conversation"');
   const fridayNewButton = html.slice(fridayNewStart, html.indexOf('</button>', fridayNewStart) + '</button>'.length);

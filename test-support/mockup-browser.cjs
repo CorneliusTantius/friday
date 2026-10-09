@@ -165,6 +165,10 @@ async function runBrowserCheck(repositoryRoot) {
     assert.equal(await page.locator('#friday-session-list').isVisible(), true, 'Keyboard focus opens the conversation submenu');
     await navigate('friday');
     assert.equal(await page.locator('#friday-session-list').isVisible(), true, 'The active Friday page keeps conversations visible');
+    await page.waitForFunction(() => document.querySelectorAll('#friday-session-list .friday-session-disclosure').length === 2);
+    const sessionDetails = page.locator('#friday-session-list .friday-session-disclosure');
+    assert.deepEqual(await sessionDetails.evaluateAll(items => items.map(item => item.open)), [false, false], 'Supplementary session details start collapsed on the active Friday page');
+    assert.equal(await page.locator('#friday-session-list .friday-session-actions').first().isVisible(), false, 'Supplemental actions stay tucked away while collapsed');
     assert.equal(await page.locator('#friday-sidebar').evaluate(el => el.closest('#friday-feature')), null, 'Conversations are not a second feature column');
     const fridayBounds = await page.evaluate(() => {
       const chat = document.querySelector('#friday-feature .friday-app').getBoundingClientRect();
@@ -173,9 +177,18 @@ async function runBrowserCheck(repositoryRoot) {
     });
     assert.ok(fridayBounds.panelWidth >= 320 && fridayBounds.panelWidth <= fridayBounds.featureWidth * 0.4, `Friday right sidebar remains about 35%: ${JSON.stringify(fridayBounds)}`);
     assert.ok(fridayBounds.chatRight <= fridayBounds.panelLeft + 1, `Friday chat has the vacated left-column space: ${JSON.stringify(fridayBounds)}`);
+    await sessionDetails.first().locator('summary').click();
+    await page.waitForFunction(() => document.querySelector('#friday-session-list .friday-session-disclosure')?.open === true);
+    assert.equal(await page.locator('#friday-session-list .friday-session-actions').first().isVisible(), true, 'Explicit disclosure reveals rename/delete actions');
     await page.locator('.friday-session-open').first().click();
-    assert.equal(await page.locator('.friday-session-open').first().getAttribute('aria-current'), 'true', 'Opening a conversation updates selected-session state');
+    await page.waitForFunction(() => document.querySelector('.friday-session-open')?.getAttribute('aria-current') === 'true');
+    assert.deepEqual(await page.locator('#friday-session-list .friday-session-disclosure').evaluateAll(items => items.map(item => item.open)), [true, false], 'Session selection refresh preserves explicit details choice');
     assert.equal(await page.locator('.friday-session-open').nth(1).getAttribute('aria-current'), 'false');
+    const refreshResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/friday/sessions' && response.request().method() === 'GET');
+    await page.locator('#friday-refresh-sessions').click();
+    await refreshResponse;
+    await page.waitForFunction(() => document.querySelector('#friday-session-list .friday-session-disclosure')?.open === true);
+    assert.deepEqual(await page.locator('#friday-session-list .friday-session-disclosure').evaluateAll(items => items.map(item => item.open)), [true, false], 'Polling refresh preserves the user’s explicit choice without opening other details');
     page.once('dialog', dialog => { assert.equal(dialog.type(), 'prompt'); void dialog.accept('Renamed conversation'); });
     await page.getByRole('button', { name: 'Rename Original conversation' }).click();
     await page.getByText('Renamed conversation', { exact: true }).waitFor();
@@ -367,6 +380,16 @@ async function runBrowserCheck(repositoryRoot) {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await navigate('dashboard');
     assert.equal(await page.locator('.orbit-rotate').first().evaluate(el => getComputedStyle(el).animationName), 'none');
+    await navigate('friday');
+    await page.waitForFunction(() => document.querySelectorAll('#friday-session-list .friday-session-disclosure').length > 0);
+    await page.locator('#friday-session-list .friday-session-disclosure').first().locator('summary').click();
+    await page.waitForFunction(() => document.querySelector('#friday-session-list .friday-session-disclosure')?.open === true);
+    await page.reload();
+    await page.locator('.dashboard-hero').waitFor();
+    await navigate('friday');
+    await page.waitForFunction(() => document.querySelectorAll('#friday-session-list .friday-session-disclosure').length > 0);
+    assert.ok(await page.locator('#friday-session-list .friday-session-disclosure').evaluateAll(items => items.every(item => !item.open)), 'Page reload resets all supplemental details to collapsed');
+    await navigate('dashboard');
     if (process.env.FRIDAY_SCREENSHOTS) {
       fs.mkdirSync(process.env.FRIDAY_SCREENSHOTS, { recursive: true });
       await page.screenshot({ path: path.join(process.env.FRIDAY_SCREENSHOTS, 'desktop.png') });

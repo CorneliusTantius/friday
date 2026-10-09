@@ -2115,6 +2115,7 @@ async function openPiConversationFromFriday(session) {
 }
 
 const fridaySessionList = $('#friday-session-list');
+const fridaySessionDetailsOpen = new Set();
 let activeFridaySession = null;
 let fridayMenuHovered = false;
 let fridayMenuOverride = null;
@@ -2164,15 +2165,21 @@ async function refreshFridaySessionsOnce() {
     open.setAttribute('aria-current', id === activeFridaySession ? 'true' : 'false');
     open.title = session.preview || session.name || 'New conversation';
     const title = document.createElement('span'); title.className = 'session-title friday-session-title'; title.textContent = session.name || session.title || 'New conversation';
-    const details = document.createElement('span'); details.className = 'session-details';
-    const meta = document.createElement('span'); meta.className = 'session-meta'; meta.textContent = `${formatDate(session.modified)} · ${session.messageCount || 0} msg`;
-    details.append(meta); open.append(title, details);
+    open.append(title);
     open.addEventListener('click', async () => {
       try {
         await apiJson(`/api/friday/sessions/${encodeURIComponent(id)}/open`, { method: 'POST' });
         activeFridaySession = id; await Promise.all([fridayChat.enterView(), refreshFridaySessions()]); closeDrawer();
       } catch (error) { toast(error.message, 'error'); }
     });
+    const details = document.createElement('details'); details.className = 'friday-session-disclosure';
+    details.open = fridaySessionDetailsOpen.has(id);
+    const summary = document.createElement('summary'); summary.textContent = 'Details';
+    summary.setAttribute('aria-label', `Details for ${session.name || 'conversation'}`);
+    details.addEventListener('toggle', () => {
+      if (details.open) fridaySessionDetailsOpen.add(id); else fridaySessionDetailsOpen.delete(id);
+    });
+    const meta = document.createElement('span'); meta.className = 'session-meta'; meta.textContent = `${formatDate(session.modified)} · ${session.messageCount || 0} msg`;
     const actions = document.createElement('div'); actions.className = 'session-actions friday-session-actions';
     const rename = document.createElement('button'); rename.type = 'button'; rename.className = 'session-action'; rename.textContent = 'Rename';
     rename.setAttribute('aria-label', `Rename ${session.name || 'conversation'}`);
@@ -2189,7 +2196,7 @@ async function refreshFridaySessionsOnce() {
       try { await apiJson(`/api/friday/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); if (id === activeFridaySession) { activeFridaySession = null; await fridayChat.refreshTranscript(); } await refreshFridaySessions(); }
       catch (error) { toast(error.message, 'error'); }
     });
-    actions.append(rename, remove); item.append(open, actions); fridaySessionList.append(item);
+    actions.append(rename, remove); details.append(summary, meta, actions); item.append(open, details); fridaySessionList.append(item);
   }
   if (!sessions.length) { const empty = document.createElement('div'); empty.className = 'empty-state'; empty.textContent = 'No conversations yet'; fridaySessionList.append(empty); }
 }

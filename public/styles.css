@@ -275,6 +275,11 @@ svg { display: block; width: 1.15rem; height: 1.15rem; fill: none; stroke: curre
 .session-open { display: flex; width: 100%; flex-direction: column; gap: .35rem; border: 0; background: transparent; color: inherit; cursor: pointer; padding: .25rem .25rem .1rem; text-align: left; }
 .session-title { overflow: hidden; color: inherit; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .session-details { display: flex; align-items: center; justify-content: space-between; gap: .4rem; }
+.friday-session-disclosure { min-width:0; border-top:1px solid var(--border); padding:.3rem .15rem 0; }
+.friday-session-disclosure > summary { width:max-content; max-width:100%; color:var(--muted); cursor:pointer; font-size:10px; }
+.friday-session-disclosure[open] > summary { color:var(--text-2); }
+.friday-session-disclosure > .session-meta { display:block; margin-top:.35rem; overflow-wrap:anywhere; white-space:normal; }
+.friday-session-disclosure .session-actions { justify-content:flex-start; padding:.35rem 0 0; }
 .session-meta, .session-state, .empty-copy { color: var(--muted); font-size: 11px; }
 .session-actions { display: flex; justify-content: flex-end; gap: .35rem; padding: 0 .15rem; }
 .session-action { border: 1px solid var(--border); border-radius: 6px; background: rgba(255,255,255,.025); color: var(--muted); cursor: pointer; padding: .2rem .48rem; font: inherit; font-size: 10px; line-height: 1.4; }

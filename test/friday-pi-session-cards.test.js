@@ -10,6 +10,7 @@ class FakeElement {
     this.parentElement = null;
     this.className = '';
     this._text = '';
+    if (tagName === 'details') this.open = false;
   }
   get textContent() { return this._text + this.children.map((child) => child.textContent).join(''); }
   set textContent(value) { this._text = String(value); }
@@ -133,6 +134,8 @@ test('session cards retain expansion, focus and unsaved controls across polls an
   const firstCard = container.children[0];
   const visibility = find(firstCard, (node) => node.tagName === 'details' && node.className.includes('friday-repo-visibility'));
   const editor = find(firstCard, (node) => node.tagName === 'details' && node.className === 'friday-staff-editor');
+  assert.equal(visibility.open, false, 'Repository visibility starts collapsed');
+  assert.equal(editor.open, false, 'Staff profile editor starts collapsed');
   visibility.open = true; editor.open = true;
   const repoB = find(firstCard, (node) => node.tagName === 'input' && node.value === 'repo-b');
   repoB.checked = false; await repoB.dispatch('change');
