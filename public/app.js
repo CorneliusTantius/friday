@@ -27,7 +27,7 @@ const elements = {
   financeSubmit: $('#finance-submit'), financeCancel: $('#finance-cancel'),
   fridayPiSessionList: $('#friday-pi-session-list'), fridayPiSessionsRefresh: $('#friday-pi-sessions-refresh'),
   fridayPiSessionsToggle: $('#friday-pi-sessions-toggle'), fridayReviewMemory: $('#friday-review-memory'),
-  fridayNavEntry: $('#friday-nav-entry'), fridaySubmenuToggle: $('#friday-submenu-toggle'),
+  fridayNavEntry: $('#friday-nav-entry'), fridaySubmenuToggle: $('#friday-submenu-toggle'), fridayWorkspaceDirectory: $('#friday-workspace-directory'),
   financeSummaryPeriod: $('#finance-summary-period'), financeMonth: $('#finance-month'),
   financeTypeFilter: $('#finance-type-filter'), financeCategoryFilter: $('#finance-category-filter'),
   financeExport: $('#finance-export'),
@@ -71,6 +71,7 @@ const state = {
   },
   currentSessionPath: null,
   workspace: '',
+  fridayWorkspace: '',
 };
 
 const requests = new Map();
@@ -1905,9 +1906,10 @@ function syncScopeSelectors() {
 
 async function loadFridayDirectory() {
   const data = await apiJson('/api/friday/settings', {}, 'friday-directory');
-  const input = $('#friday-workspace-directory');
-  input.value = data.fridayChat?.directory || 'Unavailable';
-  input.title = input.value;
+  state.fridayWorkspace = data.fridayChat?.directory || '';
+  const directory = state.fridayWorkspace || 'Unavailable';
+  elements.fridayWorkspaceDirectory.textContent = directory;
+  elements.fridayWorkspaceDirectory.title = directory;
 }
 
 async function setFeature(name, { startPiPolling = true } = {}) {

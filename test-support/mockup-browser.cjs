@@ -78,7 +78,8 @@ async function runBrowserCheck(repositoryRoot) {
         else if (request.method() === 'PATCH' && index >= 0) fridaySessions[index].name = request.postDataJSON().name;
         else if (request.method() === 'DELETE' && index >= 0) fridaySessions.splice(index, 1);
         body = request.method() === 'DELETE' ? { deleted: true, id } : { session: fridaySessions[index] };
-      } else if (endpoint.endsWith('/sessions')) body = { sessions: [], workspace: '/workspace', currentSession: '/session.jsonl' };
+      } else if (endpoint === '/api/session/reset' && request.method() === 'POST') body = { runId: 'new-pi-session', sessionPath: '/workspace/new.jsonl', workspace: '/workspace' };
+      else if (endpoint.endsWith('/sessions')) body = { sessions: [], workspace: '/workspace', currentSession: '/session.jsonl' };
       else if (endpoint.endsWith('/pi-conversations')) body = { sessions: [] };
       else if (endpoint.endsWith('/files/content')) {
         if (request.method() === 'PUT') fileContent = request.postDataJSON().content;
@@ -90,7 +91,7 @@ async function runBrowserCheck(repositoryRoot) {
       } else if (endpoint.endsWith('/devices')) body = { available: true, devices: [{ hostname: 'MSI', online: true, self: true, addresses: ['127.0.0.1'], usage: { cpuPercent: 15, memoryPercent: 40, load1: 0.2 } }] };
       else if (endpoint === '/api/system/temperature') body = { status: 'available', celsius: 45, sampledAt: '2026-09-30T00:00:00.000Z' };
       else if (endpoint.endsWith('/system/settings')) body = { host: 'localhost', port: 3000, systemUsage: { cpuPercent: 15.4, memoryPercent: 40.6, load1: 0.2 } };
-      else if (endpoint.endsWith('/friday/settings')) body = { fridayChat: { running: true, directory: '/friday', sessionsDirectory: '/friday/sessions' } };
+      else if (endpoint.endsWith('/friday/settings')) body = { fridayChat: { running: true, directory: '/friday/workspaces/team/production/shared/long-workspace-directory-example', sessionsDirectory: '/friday/sessions' } };
       else if (endpoint.endsWith('/pi/settings')) body = { ...status, piPackages: [] };
       else if (endpoint.endsWith('/sync/settings')) body = { owner: 'test', repo: 'workspace' };
       else if (endpoint.endsWith('/auth')) body = { providers: [] };
@@ -181,11 +182,15 @@ async function runBrowserCheck(repositoryRoot) {
     page.once('dialog', dialog => { assert.equal(dialog.type(), 'confirm'); void dialog.accept(); });
     await page.getByRole('button', { name: 'Delete Renamed conversation' }).click();
     await page.getByText('No conversations yet', { exact: true }).waitFor();
-    await page.locator('#friday-new-conversation').click();
+    await page.getByRole('button', { name: 'New Friday conversation' }).click();
     await page.getByText('New conversation', { exact: true }).waitFor();
     assert.ok(mutations.some(item => item.endpoint === '/api/friday/sessions/friday-existing' && item.method === 'PATCH'));
     assert.ok(mutations.some(item => item.endpoint === '/api/friday/sessions/friday-existing' && item.method === 'DELETE'));
     assert.ok(mutations.some(item => item.endpoint === '/api/friday/sessions' && item.method === 'POST'));
+    await navigate('pi');
+    await page.getByRole('button', { name: 'New Pi session' }).click();
+    await page.getByText('New session ready', { exact: true }).waitFor();
+    assert.ok(mutations.some(item => item.endpoint === '/api/session/reset' && item.method === 'POST' && item.body.cwd === '/workspace'));
     await page.setViewportSize({ width: 390, height: 844 });
     await navigate('friday');
     await page.locator('.shell-mobile-shortcuts [data-shell-drawer="sidebar"]').click();
@@ -265,9 +270,15 @@ async function runBrowserCheck(repositoryRoot) {
         assert.equal(await page.locator('.workspace-shell').getAttribute('data-assistant'), 'closed');
       }
       await navigate('friday');
-      await page.waitForFunction(() => document.querySelector('#friday-workspace-directory').value === '/friday');
-      assert.equal(await page.locator('#friday-workspace-directory').isDisabled(), true);
-      assert.equal(await page.locator('#friday-workspace-directory').getAttribute('readonly'), '');
+      const workspacePath = '/friday/workspaces/team/production/shared/long-workspace-directory-example';
+      await page.waitForFunction(path => document.querySelector('#friday-workspace-directory').textContent === path, workspacePath);
+      assert.equal(await page.locator('#friday-workspace-directory').evaluate(el => el.tagName), 'CODE');
+      assert.equal(await page.locator('#friday-workspace-directory').isEditable(), false);
+      assert.equal(await page.locator('#friday-workspace-directory').getAttribute('role'), 'status');
+      assert.equal(await page.locator('#friday-workspace-directory').evaluate(el => getComputedStyle(el).userSelect), 'text');
+      assert.equal(await page.locator('#friday-workspace-directory').evaluate(el => getComputedStyle(el).overflowWrap), 'anywhere');
+      assert.ok(await page.locator('#friday-workspace-directory').evaluate(el => el.getBoundingClientRect().height > parseFloat(getComputedStyle(el).lineHeight)), 'Long workspace paths wrap rather than truncate');
+      assert.equal(await page.locator('#friday-new-conversation').getAttribute('aria-label'), 'New Friday conversation');
       assert.equal(await page.locator('#friday-message').inputValue(), 'Keep this draft');
       assert.equal(await page.evaluate(() => window.originalFridayForm === document.querySelector('#friday-form')), true);
       await navigate('dashboard');

@@ -231,9 +231,9 @@ svg { display: block; width: 1.15rem; height: 1.15rem; fill: none; stroke: curre
 .workspace-field input:hover, .agent-controls select:hover { background: rgba(255,255,255,.06); }
 .workspace-field input:focus, .agent-controls select:focus { border-color: rgba(114,217,229,.72); box-shadow: 0 0 0 3px rgba(114,217,229,.12); }
 .workspace-field input:disabled { opacity: .55; }
-.friday-directory-field { display:grid; gap:.35rem; }
+.friday-directory-field { display:grid; min-width:0; gap:.35rem; }
 .friday-directory-field>span { color:var(--muted); font-size:10px; }
-.friday-directory-field input { overflow:hidden; padding:.5rem .55rem; font:10px var(--mono); text-overflow:ellipsis; white-space:nowrap; }
+.friday-workspace-path { display:block; min-width:0; max-width:100%; overflow-wrap:anywhere; color:var(--text-2); font:10px/1.4 var(--mono); user-select:text; }
 
 .session-panel { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: .65rem; overflow: hidden; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; padding-left: .35rem; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .055em; text-transform: uppercase; }

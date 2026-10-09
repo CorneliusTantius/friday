@@ -175,6 +175,24 @@ test('Friday conversations move into an active, hover/focus, and touch-toggle su
   assert.match(html, /id="friday-pi-sidebar"/);
 });
 
+test('Friday workspace path is selectable code and new-conversation controls stay compact and accessible', () => {
+  const fridayNewStart = html.indexOf('<button id="friday-new-conversation"');
+  const fridayNewButton = html.slice(fridayNewStart, html.indexOf('</button>', fridayNewStart) + '</button>'.length);
+  const piNewStart = html.indexOf('<button id="reset"');
+  const piNewButton = html.slice(piNewStart, html.indexOf('</button>', piNewStart) + '</button>'.length);
+  assert.match(css, /\.friday-workspace-path \{[^}]*font:10px\/1\.4 var\(--mono\); user-select:text/);
+  assert.match(css, /\.friday-workspace-path \{[^}]*overflow-wrap:anywhere/);
+  assert.match(app, /state\.fridayWorkspace = data\.fridayChat\?\.directory \|\| ''/);
+  assert.match(app, /elements\.fridayWorkspaceDirectory\.textContent = directory/);
+  assert.doesNotMatch(app, /fridayWorkspaceDirectory\.value/);
+  assert.match(fridayNewButton, /class="icon-button"[^>]*aria-label="New Friday conversation" title="New conversation"/);
+  assert.doesNotMatch(fridayNewButton, /New Conversation/);
+  assert.match(app, /apiJson\('\/api\/friday\/sessions', \{ method: 'POST' \}/);
+  assert.match(piNewButton, /aria-label="New Pi session" title="New Pi session"/);
+  assert.match(piNewButton, /<span>New session<\/span>/);
+  assert.match(app, /apiJson\('\/api\/session\/reset'/);
+});
+
 test('staff cards show repository visibility but never edit or display legacy repo affinity', () => {
   assert.match(app, /createFridayPiSessionCards/);
   assert.match(sessionCards, /Visible repositories/);
@@ -326,7 +344,7 @@ test('dashboard welcome and workspace branding use the simplified Studio UI', ()
   assert.match(app, /Number\(friday\.running === true\) \+ Number\(pi\.piRunning === true\)/);
   assert.match(app, /dashboard-clock-seconds/);
   assert.match(app, /loadFridayDirectory\(\)/);
-  assert.match(html, /id="friday-workspace-directory"[^>]*disabled readonly/);
+  assert.match(html, /<code id="friday-workspace-directory" class="friday-workspace-path" role="status" aria-label="Friday workspace directory">/);
   assert.match(css, /\.feature\[data-feature="friday"\]\.active/);
   assert.match(app, /\['Ask Friday', 'friday'\], \['Pi workspace', 'pi'\]/);
   assert.doesNotMatch(app, /Open workspace|YOUR WORLD, CONNECTED|A clear mind\.|FRIDAY NEURAL CORE/);
