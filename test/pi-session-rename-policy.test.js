@@ -17,6 +17,23 @@ test('rename authorization requires a direct request naming the exact session an
   }), true);
 });
 
+test('rename authorization allows a unique recent host-created target without repeating its old name', () => {
+  const hostSessionEvents = [{ type: 'created', runId: run.id, timestamp: 10_000 }];
+  assert.equal(hasExplicitPiSessionRenameAuthorization({
+    userMessage: 'rename that session [open] Friday Project 2', run, name: 'Friday Project 2', hostSessionEvents, now: 11_000,
+  }), true);
+});
+
+test('rename authorization rejects ambiguous, stale, and untrusted contextual references', () => {
+  const event = { type: 'created', runId: run.id, timestamp: 10_000 };
+  const request = { userMessage: 'rename that session Friday Project 2', run, name: 'Friday Project 2', now: 11_000 };
+  assert.equal(hasExplicitPiSessionRenameAuthorization({ ...request, hostSessionEvents: [event, { ...event, runId: 'other-run' }] }), false);
+  assert.equal(hasExplicitPiSessionRenameAuthorization({ ...request, now: 400_000, hostSessionEvents: [{ ...event, timestamp: 0 }] }), false);
+  assert.equal(hasExplicitPiSessionRenameAuthorization({ ...request, hostSessionEvents: [{ ...event, type: 'assistant-said-created' }] }), false);
+  assert.equal(hasExplicitPiSessionRenameAuthorization({ ...request, hostSessionEvents: [{ ...event, runId: 'other-run' }] }), false);
+  assert.equal(hasExplicitPiSessionRenameAuthorization({ ...request, hostSessionEvents: [event], userMessage: 'Rename that session to Friday Project 2 if you think so.' }), false);
+});
+
 test('rename authorization rejects ambiguous, conditional, unrelated, and assistant-only requests', () => {
   assert.equal(hasExplicitPiSessionRenameAuthorization({ userMessage: 'Rename the session to friday-ui.', run, name: 'friday-ui' }), false);
   assert.equal(hasExplicitPiSessionRenameAuthorization({ userMessage: 'Rename Build to friday-ui.', run, name: 'friday-ui' }), false);

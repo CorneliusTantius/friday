@@ -880,7 +880,7 @@ async function createPiConversation({ purpose, domain, userMessage, previousAssi
   }
 }
 
-async function renamePiConversation({ runId, name, userMessage }) {
+async function renamePiConversation({ runId, name, userMessage, hostSessionEvents }) {
   if (typeof runId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(runId)) {
     throw new RequestError('runId must identify an existing Pi session');
   }
@@ -899,7 +899,7 @@ async function renamePiConversation({ runId, name, userMessage }) {
     assertPiSessionRenameAuthorized({
       userMessage, run: { ...currentRun, name: target.name, sessionId: target.id },
       otherRuns: sessions.map(({ runId: id, id: sessionId, name: sessionName }) => ({ id, sessionId, name: sessionName })),
-      name: name.trim(),
+      name: name.trim(), hostSessionEvents,
     });
 
     return mutateSession(target, async (current) => {

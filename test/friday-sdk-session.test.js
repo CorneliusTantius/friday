@@ -303,9 +303,9 @@ test('Friday SDK adds curated memory context and conversation-scoped Pi tools', 
             const manageTool = value.customTools.find((tool) => tool.name === 'pi_manage_session');
             await manageTool.execute('tool-call', { action: 'create', purpose: 'friday-ui', domain: 'friday-ui' }, undefined, undefined, undefined);
             session.messages.push({ role: 'assistant', content: 'Created.' });
-          } else if (message.startsWith('Please rename')) {
+          } else if (message.startsWith('Please rename') || message.startsWith('rename that session')) {
             const manageTool = value.customTools.find((tool) => tool.name === 'pi_manage_session');
-            await manageTool.execute('tool-call', { action: 'rename', runId: '123e4567-e89b-12d3-a456-426614174000', name: 'friday-ui' }, undefined, undefined, undefined);
+            await manageTool.execute('tool-call', { action: 'rename', runId: '123e4567-e89b-12d3-a456-426614174000', name: message.startsWith('rename that session') ? 'Friday Project 2' : 'friday-ui' }, undefined, undefined, undefined);
             session.messages.push({ role: 'assistant', content: 'Renamed.' });
           } else if (message.startsWith('Please stop')) {
             const stopTool = value.customTools.find((tool) => tool.name === 'pi_stop_run');
@@ -334,12 +334,14 @@ test('Friday SDK adds curated memory context and conversation-scoped Pi tools', 
   assert.deepEqual(createContext, { userMessage: createRequest, previousAssistantMessage: '' });
   assert.equal(created.purpose, 'friday-ui');
   assert.equal(created.domain, 'friday-ui');
-  const renameRequest = 'Please rename Pi session “Build task” to friday-ui.';
+  const renameRequest = 'rename that session Friday Project 2';
   await adapter.chat(renameRequest);
-  assert.deepEqual(renameContext, {
-    runId: '123e4567-e89b-12d3-a456-426614174000', name: 'friday-ui',
-    userMessage: renameRequest, previousAssistantMessage: 'Created.',
-  });
+  assert.equal(renameContext.name, 'Friday Project 2');
+  assert.equal(renameContext.runId, '123e4567-e89b-12d3-a456-426614174000');
+  assert.equal(renameContext.userMessage, renameRequest);
+  assert.deepEqual(renameContext.hostSessionEvents.map(({ type, runId }) => ({ type, runId })), [
+    { type: 'created', runId: '123e4567-e89b-12d3-a456-426614174000' },
+  ]);
   const sendTool = options.customTools.find((tool) => tool.name === 'pi_send_prompt');
   const result = await sendTool.execute('tool-call', { taskName: 'Inspect this', prompt: 'Objective: inspect this', runId: '123e4567-e89b-12d3-a456-426614174000' }, undefined, undefined, undefined);
   assert.match(result.content[0].text, /Task .* queued.*run.*123e4567/i);
