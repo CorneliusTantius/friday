@@ -7,6 +7,21 @@ export async function fetchAndRenderCurrent({ load, currentRevision, render }) {
 }
 
 const profileFields = ['displayName', 'expertise', 'responsibilities', 'repositories', 'capacity'];
+const STAFF_DISPLAY_NAME_POOL = ['Nova', 'Atlas', 'Echo', 'Iris'];
+
+export function generateStaffDisplayName(sessions, excludeRunId = null) {
+  const used = new Set(sessions
+    .filter((session) => session.runId !== excludeRunId)
+    .map((session) => session.displayName?.trim().toLowerCase())
+    .filter(Boolean));
+  const available = (name) => !used.has(name.toLowerCase());
+  const firstAvailable = STAFF_DISPLAY_NAME_POOL.find(available);
+  if (firstAvailable) return firstAvailable;
+  for (let suffix = 2; ; suffix += 1) {
+    const candidate = `${STAFF_DISPLAY_NAME_POOL[0]} ${suffix}`;
+    if (available(candidate)) return candidate;
+  }
+}
 
 function textLines(value) {
   return (Array.isArray(value) ? value : []).join('\n');
@@ -118,6 +133,18 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
       });
       state.profileInputs[name] = input;
       label.append(input); state.profileForm.append(label);
+      if (name === 'displayName') {
+        state.generateDisplayName = documentRef.createElement('button');
+        state.generateDisplayName.type = 'button'; state.generateDisplayName.className = 'button button-small';
+        state.generateDisplayName.textContent = 'Generate suggestion';
+        state.generateDisplayName.addEventListener('click', () => {
+          const suggestion = generateStaffDisplayName([...cards.values()].map((card) => card.session), state.session.runId);
+          input.value = suggestion;
+          state.profileDirty.add('displayName');
+          toast(`Suggested alias: ${suggestion}. Save profile to apply.`);
+        });
+        state.profileForm.append(state.generateDisplayName);
+      }
     }
     state.saveProfile = documentRef.createElement('button'); state.saveProfile.type = 'submit'; state.saveProfile.className = 'button button-small'; state.saveProfile.textContent = 'Save profile';
     state.profileForm.append(state.saveProfile);

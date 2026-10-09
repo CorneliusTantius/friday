@@ -153,6 +153,9 @@ svg { display: block; width: 1.15rem; height: 1.15rem; fill: none; stroke: curre
 .friday-session-item { min-width: 0; }
 .friday-session-open { min-width: 0; }
 .friday-session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pi-staff-name-suggestion { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; border-bottom:1px solid var(--border); padding:.55rem 1rem; color:var(--muted); font-size:12px; }
+.pi-staff-name-suggestion[hidden] { display:none; }
+.pi-staff-name-suggestion strong { color:var(--text); }
 .friday-staff-summary,.friday-staff-tasks { margin:0; padding:0 .45rem; color:var(--muted); font-size:11px; line-height:1.45; overflow-wrap:anywhere; }
 .friday-staff-tasks { padding-left:1.4rem; }
 .friday-staff-editor { padding:0 .45rem .35rem; color:var(--text-2); font-size:12px; }

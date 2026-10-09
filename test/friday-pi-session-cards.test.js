@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createFridayPiSessionCards, fetchAndRenderCurrent } from '../public/friday-pi-session-cards.js';
+import { createFridayPiSessionCards, fetchAndRenderCurrent, generateStaffDisplayName } from '../public/friday-pi-session-cards.js';
 
 class FakeElement {
   constructor(tagName) {
@@ -76,6 +76,43 @@ function session(runId, overrides = {}) {
     ...overrides,
   };
 }
+
+test('staff display-name suggestions avoid case-insensitive collisions and suffix safely when the pool is exhausted', () => {
+  assert.equal(generateStaffDisplayName([]), 'Nova');
+  assert.equal(generateStaffDisplayName([
+    session('one', { displayName: 'nOvA' }), session('two', { displayName: 'ATLAS' }),
+  ]), 'Echo');
+  assert.equal(generateStaffDisplayName([
+    ...['nova', 'ATLAS', 'Echo', 'IRIS', 'NOVA 2', 'Nova 3'].map((displayName, index) => session(`run-${index}`, { displayName })),
+  ]), 'Nova 4');
+  assert.equal(generateStaffDisplayName([session('current', { displayName: 'Nova' })], 'current'), 'Nova', 'the target session does not collide with its own name');
+});
+
+test('session cards show a generated suggestion without saving or replacing the stored alias until explicit save', async () => {
+  const documentRef = new FakeDocument();
+  const container = documentRef.createElement('div');
+  let sessions = [session('run-a', { displayName: 'Existing alias' }), session('run-b', { displayName: 'nova' })];
+  const saves = [];
+  let cards;
+  cards = createFridayPiSessionCards({
+    container, documentRef, formatDate: (value) => value, onOpen() {}, async onSaveVisibility() {},
+    async onSaveProfile(current, profile) {
+      saves.push({ runId: current.runId, displayName: profile.displayName });
+      sessions = sessions.map((item) => item.runId === current.runId ? { ...item, displayName: profile.displayName } : item);
+    },
+    async onRefresh() { cards.render(sessions); }, toast() {},
+  });
+  cards.render(sessions);
+  const card = container.children[0];
+  const nameInput = find(card, (node) => node.tagName === 'input' && node.name === 'displayName');
+  const generate = find(card, (node) => node.tagName === 'button' && node.textContent === 'Generate suggestion');
+  await generate.dispatch('click');
+  assert.equal(nameInput.value, 'Atlas');
+  assert.deepEqual(saves, [], 'generating a suggestion is local only');
+  assert.equal(sessions[0].displayName, 'Existing alias', 'an existing alias remains stored until explicit save');
+  await find(card, (node) => node.tagName === 'form' && node.className === 'friday-staff-profile-form').dispatch('submit');
+  assert.deepEqual(saves, [{ runId: 'run-a', displayName: 'Atlas' }]);
+});
 
 test('session cards retain expansion, focus and unsaved controls across polls and keyed updates', async () => {
   const documentRef = new FakeDocument();

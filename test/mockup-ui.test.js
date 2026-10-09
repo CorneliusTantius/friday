@@ -16,6 +16,18 @@ const server = await readFile(new URL('../src/server.js', import.meta.url), 'utf
 const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
 const login = await readFile(new URL('../public/login.html', import.meta.url), 'utf8');
 
+test('new Pi sessions offer a generated staff alias that saves only on explicit user action', () => {
+  assert.match(html, /id="pi-staff-name-suggestion"[^>]*hidden/);
+  assert.match(html, /id="pi-regenerate-staff-name"[^>]*>Generate another/);
+  assert.match(html, /id="pi-save-staff-name"[^>]*>Save alias/);
+  assert.match(app, /sessionStorage\.setItem\('friday-new-pi-run-id', data\.runId\)/);
+  assert.match(app, /await suggestPiStaffName\(newRunId\)/);
+  assert.match(app, /apiJson\(`\/api\/friday\/pi-conversations\/\$\{encodeURIComponent\(session\.runId\)\}\/profile`/);
+  assert.match(app, /if \(!session \|\| session\.displayName\)/);
+  assert.match(sessionCards, /function generateStaffDisplayName\(sessions, excludeRunId = null\)/);
+  assert.match(sessionCards, /Generate suggestion/);
+});
+
 test('public workspace UI contract has every feature, form, and shell integration', () => {
   for (const id of ['friday-feature','pi-feature','files-feature','dashboard-feature','repos-feature','notes-feature','finances-feature','socials-feature','calendar-feature','settings-feature','friday-form','friday-chat-queue','friday-stop','chat-form','file-save','finance-form','clone-repo-form','workspace-sidebar','assistant-rail','shell-command-dialog','shell-command-input']) {
     assert.equal((html.match(new RegExp(`\\bid=["']${id}["']`, 'g')) || []).length, 1, `expected one #${id}`);
