@@ -450,7 +450,12 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   assert.match(taskRow.children[0].textContent, /Build billing API · completed/);
   const taskDetails = taskRow.children.find((child) => child.className === 'friday-task-details');
   assert.ok(taskDetails, 'full task description is available through a native disclosure');
-  assert.match(taskDetails.children[0].textContent, /Verified the billing API export/);
+  const taskSummaryContent = taskDetails.children[0].children[0];
+  const taskPreview = taskSummaryContent.children.find((child) => child.className === 'friday-task-preview');
+  const taskReviewStatus = taskSummaryContent.children.find((child) => child.className === 'friday-task-review-status');
+  assert.match(taskPreview.textContent, /Verified the billing API export/);
+  assert.match(taskReviewStatus.textContent, /^Review finished(?: · \d+s)?$/);
+  assert.equal(taskSummaryContent.children.find((child) => child.className === 'friday-task-open-label').textContent, 'Full description below');
   assert.equal(taskDetails.children[1].textContent, delegatedTask.summary);
   taskDetails.open = true;
   taskBoard.scrollTop = 36;

@@ -171,14 +171,25 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
       const review = reviewStatusText(task);
       const heading = document.createElement('strong'); heading.textContent = `${task.label || 'Pi task'} · ${task.status}`;
       const taskDetail = task.status === 'completed' ? task.summary : task.summary || task.detail;
-      const description = [taskDetail, review].filter(Boolean).join(' · ');
       row.append(heading);
-      if (description) {
+      if (taskDetail) {
         const details = document.createElement('details'); details.className = 'friday-task-details'; details.open = expanded.has(task.id);
-        const summary = document.createElement('summary'); summary.textContent = description; summary.title = description;
-        details.append(summary);
-        if (taskDetail) { const full = document.createElement('p'); full.textContent = taskDetail; details.append(full); }
+        const summary = document.createElement('summary');
+        const summaryContent = document.createElement('span'); summaryContent.className = 'friday-task-summary-content';
+        const preview = document.createElement('span'); preview.className = 'friday-task-preview'; preview.textContent = taskDetail; preview.title = taskDetail;
+        summaryContent.append(preview);
+        if (review) {
+          const reviewStatus = document.createElement('span'); reviewStatus.className = 'friday-task-review-status'; reviewStatus.textContent = review; reviewStatus.title = review;
+          summaryContent.append(reviewStatus);
+        }
+        const openLabel = document.createElement('span'); openLabel.className = 'friday-task-open-label'; openLabel.textContent = 'Full description below';
+        summaryContent.append(openLabel);
+        summary.append(summaryContent); details.append(summary);
+        const full = document.createElement('p'); full.textContent = taskDetail; details.append(full);
         row.append(details);
+      } else if (review) {
+        const reviewStatus = document.createElement('span'); reviewStatus.className = 'friday-task-review-status'; reviewStatus.textContent = review; reviewStatus.title = review;
+        row.append(reviewStatus);
       }
       taskBoard.append(row);
     }

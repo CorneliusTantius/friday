@@ -170,9 +170,22 @@ test('Friday sidebar groups scrollable conversations above tasks with expandable
   assert.doesNotMatch(chatColumn, /id="friday-task-board"/);
   assert.match(css, /\.friday-pi-sidebar > \.session-list \{ flex:1 1 0; min-height:5rem; \}/);
   assert.match(css, /\.friday-task-board \{[^}]*overflow:auto/);
-  assert.match(css, /\.friday-task-details summary \{[^}]*text-overflow:ellipsis; white-space:nowrap/);
+  assert.match(css, /\.friday-task-preview \{[^}]*text-overflow:ellipsis; white-space:nowrap/);
   assert.match(css, /\.friday-task-panel\[hidden\] \{ display:none; \}/);
   assert.match(css, /@media \(max-width:1170px\)[\s\S]*\.friday-pi-sidebar \.mobile-close/);
+});
+
+test('task descriptions do not duplicate expanded previews and sidebar cards stay compact and responsive', () => {
+  assert.match(chat, /friday-task-preview/);
+  assert.match(chat, /friday-task-review-status/);
+  assert.match(chat, /Full description below/);
+  assert.match(css, /\.friday-task-details\[open\] \.friday-task-preview \{ display:none; \}/);
+  assert.match(css, /\.friday-task-details\[open\] \.friday-task-open-label \{ display:inline; \}/);
+  assert.match(css, /\.friday-task-row \{[^}]*border:1px solid var\(--border\)[^}]*background:/);
+  assert.match(css, /\.session-item\.friday-session-item \{[^}]*border-color:var\(--border\)[^}]*background:/);
+  assert.match(css, /\.friday-session-item \.friday-staff-summary \{[^}]*border-top/);
+  assert.match(css, /\.friday-session-item \.friday-staff-editor \{/);
+  assert.match(css, /@media \(max-width:1170px\)[\s\S]*\.friday-pi-sidebar\.open/);
 });
 
 test('settings start collapsed and Files and Notes expose accessible code/tree navigation', () => {

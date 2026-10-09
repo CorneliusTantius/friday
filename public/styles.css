@@ -150,9 +150,14 @@ svg { display: block; width: 1.15rem; height: 1.15rem; fill: none; stroke: curre
 .calendar-event-actions button { min-height:44px; }
 .friday-header-actions #friday-pi-sessions-toggle { display: none; }
 .friday-sidebar > .secondary { justify-content: flex-start; }
-.friday-session-item { min-width: 0; }
-.friday-session-open { min-width: 0; }
-.friday-session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-item.friday-session-item { min-width: 0; gap:.4rem; border-color:var(--border); background:rgba(255,255,255,.025); padding:.45rem .5rem; }
+.session-item.friday-session-item:hover { border-color:var(--border-strong); background:rgba(255,255,255,.05); }
+.friday-session-item .friday-session-open { min-width: 0; gap:.25rem; padding:.1rem .1rem .25rem; }
+.friday-session-item .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friday-session-item .friday-staff-summary { border-top:1px solid var(--border); padding:.35rem .15rem .1rem; }
+.friday-session-item .friday-staff-tasks { margin:.15rem .15rem .25rem; border:1px solid var(--border); border-radius:7px; background:rgba(255,255,255,.025); padding:.3rem .35rem .3rem 1.45rem; }
+.friday-session-item .friday-staff-editor { border-top:1px solid rgba(255,255,255,.045); padding:.35rem .15rem; }
+.friday-session-item .friday-staff-editor summary { color:var(--text-2); font-size:11px; font-weight:600; }
 .pi-session-name-suggestion { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; border-bottom:1px solid var(--border); padding:.55rem 1rem; color:var(--muted); font-size:12px; }
 .pi-session-name-suggestion[hidden] { display:none; }
 .pi-session-name-suggestion strong { color:var(--text); }
@@ -172,10 +177,18 @@ svg { display: block; width: 1.15rem; height: 1.15rem; fill: none; stroke: curre
 .friday-task-panel[hidden] { display:none; }
 .friday-task-heading { flex:0 0 auto; margin:0; color:var(--text-2); font:10px var(--mono); letter-spacing:1px; }
 .friday-task-board { display:grid; min-height:0; flex:1 1 auto; gap:.4rem; overflow:auto; padding:.1rem .25rem; }
-.friday-task-row { display:grid; min-width:0; gap:.15rem; color:var(--muted); font-size:12px; }
+.friday-task-row { display:grid; min-width:0; gap:.2rem; border:1px solid var(--border); border-left:2px solid var(--border-strong); border-radius:8px; background:rgba(255,255,255,.025); color:var(--muted); font-size:12px; padding:.4rem .5rem; }
 .friday-task-row strong { color:var(--text-2); text-transform:capitalize; }
+.friday-task-row.completed { border-left-color:var(--accent); }
+.friday-task-row.blocked,.friday-task-row.outcome-unknown { border-left-color:var(--red); }
 .friday-task-details { min-width:0; }
-.friday-task-details summary { display:block; overflow:hidden; cursor:pointer; text-overflow:ellipsis; white-space:nowrap; }
+.friday-task-details summary { display:block; overflow:hidden; cursor:pointer; }
+.friday-task-summary-content { display:grid; min-width:0; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:.4rem; }
+.friday-task-preview { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.friday-task-details[open] .friday-task-preview { display:none; }
+.friday-task-review-status { max-width:45%; overflow:hidden; color:var(--text-2); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.friday-task-open-label { display:none; color:var(--muted); font-size:10px; }
+.friday-task-details[open] .friday-task-open-label { display:inline; }
 .friday-task-details p { margin:.3rem 0 0; overflow-wrap:anywhere; white-space:pre-wrap; }
 .friday-task-row.completed strong { color:var(--accent); }
 .friday-task-row.blocked strong,.friday-task-row.outcome-unknown strong { color:var(--red); }
