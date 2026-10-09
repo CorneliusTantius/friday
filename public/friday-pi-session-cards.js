@@ -6,14 +6,16 @@ export async function fetchAndRenderCurrent({ load, currentRevision, render }) {
   return true;
 }
 
-const profileFields = ['expertise', 'responsibilities', 'repositories', 'capacity'];
+const profileFields = ['displayName', 'expertise', 'responsibilities', 'repositories', 'capacity'];
 
 function textLines(value) {
   return (Array.isArray(value) ? value : []).join('\n');
 }
 
 function sessionProfileValue(session, name) {
-  return name === 'capacity' ? String(session.capacity || 2) : textLines(session[name]);
+  if (name === 'capacity') return String(session.capacity || 2);
+  if (name === 'displayName') return session.displayName || '';
+  return textLines(session[name]);
 }
 
 function sameValues(left, right) {
@@ -97,6 +99,7 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
     const editorSummary = documentRef.createElement('summary'); editorSummary.textContent = 'Edit staff profile'; state.editor.append(editorSummary);
     state.profileForm = documentRef.createElement('form'); state.profileForm.className = 'friday-staff-profile-form';
     const labels = {
+      displayName: 'Staff display name (optional)',
       expertise: 'Expertise (one per line)',
       responsibilities: 'Responsibilities (one per line)',
       repositories: 'Repo affinity (staff-fit metadata; one per line)',
@@ -104,9 +107,10 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
     };
     for (const name of profileFields) {
       const label = documentRef.createElement('label'); label.textContent = labels[name];
-      const input = documentRef.createElement(name === 'capacity' ? 'input' : 'textarea');
+      const input = documentRef.createElement(name === 'capacity' || name === 'displayName' ? 'input' : 'textarea');
       input.name = name; input.autocomplete = 'off';
       if (name === 'capacity') { input.type = 'number'; input.min = '1'; input.max = '8'; }
+      else if (name === 'displayName') { input.type = 'text'; input.maxLength = 60; }
       else input.rows = 2;
       input.addEventListener('input', () => {
         if (input.value === state.profileBaseline[name]) state.profileDirty.delete(name);
@@ -122,6 +126,7 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
       if (state.profileSaving) return;
       const submitted = Object.fromEntries(profileFields.map((name) => [name, state.profileInputs[name].value]));
       const profile = {
+        displayName: submitted.displayName.trim(),
         expertise: submitted.expertise.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
         responsibilities: submitted.responsibilities.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
         repositories: submitted.repositories.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
@@ -202,8 +207,8 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
   function updateCard(state, session) {
     state.session = session;
     state.open.title = session.preview || session.name || '';
-    state.title.textContent = session.name || 'Untitled Pi conversation';
-    state.meta.textContent = `${formatDate(session.modified)} · ${session.messageCount} msg`;
+    state.title.textContent = session.displayName || session.name || 'Untitled Pi conversation';
+    state.meta.textContent = `${session.displayName && session.name ? `Session: ${session.name} · ` : ''}${formatDate(session.modified)} · ${session.messageCount} msg`;
     state.status.className = `session-state ${session.opening || session.busy || session.queuedPrompts ? 'working' : session.running ? 'running' : 'saved'}`;
     state.status.textContent = session.opening ? 'Opening' : session.busy ? `Working${session.queuedPrompts ? ` · ${session.queuedPrompts} queued` : ''}` : session.queuedPrompts ? `${session.queuedPrompts} queued` : session.running ? 'Open' : 'Saved';
     const profileText = [

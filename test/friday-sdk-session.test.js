@@ -9,7 +9,8 @@ import { fridaySystemPrompt } from '../src/friday/friday-system-prompt.js';
 test('Friday prompt establishes orchestration, exact-fit delegation, and safe Pi lifecycle', () => {
   assert.match(fridaySystemPrompt, /personal assistant and work orchestrator/);
   assert.match(fridaySystemPrompt, /delegate substantive project work/);
-  assert.match(fridaySystemPrompt, /select only a conversation whose expertise, responsibilities, repositories \(staff-fit metadata\), visibleRepositories \(app-provided repository context\), domain, and recent context fit/);
+  assert.match(fridaySystemPrompt, /select only a conversation whose optional user-set displayName alias, expertise, responsibilities, repositories \(staff-fit metadata\), visibleRepositories \(app-provided repository context\), domain, and recent context fit/);
+  assert.match(fridaySystemPrompt, /If a user reference matches multiple sessions, ask which one before acting/);
   assert.match(fridaySystemPrompt, /visibility does not rewrite the staff-fit profile/);
   assert.match(fridaySystemPrompt, /not a filesystem sandbox/);
   assert.match(fridaySystemPrompt, /ask before creating or selecting another session/);

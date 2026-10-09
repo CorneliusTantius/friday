@@ -766,6 +766,7 @@ async function sessionsWithRunIds(workspace, { includeRepositoryVisibility = fal
       runId,
       domain: run?.domain || null,
       purpose: run?.purpose || null,
+      displayName: run?.displayName || null,
       expertise: run?.expertise || [],
       responsibilities: run?.responsibilities || [],
       repositories: run?.repositories || [],
@@ -1267,7 +1268,7 @@ async function handleFridayRequest(request, response, pathname) {
   const profileMatch = pathname.match(/^\/api\/friday\/pi-conversations\/([0-9a-f-]{36})\/profile$/i);
   if (profileMatch && request.method === 'PATCH') {
     const body = await readJson(request);
-    const profile = { expertise: body.expertise, responsibilities: body.responsibilities, repositories: body.repositories, capacity: body.capacity };
+    const profile = { expertise: body.expertise, responsibilities: body.responsibilities, repositories: body.repositories, capacity: body.capacity, ...(Object.hasOwn(body, 'displayName') ? { displayName: body.displayName } : {}) };
     const updated = await persistPiStaffProfile(profileMatch[1], profile);
     sendJson(response, updated ? 200 : 404, updated || { error: 'Pi conversation not found' });
     return;
