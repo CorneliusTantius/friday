@@ -6,19 +6,19 @@ export async function fetchAndRenderCurrent({ load, currentRevision, render }) {
   return true;
 }
 
-const profileFields = ['displayName', 'expertise', 'responsibilities', 'repositories', 'capacity'];
-const STAFF_DISPLAY_NAME_POOL = ['Nova', 'Atlas', 'Echo', 'Iris'];
+const profileFields = ['expertise', 'responsibilities', 'capacity'];
+const SESSION_NAME_POOL = ['Nova', 'Atlas', 'Echo', 'Iris'];
 
-export function generateStaffDisplayName(sessions, excludeRunId = null) {
+export function generatePiSessionName(sessions, excludeSessionPath = null) {
   const used = new Set(sessions
-    .filter((session) => session.runId !== excludeRunId)
-    .map((session) => session.displayName?.trim().toLowerCase())
+    .filter((session) => session.path !== excludeSessionPath)
+    .map((session) => session.name?.trim().toLowerCase())
     .filter(Boolean));
   const available = (name) => !used.has(name.toLowerCase());
-  const firstAvailable = STAFF_DISPLAY_NAME_POOL.find(available);
+  const firstAvailable = SESSION_NAME_POOL.find(available);
   if (firstAvailable) return firstAvailable;
   for (let suffix = 2; ; suffix += 1) {
-    const candidate = `${STAFF_DISPLAY_NAME_POOL[0]} ${suffix}`;
+    const candidate = `${SESSION_NAME_POOL[0]} ${suffix}`;
     if (available(candidate)) return candidate;
   }
 }
@@ -29,7 +29,6 @@ function textLines(value) {
 
 function sessionProfileValue(session, name) {
   if (name === 'capacity') return String(session.capacity || 2);
-  if (name === 'displayName') return session.displayName || '';
   return textLines(session[name]);
 }
 
@@ -114,18 +113,15 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
     const editorSummary = documentRef.createElement('summary'); editorSummary.textContent = 'Edit staff profile'; state.editor.append(editorSummary);
     state.profileForm = documentRef.createElement('form'); state.profileForm.className = 'friday-staff-profile-form';
     const labels = {
-      displayName: 'Staff display name (optional)',
-      expertise: 'Expertise (one per line)',
+      expertise: 'Expertise (optional; one per line)',
       responsibilities: 'Responsibilities (one per line)',
-      repositories: 'Repo affinity (staff-fit metadata; one per line)',
       capacity: 'Task capacity',
     };
     for (const name of profileFields) {
       const label = documentRef.createElement('label'); label.textContent = labels[name];
-      const input = documentRef.createElement(name === 'capacity' || name === 'displayName' ? 'input' : 'textarea');
+      const input = documentRef.createElement(name === 'capacity' ? 'input' : 'textarea');
       input.name = name; input.autocomplete = 'off';
       if (name === 'capacity') { input.type = 'number'; input.min = '1'; input.max = '8'; }
-      else if (name === 'displayName') { input.type = 'text'; input.maxLength = 60; }
       else input.rows = 2;
       input.addEventListener('input', () => {
         if (input.value === state.profileBaseline[name]) state.profileDirty.delete(name);
@@ -133,18 +129,6 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
       });
       state.profileInputs[name] = input;
       label.append(input); state.profileForm.append(label);
-      if (name === 'displayName') {
-        state.generateDisplayName = documentRef.createElement('button');
-        state.generateDisplayName.type = 'button'; state.generateDisplayName.className = 'button button-small';
-        state.generateDisplayName.textContent = 'Generate suggestion';
-        state.generateDisplayName.addEventListener('click', () => {
-          const suggestion = generateStaffDisplayName([...cards.values()].map((card) => card.session), state.session.runId);
-          input.value = suggestion;
-          state.profileDirty.add('displayName');
-          toast(`Suggested alias: ${suggestion}. Save profile to apply.`);
-        });
-        state.profileForm.append(state.generateDisplayName);
-      }
     }
     state.saveProfile = documentRef.createElement('button'); state.saveProfile.type = 'submit'; state.saveProfile.className = 'button button-small'; state.saveProfile.textContent = 'Save profile';
     state.profileForm.append(state.saveProfile);
@@ -153,10 +137,8 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
       if (state.profileSaving) return;
       const submitted = Object.fromEntries(profileFields.map((name) => [name, state.profileInputs[name].value]));
       const profile = {
-        displayName: submitted.displayName.trim(),
         expertise: submitted.expertise.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
         responsibilities: submitted.responsibilities.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
-        repositories: submitted.repositories.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
         capacity: Number(submitted.capacity),
       };
       state.profileSaving = true; state.saveProfile.disabled = true;
@@ -234,14 +216,13 @@ export function createFridayPiSessionCards({ container, formatDate, onOpen, onSa
   function updateCard(state, session) {
     state.session = session;
     state.open.title = session.preview || session.name || '';
-    state.title.textContent = session.displayName || session.name || 'Untitled Pi conversation';
-    state.meta.textContent = `${session.displayName && session.name ? `Session: ${session.name} · ` : ''}${formatDate(session.modified)} · ${session.messageCount} msg`;
+    state.title.textContent = session.name || 'Untitled Pi conversation';
+    state.meta.textContent = `${formatDate(session.modified)} · ${session.messageCount} msg`;
     state.status.className = `session-state ${session.opening || session.busy || session.queuedPrompts ? 'working' : session.running ? 'running' : 'saved'}`;
     state.status.textContent = session.opening ? 'Opening' : session.busy ? `Working${session.queuedPrompts ? ` · ${session.queuedPrompts} queued` : ''}` : session.queuedPrompts ? `${session.queuedPrompts} queued` : session.running ? 'Open' : 'Saved';
     const profileText = [
       `Expertise: ${(session.expertise || []).join(', ') || 'not set'}`,
       `Responsibilities: ${(session.responsibilities || []).join(', ') || 'not set'}`,
-      `Repo affinity: ${(session.repositories || []).join(', ') || 'not set'}`,
       `Workload: ${session.workload?.openTasks || 0}/${session.capacity || 2}`,
     ];
     state.profile.textContent = profileText.join(' · ');

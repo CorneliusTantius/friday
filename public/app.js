@@ -1,6 +1,6 @@
 import { formatPercent } from './dashboard-format.js';
 import { renderMarkdown as renderMarkdownDocument } from './markdown.js';
-import { createFridayPiSessionCards, fetchAndRenderCurrent, generateStaffDisplayName } from './friday-pi-session-cards.js';
+import { createFridayPiSessionCards, fetchAndRenderCurrent, generatePiSessionName } from './friday-pi-session-cards.js';
 
 const fridayChatModule = await import('./friday-chat.js').catch(() => null);
 
@@ -542,7 +542,10 @@ function formatLocalTimestamp(value) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+let currentPiSessions = [];
+
 function renderSessions(items, currentPath) {
+  currentPiSessions = items;
   elements.sessionList.replaceChildren();
   if (!items.length) {
     const empty = document.createElement('div'); empty.className = 'empty-state'; empty.innerHTML = '<div><strong>No sessions yet</strong><span class="empty-copy">Start a conversation to create one.</span></div>';
@@ -585,8 +588,9 @@ function renderSessions(items, currentPath) {
 
 async function manageSession(action, item) {
   if (state.locks.has('session')) return;
+  const suggestion = action === 'rename' ? generatePiSessionName(currentPiSessions, item.path) : null;
   const name = action === 'rename'
-    ? window.prompt('Rename session', item.name)?.trim()
+    ? window.prompt('Rename session (suggested name)', suggestion)?.trim()
     : null;
   if (action === 'rename' && (!name || name === item.name)) return;
   if (action === 'delete' && !window.confirm(`Delete “${item.name}”? This permanently removes the saved session.`)) return;
@@ -636,6 +640,7 @@ function attachRuntime(runtimeId) {
 
 async function openSession(sessionPath) {
   if (state.locks.has('session')) return;
+  if (sessionPath !== state.currentSessionPath) clearPiSessionNameSuggestion();
   closeDrawer();
   lock('session', true);
   const context = ++state.contextVersion;
@@ -2477,48 +2482,57 @@ elements.form.addEventListener('submit', async (event) => {
   } finally { lock('chat', false); elements.input.focus(); }
 });
 
-const piStaffNameSuggestion = $('#pi-staff-name-suggestion');
-const piStaffNameValue = $('#pi-staff-name-value');
-let pendingPiStaffNameSession = null;
+const piSessionNameSuggestion = $('#pi-session-name-suggestion');
+const piSessionCurrentName = $('#pi-session-current-name');
+const piSessionNameValue = $('#pi-session-name-value');
+let pendingPiSessionName = null;
 
-async function suggestPiStaffName(runId) {
-  const { sessions = [] } = await apiJson('/api/friday/pi-conversations', {}, 'friday-pi-conversations');
-  const session = sessions.find((item) => item.runId === runId);
-  if (!session || session.displayName) {
-    pendingPiStaffNameSession = null;
-    piStaffNameSuggestion.hidden = true;
-    return;
-  }
-  pendingPiStaffNameSession = session;
-  piStaffNameValue.textContent = generateStaffDisplayName(sessions, runId);
-  piStaffNameSuggestion.hidden = false;
+function clearPiSessionNameSuggestion() {
+  pendingPiSessionName = null;
+  piSessionNameSuggestion.hidden = true;
 }
 
-$('#pi-regenerate-staff-name').addEventListener('click', async (event) => {
-  if (!pendingPiStaffNameSession) return;
+async function suggestPiSessionName(runId) {
+  const { sessions = [] } = await apiJson(`/api/sessions?cwd=${encodeURIComponent(elements.workspace.value)}`, {}, 'sessions');
+  const session = sessions.find((item) => item.runId === runId);
+  if (!session) {
+    clearPiSessionNameSuggestion();
+    return;
+  }
+  pendingPiSessionName = session;
+  piSessionCurrentName.textContent = session.name || 'Untitled session';
+  piSessionNameValue.textContent = generatePiSessionName(sessions, session.path);
+  piSessionNameSuggestion.hidden = false;
+}
+
+$('#pi-regenerate-session-name').addEventListener('click', async (event) => {
+  if (!pendingPiSessionName) return;
+  if (pendingPiSessionName.path !== state.currentSessionPath || pendingPiSessionName.cwd !== elements.workspace.value) {
+    clearPiSessionNameSuggestion();
+    return;
+  }
   const button = event.currentTarget; button.disabled = true;
-  try { await suggestPiStaffName(pendingPiStaffNameSession.runId); }
+  try { await suggestPiSessionName(pendingPiSessionName.runId); }
   catch (error) { toast(error.message, 'error'); }
   finally { button.disabled = false; }
 });
 
-$('#pi-save-staff-name').addEventListener('click', async (event) => {
-  const session = pendingPiStaffNameSession;
+$('#pi-accept-session-name').addEventListener('click', async (event) => {
+  const session = pendingPiSessionName;
   if (!session) return;
+  if (session.path !== state.currentSessionPath || session.cwd !== elements.workspace.value) {
+    clearPiSessionNameSuggestion();
+    return;
+  }
   const button = event.currentTarget; button.disabled = true;
   try {
-    await apiJson(`/api/friday/pi-conversations/${encodeURIComponent(session.runId)}/profile`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        expertise: session.expertise || [], responsibilities: session.responsibilities || [],
-        repositories: session.repositories || [], capacity: session.capacity || 2,
-        displayName: piStaffNameValue.textContent,
-      }),
-    }, 'friday-pi-conversations');
-    pendingPiStaffNameSession = null;
-    piStaffNameSuggestion.hidden = true;
-    toast('Staff alias saved');
-    void refreshFridayPiConversations().catch(() => {});
+    await apiJson('/api/session/rename', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cwd: session.cwd, path: session.path, name: piSessionNameValue.textContent }),
+    }, 'session-action');
+    clearPiSessionNameSuggestion();
+    await loadSessions(session.cwd);
+    toast('Session renamed');
   } catch (error) { toast(error.message, 'error'); }
   finally { button.disabled = false; }
 });
@@ -2536,7 +2550,7 @@ elements.reset.addEventListener('click', async () => {
     state.history = []; state.historyTotal = 0; state.currentSessionPath = data.sessionPath; renderHistory([]);
     await Promise.all([loadModels(), loadThinkingLevels(), loadSessions(data.workspace)]);
     renderPiContextUsage((await apiJson('/api/status', {}, 'poll-status')).contextUsage);
-    await suggestPiStaffName(data.runId);
+    await suggestPiSessionName(data.runId);
     toast('New session ready');
   } catch (error) { if (!isAbort(error)) toast(error.message, 'error'); }
   finally {
@@ -2559,7 +2573,7 @@ function initializePi() {
       await loadSessions(elements.workspace.value, { quiet: true });
       const newRunId = sessionStorage.getItem('friday-new-pi-run-id');
       if (newRunId) {
-        await suggestPiStaffName(newRunId);
+        await suggestPiSessionName(newRunId);
         sessionStorage.removeItem('friday-new-pi-run-id');
       }
       const current = await apiJson('/api/status', {}, 'startup-status');

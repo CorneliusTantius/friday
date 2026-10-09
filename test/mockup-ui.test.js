@@ -16,16 +16,19 @@ const server = await readFile(new URL('../src/server.js', import.meta.url), 'utf
 const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
 const login = await readFile(new URL('../public/login.html', import.meta.url), 'utf8');
 
-test('new Pi sessions offer a generated staff alias that saves only on explicit user action', () => {
-  assert.match(html, /id="pi-staff-name-suggestion"[^>]*hidden/);
-  assert.match(html, /id="pi-regenerate-staff-name"[^>]*>Generate another/);
-  assert.match(html, /id="pi-save-staff-name"[^>]*>Save alias/);
+test('Pi staff names are session titles and generated names require explicit acceptance', () => {
+  assert.match(html, /id="pi-session-name-suggestion"[^>]*hidden/);
+  assert.match(html, /id="pi-session-current-name"/);
+  assert.match(html, /id="pi-regenerate-session-name"[^>]*>Generate another/);
+  assert.match(html, /id="pi-accept-session-name"[^>]*>Rename session/);
   assert.match(app, /sessionStorage\.setItem\('friday-new-pi-run-id', data\.runId\)/);
-  assert.match(app, /await suggestPiStaffName\(newRunId\)/);
-  assert.match(app, /apiJson\(`\/api\/friday\/pi-conversations\/\$\{encodeURIComponent\(session\.runId\)\}\/profile`/);
-  assert.match(app, /if \(!session \|\| session\.displayName\)/);
-  assert.match(sessionCards, /function generateStaffDisplayName\(sessions, excludeRunId = null\)/);
-  assert.match(sessionCards, /Generate suggestion/);
+  assert.match(app, /await suggestPiSessionName\(newRunId\)/);
+  assert.match(app, /window\.prompt\('Rename session \(suggested name\)', suggestion\)/);
+  assert.match(app, /apiJson\('\/api\/session\/rename'/);
+  assert.match(app, /JSON\.stringify\(\{ cwd: session\.cwd, path: session\.path, name: piSessionNameValue\.textContent \}\)/);
+  assert.match(app, /session\.path !== state\.currentSessionPath \|\| session\.cwd !== elements\.workspace\.value/);
+  assert.match(sessionCards, /function generatePiSessionName\(sessions, excludeSessionPath = null\)/);
+  assert.doesNotMatch(app, /displayName|staff-name-suggestion/);
 });
 
 test('public workspace UI contract has every feature, form, and shell integration', () => {
@@ -53,9 +56,8 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(css, /@media \(max-width:1000px\)[\s\S]*\.pi-layout,\.files-layout,\.notes-layout \{ display:block; \}/);
   assert.match(css, /@media \(max-width:1000px\)[\s\S]*\.pi-sidebar[^}]*width:min\(84vw,310px\)/);
   assert.match(sessionCards, /Edit staff profile/);
-  assert.match(sessionCards, /Expertise \(one per line\)/);
+  assert.match(sessionCards, /Expertise \(optional; one per line\)/);
   assert.match(sessionCards, /Responsibilities \(one per line\)/);
-  assert.match(sessionCards, /Repo affinity \(staff-fit metadata; one per line\)/);
   assert.match(sessionCards, /Workload: \$\{session\.workload\?\.openTasks/);
   assert.match(chat, /Friday · Task update/);
   const pollRefresh = app.slice(app.indexOf('async function pollHistory'), app.indexOf('function startPolling'));
@@ -145,14 +147,14 @@ test('Friday right sidebar uses 35% of desktop layout while retaining mobile dra
   assert.match(mobile, /\.friday-layout \{ display:block; \}/);
 });
 
-test('staff cards expose per-session repository visibility separately from repo affinity', () => {
+test('staff cards show repository visibility but never edit or display legacy repo affinity', () => {
   assert.match(app, /createFridayPiSessionCards/);
   assert.match(sessionCards, /Visible repositories/);
   assert.match(sessionCards, /session\.availableRepositories/);
   assert.match(sessionCards, /session\.visibleRepositories/);
   assert.match(sessionCards, /friday-repo-visibility/);
   assert.match(sessionCards, /not a filesystem sandbox/);
-  assert.match(sessionCards, /Repo affinity \(staff-fit metadata; one per line\)/);
+  assert.doesNotMatch(sessionCards, /Repo affinity|repositories: textLines/);
 });
 
 test('Friday sidebar groups scrollable conversations above tasks with expandable one-line details', () => {

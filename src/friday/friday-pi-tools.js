@@ -49,7 +49,6 @@ const profileAction = strictObject({
   action: Type.Literal('profile'), runId: UUID,
   expertise: Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { maxItems: 12 }),
   responsibilities: Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { maxItems: 12 }),
-  repositories: Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { maxItems: 12 }),
   capacity: Type.Integer({ minimum: 1, maximum: 8 }),
 });
 const manageActions = { create: createAction, rename: renameAction, delete: deleteAction, profile: profileAction };
@@ -61,7 +60,6 @@ const manageParameters = strictObject({
   name: Type.Optional(Type.String({ minLength: 1, maxLength: 100, description: 'Required only for rename.' })),
   expertise: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { maxItems: 12 })),
   responsibilities: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { maxItems: 12 })),
-  repositories: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { maxItems: 12 })),
   capacity: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
 });
 
@@ -81,18 +79,17 @@ export function createFridayPiTools({ listConversations, createSession, renameSe
   return [
     {
       name: 'pi_sessions', label: 'Pi sessions',
-      description: 'Read Pi conversations without changing them. Use action=list to inspect current-workspace sessions, optional user-set displayName aliases, their live status, and visibleRepositories (the app-provided repo context; not a filesystem sandbox). repositories is separate staff-fit metadata. action=status or action=read requires the exact runId from the list. Read returns at most 10 recent messages. A runId is never inferred; aliases are labels only, and duplicate/matching aliases require user clarification rather than a guess.',
+      description: 'Read Pi conversations without changing them. Use action=list to inspect current-workspace session names, expertise, responsibilities, workload, live status, and visibleRepositories (the app-provided repo context; not a filesystem sandbox). action=status or action=read requires the exact runId from the list. Read returns at most 10 recent messages. Never infer a runId from a session name; if a reference matches multiple sessions, ask which one.',
       parameters: sessionsParameters,
       async execute(_id, rawArgs) {
         const args = validateAction(sessionsActions, rawArgs, 'pi_sessions');
         if (args.action === 'list') {
           const conversations = await listConversations();
-          const visible = conversations.map(({ id, name, displayName, domain, purpose, modified, messageCount, runId, running, busy, queuedPrompts, expertise, responsibilities, repositories, visibleRepositories, capacity, workload, tasks }) => {
-            const visibleRepositoryList = Array.isArray(visibleRepositories) ? visibleRepositories : repositories || [];
+          const visible = conversations.map(({ id, name, domain, purpose, modified, messageCount, runId, running, busy, queuedPrompts, expertise, responsibilities, visibleRepositories, capacity, workload, tasks }) => {
             return {
-              id, name, displayName: displayName || null, domain, purpose, modified, messageCount, runId, running, busy, queuedPrompts,
-              expertise: expertise || [], responsibilities: responsibilities || [], repositories: repositories || [],
-              visibleRepositories: visibleRepositoryList, capacity: capacity ?? DEFAULT_STAFF_CAPACITY,
+              id, name, domain, purpose, modified, messageCount, runId, running, busy, queuedPrompts,
+              expertise: expertise || [], responsibilities: responsibilities || [],
+              visibleRepositories: visibleRepositories || [], capacity: capacity ?? DEFAULT_STAFF_CAPACITY,
               workload: workload || { openTasks: 0 }, tasks: tasks || [],
             };
           });
@@ -108,7 +105,7 @@ export function createFridayPiTools({ listConversations, createSession, renameSe
     },
     {
       name: 'pi_manage_session', label: 'Manage Pi session',
-      description: 'Create, rename, delete, or update the staff profile for a Pi session. Each action has its own authorization; profile updates require an explicit current-user request naming the exact session. Does not select or switch sessions. Delete is refused for current, linked, open, active, or queued sessions.',
+      description: 'Create, rename, delete, or update expertise, responsibilities, and workload capacity for a Pi session. Each action has its own authorization; profile updates require an explicit current-user request naming the exact session. Does not select or switch sessions. Delete is refused for current, linked, open, active, or queued sessions.',
       parameters: manageParameters,
       async execute(_id, rawArgs) {
         const args = validateAction(manageActions, rawArgs, 'pi_manage_session');
@@ -126,7 +123,7 @@ export function createFridayPiTools({ listConversations, createSession, renameSe
           const authorization = await getProfileAuthorizationContext();
           const updated = await updateProfile({
             runId: args.runId,
-            profile: { expertise: args.expertise, responsibilities: args.responsibilities, repositories: args.repositories, capacity: args.capacity },
+            profile: { expertise: args.expertise, responsibilities: args.responsibilities, capacity: args.capacity },
             ...authorization,
           });
           return result(updated == null ? 'Pi conversation not found.' : JSON.stringify(updated));

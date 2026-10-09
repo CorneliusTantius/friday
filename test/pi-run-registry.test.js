@@ -67,7 +67,7 @@ test('new runs default to two; legacy missing capacity stays unstored and config
   assert.equal(persisted.runs.find(({ id }) => id === configuredRunId).capacity, 5);
 });
 
-test('repository visibility defaults to all, persists per run, and preserves staff profile metadata', async () => {
+test('repository visibility defaults to all, persists per run, and profile saves preserve private legacy metadata', async () => {
   const { file } = await setup();
   const registry = createPiRunRegistry({ file });
   const firstRun = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/repo-a', sessionId: 'repo-a', name: 'Repo A' });
@@ -75,35 +75,23 @@ test('repository visibility defaults to all, persists per run, and preserves sta
   assert.equal((await registry.getRun(firstRun)).hiddenRepositories, undefined, 'legacy/unconfigured runs remain unstored and therefore default to all visible');
   const unconfigured = JSON.parse(await fs.readFile(file, 'utf8'));
   assert.ok(unconfigured.runs.every((run) => !Object.hasOwn(run, 'hiddenRepositories')), 'default listing does not rewrite a visibility value into old runs');
-  await registry.updateRunProfile(firstRun, { expertise: ['Node'], responsibilities: ['API'], repositories: ['affinity-repo'], capacity: 2 });
-  await registry.updateRunRepositoryVisibility(firstRun, ['hidden-repo']);
+  unconfigured.runs.find(({ id }) => id === firstRun).repositories = ['legacy-repo'];
+  unconfigured.runs.find(({ id }) => id === firstRun).displayName = 'Legacy alias';
+  await fs.writeFile(file, JSON.stringify(unconfigured));
 
   const restored = createPiRunRegistry({ file });
+  await restored.updateRunProfile(firstRun, {
+    expertise: ['Node'], responsibilities: ['API'], repositories: ['replacement-repo'], displayName: 'Replacement alias', capacity: 2,
+  });
+  await restored.updateRunRepositoryVisibility(firstRun, ['hidden-repo']);
   assert.deepEqual((await restored.getRun(firstRun)).hiddenRepositories, ['hidden-repo']);
-  assert.deepEqual((await restored.getRun(firstRun)).repositories, ['affinity-repo'], 'visibility changes do not rewrite profile affinity');
+  const saved = await restored.getRun(firstRun);
+  assert.deepEqual(saved.repositories, ['legacy-repo'], 'profile saves do not replace legacy repo-affinity metadata');
+  assert.equal(saved.displayName, 'Legacy alias', 'profile saves do not rewrite legacy aliases');
+  assert.equal(saved.name, 'Repo A', 'legacy aliases are not migrated into actual session titles');
   assert.equal((await restored.getRun(secondRun)).hiddenRepositories, undefined, 'visibility is isolated by run');
   await restored.updateRunRepositoryVisibility(firstRun, []);
   assert.deepEqual((await createPiRunRegistry({ file }).getRun(firstRun)).hiddenRepositories, [], 'rechecking all repos persists explicitly');
-});
-
-test('user-set staff display names persist per exact run and are not added to existing profiles', async () => {
-  const { file } = await setup();
-  const registry = createPiRunRegistry({ file });
-  const legacyId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/legacy-alias', name: 'Existing title' });
-  const namedId = await registry.ensureRun({ workspace: '/work', sessionPath: '/session/named-alias', name: 'Another title' });
-  const profile = { expertise: [], responsibilities: [], repositories: [], capacity: 2 };
-  await registry.updateRunProfile(legacyId, profile);
-  assert.equal((await registry.getRun(legacyId)).displayName, undefined);
-  await registry.updateRunProfile(namedId, { ...profile, displayName: 'Maya' });
-  const restored = createPiRunRegistry({ file });
-  assert.equal((await restored.getRun(namedId)).name, 'Another title', 'alias does not rename the conversation');
-  assert.equal((await restored.getRun(namedId)).displayName, 'Maya');
-  assert.equal((await restored.getRun(legacyId)).displayName, undefined, 'existing sessions receive no assigned aliases');
-  await restored.updateRunProfile(namedId, profile);
-  assert.equal((await createPiRunRegistry({ file }).getRun(namedId)).displayName, 'Maya', 'unrelated profile saves preserve the alias');
-  await restored.updateRunProfile(namedId, { ...profile, displayName: '' });
-  assert.equal((await createPiRunRegistry({ file }).getRun(namedId)).displayName, undefined, 'empty alias clears only this run’s alias');
-  assert.throws(() => restored.updateRunProfile(namedId, { ...profile, displayName: 'x'.repeat(61) }), /Invalid Pi staff display name/);
 });
 
 test('batch ensures preserve IDs and persist in one update', async () => {

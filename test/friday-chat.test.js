@@ -52,6 +52,10 @@ rl.on('line', line => {
  else if (req.type === 'get_available_thinking_levels') respond({ levels: ['off', 'low', 'high'] });
  else if (req.type === 'set_model') { model = { provider: req.provider, id: req.modelId, name: 'Alternate' }; respond({}); }
  else if (req.type === 'set_thinking_level') { thinkingLevel = req.level; respond({}); }
+ else if (req.type === 'set_session_name') {
+  fs.appendFileSync(sessionFile, JSON.stringify({ type: 'session_info', name: req.name }) + '\\n');
+  respond({});
+ }
  else if (req.type === 'prompt') {
   messages.push({ role: 'user', content: req.message });
   if (req.message === 'compaction summary test') messages.push({ role: 'compactionSummary', summary: 'The earlier implementation plan and decisions.', tokensBefore: 90000, timestamp: Date.now() });
@@ -149,15 +153,17 @@ rl.on('line', line => {
   assert.equal(selectedPiConversation.opening, false);
   const profileResponse = await request(`/api/friday/pi-conversations/${selectedPiConversation.runId}/profile`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expertise: ['Node.js'], responsibilities: ['API ownership'], repositories: ['friday'], capacity: 2 }),
+    body: JSON.stringify({ expertise: ['Node.js'], responsibilities: ['API ownership'], repositories: ['friday'], displayName: 'Legacy alias', capacity: 2 }),
   });
   assert.equal(profileResponse.status, 200);
   const profiledSessions = await (await request('/api/friday/pi-conversations')).json();
   const profiled = profiledSessions.sessions.find(({ runId }) => runId === selectedPiConversation.runId);
   assert.deepEqual(profiled.expertise, ['Node.js']);
   assert.deepEqual(profiled.responsibilities, ['API ownership']);
-  assert.deepEqual(profiled.repositories, ['friday']);
   assert.equal(profiled.capacity, 2);
+  assert.equal(Object.hasOwn(profiled, 'repositories'), false, 'legacy repo-affinity metadata is not exposed in staff listings');
+  assert.equal(Object.hasOwn(profiled, 'displayName'), false, 'legacy aliases are not exposed in staff listings');
+  assert.equal(profiled.name, selectedPiConversation.name, 'profile updates do not rename sessions');
   const visibilityUrl = `/api/friday/pi-conversations/${selectedPiConversation.runId}/repository-visibility`;
   const hideRepo = await request(visibilityUrl, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hiddenRepositories: ['repo-b'] }),
@@ -166,7 +172,7 @@ rl.on('line', line => {
   const afterHide = await (await request('/api/friday/pi-conversations')).json();
   const hiddenSession = afterHide.sessions.find(({ runId }) => runId === selectedPiConversation.runId);
   assert.deepEqual(hiddenSession.visibleRepositories, ['repo-a']);
-  assert.deepEqual(hiddenSession.repositories, ['friday'], 'visibility saves do not change staff-fit profile metadata');
+  assert.equal(Object.hasOwn(hiddenSession, 'repositories'), false, 'visibility listings do not expose legacy staff-fit metadata');
   assert.deepEqual(afterHide.sessions.find(({ id }) => id === 'legacy-flat').visibleRepositories, ['repo-a', 'repo-b'], 'visibility is isolated to the exact run');
   const recheckRepo = await request(visibilityUrl, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hiddenRepositories: [] }),
@@ -174,7 +180,20 @@ rl.on('line', line => {
   assert.equal(recheckRepo.status, 200);
   const afterRecheck = await (await request('/api/friday/pi-conversations')).json();
   assert.deepEqual(afterRecheck.sessions.find(({ runId }) => runId === selectedPiConversation.runId).visibleRepositories, ['repo-a', 'repo-b']);
-  assert.deepEqual(afterRecheck.sessions.find(({ runId }) => runId === selectedPiConversation.runId).repositories, ['friday']);
+  assert.equal(Object.hasOwn(afterRecheck.sessions.find(({ runId }) => runId === selectedPiConversation.runId), 'repositories'), false);
+
+  const renamedSession = await request('/api/session/rename', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cwd: piStatus.workspace, path: selectedPiConversation.path, name: 'Nova' }),
+  });
+  assert.equal(renamedSession.status, 200, 'an explicit user rename applies the suggestion to the actual session');
+  const renamed = await renamedSession.json();
+  assert.equal(renamed.name, 'Nova');
+  const afterRename = await (await request('/api/friday/pi-conversations')).json();
+  const renamedStaff = afterRename.sessions.find(({ runId }) => runId === selectedPiConversation.runId);
+  assert.equal(renamedStaff.name, 'Nova');
+  assert.equal(renamedStaff.runId, selectedPiConversation.runId, 'rename preserves exact session identity');
+  assert.equal(Object.hasOwn(renamedStaff, 'displayName'), false);
   assert.deepEqual(profiled.workload, { queued: 0, running: 0, reviewing: 0, unknown: 0, openTasks: 0 });
   const selectedPiResponse = await request('/api/session/select', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Friday-Session': 'friday-pi-status-test' },

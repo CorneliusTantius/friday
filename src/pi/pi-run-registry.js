@@ -141,12 +141,11 @@ export function createPiRunRegistry({ file, onRecovery = () => {} }) {
     updateRunProfile(runId, profile) {
       validRun(runId);
       if (!profile || typeof profile !== 'object' || Array.isArray(profile)) throw new TypeError('Invalid Pi staff profile');
-      for (const key of ['expertise', 'responsibilities', 'repositories']) {
+      for (const key of ['expertise', 'responsibilities']) {
         const values = profile[key];
         if (!Array.isArray(values) || values.length > 12 || values.some((item) => typeof item !== 'string' || !item.trim() || item.trim().length > 100)) throw new TypeError(`Invalid Pi profile ${key}`);
       }
       if (!Number.isInteger(profile.capacity) || profile.capacity < 1 || profile.capacity > 8) throw new TypeError('Invalid Pi profile capacity');
-      if (Object.hasOwn(profile, 'displayName') && (typeof profile.displayName !== 'string' || profile.displayName.trim().length > 60)) throw new TypeError('Invalid Pi staff display name');
       return mutate(() => {
         const run = runs.get(runId);
         if (!run) return null;
@@ -154,9 +153,7 @@ export function createPiRunRegistry({ file, onRecovery = () => {} }) {
           ...run,
           expertise: [...new Set(profile.expertise.map((item) => item.trim()))],
           responsibilities: [...new Set(profile.responsibilities.map((item) => item.trim()))],
-          repositories: [...new Set(profile.repositories.map((item) => item.trim()))],
           capacity: profile.capacity,
-          displayName: Object.hasOwn(profile, 'displayName') ? (profile.displayName.trim() || undefined) : run.displayName,
         };
         runs.set(runId, updated);
         return updated;

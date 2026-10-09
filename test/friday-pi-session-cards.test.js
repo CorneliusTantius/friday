@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createFridayPiSessionCards, fetchAndRenderCurrent, generateStaffDisplayName } from '../public/friday-pi-session-cards.js';
+import { createFridayPiSessionCards, fetchAndRenderCurrent, generatePiSessionName } from '../public/friday-pi-session-cards.js';
 
 class FakeElement {
   constructor(tagName) {
@@ -69,7 +69,7 @@ function find(root, predicate) {
 
 function session(runId, overrides = {}) {
   return {
-    id: runId, runId, name: runId, modified: 'today', messageCount: 1,
+    id: runId, runId, path: `/${runId}.jsonl`, cwd: '/work', name: runId, modified: 'today', messageCount: 1,
     expertise: ['Node'], responsibilities: ['API'], repositories: ['repo-a', 'repo-b'], capacity: 2,
     availableRepositories: ['repo-a', 'repo-b'], visibleRepositories: ['repo-a', 'repo-b'],
     workload: { openTasks: 0 }, tasks: [],
@@ -77,41 +77,36 @@ function session(runId, overrides = {}) {
   };
 }
 
-test('staff display-name suggestions avoid case-insensitive collisions and suffix safely when the pool is exhausted', () => {
-  assert.equal(generateStaffDisplayName([]), 'Nova');
-  assert.equal(generateStaffDisplayName([
-    session('one', { displayName: 'nOvA' }), session('two', { displayName: 'ATLAS' }),
+test('generated session-name suggestions collide against actual titles, ignoring case, and add safe suffixes', () => {
+  assert.equal(generatePiSessionName([]), 'Nova');
+  assert.equal(generatePiSessionName([
+    session('one', { name: 'nOvA' }), session('two', { name: 'ATLAS' }),
   ]), 'Echo');
-  assert.equal(generateStaffDisplayName([
-    ...['nova', 'ATLAS', 'Echo', 'IRIS', 'NOVA 2', 'Nova 3'].map((displayName, index) => session(`run-${index}`, { displayName })),
+  assert.equal(generatePiSessionName([
+    ...['nova', 'ATLAS', 'Echo', 'IRIS', 'NOVA 2', 'Nova 3'].map((name, index) => session(`run-${index}`, { name })),
   ]), 'Nova 4');
-  assert.equal(generateStaffDisplayName([session('current', { displayName: 'Nova' })], 'current'), 'Nova', 'the target session does not collide with its own name');
+  const current = session('current', { name: 'Nova' });
+  assert.equal(generatePiSessionName([current], current.path), 'Nova', 'suggesting for the current session ignores only its own title');
+  assert.equal(current.name, 'Nova', 'suggestions never rename a session');
 });
 
-test('session cards show a generated suggestion without saving or replacing the stored alias until explicit save', async () => {
+test('staff cards display the real session title and omit legacy alias/repo-affinity profile fields', () => {
   const documentRef = new FakeDocument();
   const container = documentRef.createElement('div');
-  let sessions = [session('run-a', { displayName: 'Existing alias' }), session('run-b', { displayName: 'nova' })];
-  const saves = [];
-  let cards;
-  cards = createFridayPiSessionCards({
+  const cards = createFridayPiSessionCards({
     container, documentRef, formatDate: (value) => value, onOpen() {}, async onSaveVisibility() {},
-    async onSaveProfile(current, profile) {
-      saves.push({ runId: current.runId, displayName: profile.displayName });
-      sessions = sessions.map((item) => item.runId === current.runId ? { ...item, displayName: profile.displayName } : item);
-    },
-    async onRefresh() { cards.render(sessions); }, toast() {},
+    async onSaveProfile() {}, async onRefresh() {}, toast() {},
   });
-  cards.render(sessions);
+  cards.render([session('run-a', { name: 'Build task', displayName: 'Old alias', repositories: ['legacy-repo'] })]);
   const card = container.children[0];
-  const nameInput = find(card, (node) => node.tagName === 'input' && node.name === 'displayName');
-  const generate = find(card, (node) => node.tagName === 'button' && node.textContent === 'Generate suggestion');
-  await generate.dispatch('click');
-  assert.equal(nameInput.value, 'Atlas');
-  assert.deepEqual(saves, [], 'generating a suggestion is local only');
-  assert.equal(sessions[0].displayName, 'Existing alias', 'an existing alias remains stored until explicit save');
-  await find(card, (node) => node.tagName === 'form' && node.className === 'friday-staff-profile-form').dispatch('submit');
-  assert.deepEqual(saves, [{ runId: 'run-a', displayName: 'Atlas' }]);
+  assert.equal(find(card, (node) => node.className === 'session-title').textContent, 'Build task');
+  assert.doesNotMatch(card.textContent, /Old alias|legacy-repo|Repo affinity/);
+  assert.equal(find(card, (node) => node.name === 'displayName'), null);
+  assert.equal(find(card, (node) => node.name === 'repositories'), null);
+  assert.ok(find(card, (node) => node.name === 'expertise'));
+  assert.ok(find(card, (node) => node.name === 'responsibilities'));
+  assert.match(card.textContent, /Workload: 0\/2/);
+  assert.match(card.textContent, /not a filesystem sandbox/);
 });
 
 test('session cards retain expansion, focus and unsaved controls across polls and keyed updates', async () => {
@@ -178,35 +173,6 @@ test('session cards retain expansion, focus and unsaved controls across polls an
   assert.deepEqual(visibilitySaves[1], { runId: 'run-a', hidden: [] }, 'rechecking persists visibility for the exact run');
   assert.equal(repoB.checked, true);
   assert.equal(find(container.children[1], (node) => node.tagName === 'input' && node.value === 'repo-b').checked, true);
-});
-
-test('staff aliases save by exact runId, persist on refresh, and fall back to the session title', async () => {
-  const documentRef = new FakeDocument();
-  const container = documentRef.createElement('div');
-  let sessions = [session('run-a', { name: 'Build task', displayName: null })];
-  const saved = [];
-  let cards;
-  cards = createFridayPiSessionCards({
-    container, documentRef, formatDate: (value) => value, onOpen() {},
-    async onSaveVisibility() {},
-    async onSaveProfile(current, profile) {
-      saved.push({ runId: current.runId, displayName: profile.displayName });
-      sessions = sessions.map((item) => item.runId === current.runId ? { ...item, displayName: profile.displayName || null } : item);
-    },
-    async onRefresh() { cards.render(sessions); }, toast() {},
-  });
-  cards.render(sessions);
-  const card = container.children[0];
-  assert.equal(find(card, (node) => node.className === 'session-title').textContent, 'Build task', 'missing alias falls back to actual session title');
-  const alias = find(card, (node) => node.tagName === 'input' && node.name === 'displayName');
-  alias.value = 'Maya'; await alias.dispatch('input');
-  const form = find(card, (node) => node.tagName === 'form' && node.className === 'friday-staff-profile-form');
-  await form.dispatch('submit');
-  assert.deepEqual(saved, [{ runId: 'run-a', displayName: 'Maya' }]);
-  assert.equal(find(card, (node) => node.className === 'session-title').textContent, 'Maya');
-  assert.match(card.textContent, /Session: Build task/);
-  cards.render([session('run-b', { name: 'Another task', displayName: null })]);
-  assert.equal(find(container.children[0], (node) => node.className === 'session-title').textContent, 'Another task', 'another exact session remains unnamed');
 });
 
 test('a poll response started before a save cannot render over the newer state', async () => {

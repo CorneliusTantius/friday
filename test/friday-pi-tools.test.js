@@ -13,8 +13,8 @@ function setup() {
   const contexts = { create: [], rename: [], profile: [], delete: [], stop: [] };
   const tools = createFridayPiTools({
     listConversations: async () => { calls.list.push(true); return [
-      { id: 's1', name: 'Build task', displayName: 'Maya', domain: 'platform', purpose: 'maintain platform', modified: 'today', messageCount: 4, runId: id, running: true, busy: false, queuedPrompts: 0, expertise: ['Node.js'], responsibilities: ['API'], repositories: ['repo-a', 'repo-b'], visibleRepositories: ['repo-a'], capacity: 2, workload: { openTasks: 1 }, tasks: [{ id: taskId, label: 'Add export', status: 'running' }], hiddenField: 'not exposed' },
-      { id: 's2', name: 'Unprofiled', displayName: 'Maya', modified: 'today', messageCount: 0, runId: '123e4567-e89b-12d3-a456-426614174004' },
+      { id: 's1', name: 'Build task', displayName: 'Legacy alias', domain: 'platform', purpose: 'maintain platform', modified: 'today', messageCount: 4, runId: id, running: true, busy: false, queuedPrompts: 0, expertise: ['Node.js'], responsibilities: ['API'], repositories: ['legacy-repo'], visibleRepositories: ['repo-a'], capacity: 2, workload: { openTasks: 1 }, tasks: [{ id: taskId, label: 'Add export', status: 'running' }], hiddenField: 'not exposed' },
+      { id: 's2', name: 'Unprofiled', modified: 'today', messageCount: 0, runId: '123e4567-e89b-12d3-a456-426614174004' },
     ]; },
     getRunStatus: async (runId) => { calls.status.push(runId); return { runId, exists: false, opening: false, workspace: '/other-workspace', running: false }; },
     readConversation: async (value) => { calls.read.push(value); return { runId: value.runId, messages: [{ role: 'assistant', content: 'Pi reply' }] }; },
@@ -48,8 +48,8 @@ test('Friday exposes five Pi tools, removes agent-facing wait, and keeps actions
   assert.equal(tools[1].parameters.properties.action.anyOf.length, 4);
 
   assert.deepEqual(await invoke(tools[0], { action: 'list' }), text(JSON.stringify([
-    { id: 's1', name: 'Build task', displayName: 'Maya', domain: 'platform', purpose: 'maintain platform', modified: 'today', messageCount: 4, runId: id, running: true, busy: false, queuedPrompts: 0, expertise: ['Node.js'], responsibilities: ['API'], repositories: ['repo-a', 'repo-b'], visibleRepositories: ['repo-a'], capacity: 2, workload: { openTasks: 1 }, tasks: [{ id: taskId, label: 'Add export', status: 'running' }] },
-    { id: 's2', name: 'Unprofiled', displayName: 'Maya', modified: 'today', messageCount: 0, runId: '123e4567-e89b-12d3-a456-426614174004', expertise: [], responsibilities: [], repositories: [], visibleRepositories: [], capacity: 2, workload: { openTasks: 0 }, tasks: [] },
+    { id: 's1', name: 'Build task', domain: 'platform', purpose: 'maintain platform', modified: 'today', messageCount: 4, runId: id, running: true, busy: false, queuedPrompts: 0, expertise: ['Node.js'], responsibilities: ['API'], visibleRepositories: ['repo-a'], capacity: 2, workload: { openTasks: 1 }, tasks: [{ id: taskId, label: 'Add export', status: 'running' }] },
+    { id: 's2', name: 'Unprofiled', modified: 'today', messageCount: 0, runId: '123e4567-e89b-12d3-a456-426614174004', expertise: [], responsibilities: [], visibleRepositories: [], capacity: 2, workload: { openTasks: 0 }, tasks: [] },
   ])));
   assert.deepEqual(calls.list, [true]);
   assert.deepEqual(await invoke(tools[0], { action: 'status', runId: id }), text({ runId: id, exists: false, opening: false, workspace: '/other-workspace', running: false }));
@@ -80,7 +80,8 @@ test('discriminated query and management actions reject invalid, mixed, and extr
     { action: 'rename', runId: id, name: 'new-name', purpose: 'extra' },
     { action: 'delete', runId: id, name: 'extra' },
     { action: 'profile', runId: id },
-    { action: 'profile', runId: id, expertise: [], responsibilities: [], repositories: [], capacity: 9 },
+    { action: 'profile', runId: id, expertise: [], responsibilities: [], capacity: 9 },
+    { action: 'profile', runId: id, expertise: [], responsibilities: [], capacity: 2, repositories: [] },
   ]) await assert.rejects(invoke(manage, invalid), /Invalid pi_manage_session parameters/);
   assert.deepEqual(calls.create, []);
   assert.deepEqual(calls.rename, []);
@@ -94,7 +95,7 @@ test('manage actions preserve distinct current-user authorization contexts and n
   const manage = tools[1];
   assert.deepEqual(await invoke(manage, { action: 'create', purpose: 'this task', domain: 'platform' }), text({ runId: id, name: 'this task', workspace: '/workspace' }));
   assert.deepEqual(await invoke(manage, { action: 'rename', runId: id, name: 'friday-ui' }), text({ runId: id, previousName: 'Build task', name: 'friday-ui' }));
-  const profile = { expertise: ['Node.js'], responsibilities: ['API'], repositories: ['friday'], capacity: 2 };
+  const profile = { expertise: ['Node.js'], responsibilities: ['API'], capacity: 2 };
   assert.deepEqual(await invoke(manage, { action: 'profile', runId: id, ...profile }), text({ runId: id, ...profile }));
   assert.deepEqual(await invoke(manage, { action: 'delete', runId: id }), text({ deleted: true, runId: id }));
   assert.deepEqual(calls.create, [{ purpose: 'this task', domain: 'platform', userMessage: 'Create a new Pi session for this task.', previousAssistantMessage: '' }]);
