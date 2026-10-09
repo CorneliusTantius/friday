@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createFridayChat } from '../public/friday-chat.js';
 
+class FakeHTMLCollection {
+  constructor(items) {
+    this.items = items;
+    items.forEach((item, index) => { this[index] = item; });
+  }
+  get length() { return this.items.length; }
+  item(index) { return this.items[index] || null; }
+  [Symbol.iterator]() { return this.items[Symbol.iterator](); }
+}
+
 class FakeElement {
   constructor(id = '') {
     this.id = id;
@@ -102,7 +112,7 @@ function makeHistory(count, prefix = 'Message') {
 }
 
 function treeText(element) {
-  return [element.textContent, ...element.children.map(treeText)].join(' ');
+  return [element.textContent, ...Array.from(element.children, treeText)].join(' ');
 }
 
 test('Friday chat polls idle task states, scrolls on entry, and preserves scroll and task details during updates', async (t) => {
@@ -262,7 +272,11 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
   const idleTaskBoard = elements.get('friday-task-board');
   assert.equal(elements.get('friday-task-panel').hidden, false, 'idle status polling reveals the task panel');
   assert.match(treeText(idleTaskBoard), /Idle task · queued/, 'queued task state renders before the transcript request resolves');
-  idleTaskBoard.children[0].children.find((child) => child.className === 'friday-task-details').open = true;
+  const idleTaskRow = idleTaskBoard.children[0];
+  idleTaskRow.children = new FakeHTMLCollection(Array.from(idleTaskRow.children));
+  assert.equal(Array.isArray(idleTaskRow.children), false, 'task rows expose a non-array HTMLCollection-like children list');
+  assert.equal(typeof idleTaskRow.children.some, 'undefined', 'HTMLCollection does not provide Array.some');
+  Array.from(idleTaskRow.children).find((child) => child.className === 'friday-task-details').open = true;
   idleTaskBoard.scrollTop = 24;
   taskHistory.resolve(historyResponse(historyRequests.at(-1)));
   await new Promise((resolve) => setImmediate(resolve));
@@ -278,7 +292,7 @@ test('Friday chat polls idle task states, scrolls on entry, and preserves scroll
     assert.match(treeText(idleTaskBoard), new RegExp(`Idle task · ${status}`), `${status} task state renders from idle polling`);
     const statusLabels = { queued: 'Pi task queued', running: 'Pi is working', reviewing: 'Friday is reviewing', completed: 'Task complete' };
     assert.match(elements.get('friday-status').title, new RegExp(`${statusLabels[status]}: Idle task`), `${status} status title updates before transcript history`);
-    assert.equal(idleTaskBoard.children[0].children.find((child) => child.className === 'friday-task-details').open, true, 'status updates preserve the expanded task details');
+    assert.equal(Array.from(idleTaskBoard.children[0].children).find((child) => child.className === 'friday-task-details').open, true, 'status updates preserve the expanded task details');
     assert.equal(idleTaskBoard.scrollTop, 24, 'status updates preserve task-board scroll');
   };
   await pollIdleTaskState('running');

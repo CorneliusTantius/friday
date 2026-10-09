@@ -162,7 +162,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
     taskBoardRevision = revision;
     const scrollTop = taskBoard.scrollTop;
     const expanded = new Set(Array.from(taskBoard.children)
-      .filter((row) => row.dataset.taskId && row.children.some((child) => child.className === 'friday-task-details' && child.open))
+      .filter((row) => row.dataset.taskId && Array.from(row.children).some((child) => child.className === 'friday-task-details' && child.open))
       .map((row) => row.dataset.taskId));
     taskBoard.replaceChildren();
     for (const task of visible) {
