@@ -8,6 +8,8 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
   const status = document.querySelector('#friday-status');
   const taskBoard = document.querySelector('#friday-task-board');
   const taskPanel = document.querySelector('#friday-task-panel');
+  const chatQueue = document.querySelector('#friday-chat-queue');
+  const stopButton = document.querySelector('#friday-stop');
   const contextUsage = document.querySelector('#friday-context-usage');
   const contextProgress = document.querySelector('#friday-context-progress');
   const contextLabel = document.querySelector('#friday-context-label');
@@ -42,7 +44,8 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
   let history = [];
   let historyLoaded = false;
   let historySessionId = null;
-  let optimistic = null;
+  let optimistic = [];
+  let optimisticSequence = 0;
   let busy = false;
   let canAbort = false;
   let stopping = false;
@@ -62,24 +65,51 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
   let reachable = false;
   let scrollToLatestOnVisibleRender = false;
 
+  function renderChatQueue() {
+    if (!chatQueue) return;
+    const visible = optimistic.filter((item) => !['completed', 'cancelled'].includes(item.status));
+    chatQueue.hidden = visible.length === 0;
+    chatQueue.replaceChildren();
+    for (const item of visible) {
+      const row = document.createElement('div');
+      row.className = `friday-chat-queue-row ${item.status}`;
+      const description = document.createElement('span');
+      const states = { sending: 'Sending…', queued: 'Queued', running: 'Friday is responding', failed: `Could not send: ${item.error || 'unknown error'}` };
+      const state = item.status === 'queued' && item.position ? `Queued · ${item.position}` : states[item.status] || 'Queued';
+      description.textContent = `${state} · ${item.content}`;
+      row.append(description);
+      if (item.status === 'queued' && item.id) {
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'secondary';
+        cancel.textContent = 'Cancel queued message';
+        cancel.setAttribute('aria-label', `Cancel queued message: ${item.content}`);
+        cancel.addEventListener('click', () => { void cancelQueuedMessage(item); });
+        row.append(cancel);
+      }
+      if (item.status === 'failed') {
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.className = 'secondary';
+        dismiss.textContent = 'Dismiss';
+        dismiss.addEventListener('click', () => { optimistic = optimistic.filter((entry) => entry !== item); renderChatQueue(); });
+        row.append(dismiss);
+      }
+      chatQueue.append(row);
+    }
+  }
+
   function updateControls() {
-    const inputDisabled = loading || busy || configuring;
+    const inputDisabled = loading || configuring;
     if (input.disabled !== inputDisabled) input.disabled = inputDisabled;
     const stopAvailable = canAbort && !stopping && !loading && !configuring;
-    const sendDisabled = stopAvailable ? false : inputDisabled || !input.value.trim();
+    const sendDisabled = inputDisabled || !input.value.trim();
     if (send.disabled !== sendDisabled) send.disabled = sendDisabled;
-    const sendMode = stopAvailable ? 'stop' : 'send';
-    if (send.dataset.mode !== sendMode) {
-      send.dataset.mode = sendMode;
-      send.innerHTML = stopAvailable
-        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>'
-        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-5 14-2.5-5.5L5 12Z"/></svg>';
-    }
-    send.classList.toggle('stop', stopAvailable);
-    const sendLabel = stopAvailable ? 'Stop Friday response' : 'Send message to Friday';
+    stopButton.hidden = !stopAvailable;
+    stopButton.disabled = !stopAvailable;
+    const sendLabel = 'Send message to Friday';
     if (send.getAttribute('aria-label') !== sendLabel) send.setAttribute('aria-label', sendLabel);
-    const sendTitle = stopAvailable ? 'Stop response' : 'Send message';
-    if (send.title !== sendTitle) send.title = sendTitle;
+    if (send.title !== 'Send message') send.title = 'Send message';
     const modelDisabled = loading || busy || configuring || !model.options.length;
     const thinkingDisabled = loading || busy || configuring || !thinking.options.length;
     if (model.disabled !== modelDisabled) model.disabled = modelDisabled;
@@ -98,6 +128,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
       : statusText;
     if (status.title !== statusTitle) status.title = statusTitle;
     renderTaskBoard();
+    renderChatQueue();
   }
 
   function reviewStatusText(task) {
@@ -346,7 +377,9 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
       flushOtherRecords();
     });
     flushPiGroup();
-    if (optimistic) blocks.push({ type: 'message', key: 'message:optimistic', message: { role: 'user', content: optimistic.content } });
+    optimistic.forEach((item) => {
+      if (item.status !== 'failed') blocks.push({ type: 'message', key: `message:optimistic:${item.localId}`, message: { role: 'user', content: item.content } });
+    });
     return blocks;
   }
 
@@ -500,14 +533,27 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
       announcement.textContent = `Friday: ${latestReply}`;
     }
     const userMessages = history.filter((item) => item.role === 'user');
-    if (optimistic && userMessages.length > optimistic.after && userMessages[optimistic.after]?.content === optimistic.content) {
-      optimistic = null;
-    }
+    optimistic = optimistic.filter((item) => {
+      if (item.status === 'failed') return true;
+      if (userMessages.length > item.after && userMessages[item.after]?.content === item.content) return false;
+      return true;
+    });
     if (runtime) {
       busy = runtime.busy;
       delegatedTask = runtime.delegatedTask || null;
       delegatedTasks = Array.isArray(runtime.tasks) ? runtime.tasks : delegatedTask ? [delegatedTask] : [];
       canAbort = runtime.canAbort === true;
+      const jobs = new Map((Array.isArray(runtime.chatQueue) ? runtime.chatQueue : []).map((job) => [job.id, job]));
+      optimistic = optimistic.filter((item) => {
+        if (!item.id) return true;
+        const job = jobs.get(item.id);
+        if (!job) return true;
+        item.status = job.status;
+        item.position = job.position;
+        item.error = job.error || null;
+        if (['completed', 'cancelled'].includes(job.status)) return false;
+        return true;
+      });
       applyState(runtime);
       renderContextUsage(runtime.contextUsage);
     }
@@ -656,11 +702,21 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
     }
   }
 
-  send.addEventListener('click', (event) => {
-    if (!canAbort) return;
-    event.preventDefault();
-    void abortTurn();
-  });
+  async function cancelQueuedMessage(item) {
+    if (!item.id || item.status !== 'queued') return;
+    try {
+      await apiJson(`/api/friday/chat/${item.id}/cancel`, { method: 'POST' });
+      optimistic = optimistic.filter((entry) => entry !== item);
+      render();
+      renderChatQueue();
+      await sync({ withStatus: true });
+    } catch (error) {
+      if (!isAbort(error)) toast(error.message, 'error');
+      try { await sync({ withStatus: true }); } catch { reachable = false; updateControls(); }
+    }
+  }
+
+  stopButton.addEventListener('click', () => { void abortTurn(); });
 
   input.addEventListener('input', resizeInput);
   input.addEventListener('keydown', (event) => {
@@ -670,26 +726,27 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
   });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (canAbort) { await abortTurn(); return; }
     const message = input.value.trim();
-    if (!message || busy || loading) return;
-    optimistic = { content: message, after: history.filter((item) => item.role === 'user').length };
+    if (!message || loading || configuring) return;
+    const item = { localId: ++optimisticSequence, content: message, after: history.filter((entry) => entry.role === 'user').length + optimistic.length, status: 'sending' };
+    optimistic.push(item);
     input.value = '';
     resizeInput();
     render();
     messages.scrollTop = messages.scrollHeight;
-    busy = true;
-    canAbort = true;
     updateControls();
     try {
-      await apiJson('/api/friday/chat', {
+      const response = await apiJson('/api/friday/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message }),
       });
+      item.id = response.id;
+      item.status = response.status || 'queued';
+      item.position = response.position;
+      renderChatQueue();
     } catch (error) {
-      // A failed request is not an accepted message, even if history cannot be reloaded.
-      if (optimistic?.content === message) optimistic = null;
+      optimistic = optimistic.filter((entry) => entry !== item);
       render();
       if (!input.value) input.value = message;
       resizeInput();
@@ -697,7 +754,7 @@ export function createFridayChat({ apiJson, renderMarkdown, toast, onHistory, on
     } finally {
       try { await sync({ withStatus: true }); }
       catch { reachable = false; updateControls(); }
-      schedulePoll();
+      schedulePoll(0);
       onHistory?.();
       input.focus();
     }

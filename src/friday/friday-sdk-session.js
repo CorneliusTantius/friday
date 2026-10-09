@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
@@ -63,7 +63,6 @@ export class FridaySdkSession extends EventEmitter {
     this.socialControl = socialControl;
     this.piToolNames = piToolNames ? new Set(piToolNames) : null;
     this.reviewMode = reviewMode;
-    this.sessionFileVersion = null;
     this.model = model;
     this.thinkingLevel = thinkingLevel;
     this.modelConfigured = model !== undefined;
@@ -78,6 +77,10 @@ export class FridaySdkSession extends EventEmitter {
     this.activeUserMessage = null;
     this.modelRefreshIntervalMs = modelRefreshIntervalMs;
     this.modelRefreshTimer = null;
+    this.sessionFileVersion = null;
+    this.chatJobs = new Map();
+    this.chatQueue = [];
+    this.drainingChatQueue = false;
   }
 
   async start() {
@@ -208,6 +211,78 @@ export class FridaySdkSession extends EventEmitter {
     if (!this.canAbort || !this.session) return false;
     await this.session.abort();
     return true;
+  }
+
+  enqueueChat(message, { conversationId = this.currentSessionId, beforeRun, onComplete } = {}) {
+    const job = { id: randomUUID(), message, conversationId, beforeRun, onComplete, status: 'queued', error: null };
+    this.chatJobs.set(job.id, job);
+    this.chatQueue.push(job);
+    this.#emitChatQueueStatus();
+    void this.#drainChatQueue();
+    return this.#chatJobView(job);
+  }
+
+  cancelQueuedChat(id) {
+    const job = this.chatJobs.get(id);
+    if (!job || job.status !== 'queued') return false;
+    job.status = 'cancelled';
+    this.chatQueue = this.chatQueue.filter((queued) => queued !== job);
+    this.#emitChatQueueStatus();
+    return true;
+  }
+
+  getChatQueue() {
+    return [...this.chatJobs.values()].map((job) => this.#chatJobView(job));
+  }
+
+  #chatJobView(job) {
+    return {
+      id: job.id,
+      status: job.status,
+      position: job.status === 'queued' ? this.chatQueue.indexOf(job) + 1 : null,
+      ...(job.error ? { error: job.error } : {}),
+    };
+  }
+
+  #emitChatQueueStatus() {
+    this.emit('chat_queue', this.getChatQueue());
+    while (this.chatJobs.size > 100) {
+      const oldest = [...this.chatJobs.values()].find((job) => !['queued', 'running'].includes(job.status));
+      if (!oldest) break;
+      this.chatJobs.delete(oldest.id);
+    }
+  }
+
+  async #drainChatQueue() {
+    if (this.drainingChatQueue) return;
+    this.drainingChatQueue = true;
+    try {
+      while (this.chatQueue.length) {
+        const job = this.chatQueue[0];
+        try {
+          await job.beforeRun?.();
+          if (job.status !== 'queued' || this.chatQueue[0] !== job) continue;
+          await this.start();
+          if (job.conversationId !== this.currentSessionId) throw new Error('Friday conversation changed before the queued message started');
+          this.chatQueue.shift();
+          job.status = 'running';
+          this.#emitChatQueueStatus();
+          const reply = await this.chat(job.message);
+          await job.onComplete?.(reply);
+          job.status = 'completed';
+        } catch (error) {
+          if (job.status !== 'cancelled') {
+            this.chatQueue = this.chatQueue.filter((queued) => queued !== job);
+            job.status = 'failed';
+            job.error = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+          }
+        }
+        this.#emitChatQueueStatus();
+      }
+    } finally {
+      this.drainingChatQueue = false;
+      if (this.chatQueue.length) void this.#drainChatQueue();
+    }
   }
 
   async chat(message) {

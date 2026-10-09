@@ -82,6 +82,7 @@
               </div>
             </header>
             <section id="friday-messages" class="messages" aria-label="Friday conversation"></section>
+            <section id="friday-chat-queue" class="friday-chat-queue" aria-label="Queued Friday messages" role="status" aria-live="polite" hidden></section>
             <div id="friday-announcement" class="sr-only" role="status" aria-live="polite"></div>
             <form id="friday-form" class="composer">
               <label class="sr-only" for="friday-message">Message Friday</label>
@@ -96,9 +97,14 @@
                     <span class="context-usage-label">Context</span><progress id="friday-context-progress" max="100" value="0" aria-label="Friday context-window usage"></progress><span id="friday-context-label">Unavailable</span>
                   </div>
                 </div>
-                <button id="friday-send" class="send-button" type="submit" aria-label="Send message to Friday">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-5 14-2.5-5.5L5 12Z"/></svg>
-                </button>
+                <div class="friday-composer-actions">
+                  <button id="friday-stop" class="send-button stop" type="button" aria-label="Stop Friday response" title="Stop response" hidden>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10H7z"/></svg>
+                  </button>
+                  <button id="friday-send" class="send-button" type="submit" aria-label="Send message to Friday">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-5 14-2.5-5.5L5 12Z"/></svg>
+                  </button>
+                </div>
               </div>
             </form>
           </div>

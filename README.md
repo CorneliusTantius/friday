@@ -32,7 +32,7 @@ The coding Pi agent defaults to `~/.friday/workspace/` unless a workspace prefer
 npm run dev
 ```
 
-For user-requested Friday changes, run relevant tests, inspect the final diff, then commit and push only the scoped changes unless the user says otherwise. Preserve unrelated working-tree changes. Do not deploy, restart the service, or bypass review/authorization as part of this preference. This preference applies only to direct user requests; background review tasks and events do not authorize Git operations.
+For user-requested Friday changes, validate and inspect the final diff, then commit to `main` and push to `origin/main` unless the user specifies another workflow. Preserve unrelated working-tree changes by default; when the user explicitly asks to integrate all current Friday changes, review and test them, include coherent changes, and exclude secrets, generated artifacts, and unreviewed broken work. Do not force-push, deploy, restart the service, or bypass review/authorization as part of this preference. This preference applies only to direct user requests; background review tasks and events do not authorize Git operations.
 
 ## API
 
@@ -40,7 +40,7 @@ For user-requested Friday changes, run relevant tests, inspect the final diff, t
 - `GET /` — authenticated web harness
 - `GET /healthz` — unauthenticated minimal health check
 - `GET /api/status` — active workspace, model, and Pi state
-- `GET /api/friday/status`, `GET /api/friday/history`, `POST /api/friday/chat`, `POST /api/friday/abort` — Friday conversation and interrupt control
+- `GET /api/friday/status`, `GET /api/friday/history`, `POST /api/friday/chat` (queues and returns `202`), `POST /api/friday/chat/:id/cancel` (queued items only), `POST /api/friday/abort` — Friday conversation queue and interrupt control
 - `GET /api/friday/sessions`, `POST /api/friday/sessions`, `POST /api/friday/sessions/:id/open`, `PATCH /api/friday/sessions/:id`, `DELETE /api/friday/sessions/:id` — list, create, open, rename, and delete Friday conversations
 - `GET /api/friday/pi-conversations` — list Pi conversations with stable run IDs and runtime status
 - `GET /api/friday/models`, `POST /api/friday/model` — list and select Friday's model

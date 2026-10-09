@@ -160,6 +160,10 @@ svg { display: block; width: 1.15rem; height: 1.15rem; fill: none; stroke: curre
 .friday-staff-profile-form { display:grid; gap:.5rem; margin-top:.5rem; }
 .friday-staff-profile-form label { display:grid; gap:.2rem; color:var(--muted); font-size:11px; }
 .friday-staff-profile-form textarea,.friday-staff-profile-form input { width:100%; min-width:0; font-size:12px; }
+.friday-repo-visibility > p { margin:.4rem 0; color:var(--muted); font-size:10px; line-height:1.4; }
+.friday-repo-visibility-form { display:grid; gap:.35rem; margin-top:.45rem; }
+.friday-repo-visibility-item { display:flex; align-items:center; gap:.45rem; overflow-wrap:anywhere; }
+.friday-repo-visibility-item input { width:auto; flex:none; }
 .friday-pi-sidebar > .session-list { flex:1 1 0; min-height:5rem; }
 .friday-task-panel { display:flex; min-height:5rem; max-height:42%; flex:0 1 42%; flex-direction:column; gap:.4rem; overflow:hidden; border-top:1px solid var(--border); padding-top:.55rem; }
 .friday-task-panel[hidden] { display:none; }
@@ -335,6 +339,12 @@ h2 { font-size: 14px; }
 .compaction-summary-body > * + * { margin-top: .55rem; }
 
 .jump-latest { position: absolute; z-index: 3; right: clamp(1.2rem,4vw,3rem); bottom: 8rem; border: 1px solid var(--border-strong); border-radius: 99px; background: var(--surface-3); box-shadow: var(--shadow); color: var(--text-2); cursor: pointer; padding: .42rem .7rem; font-size: 12px; }
+.friday-chat-queue { display:grid; gap:6px; max-height:150px; overflow-y:auto; margin:0 0 8px; }
+.friday-chat-queue-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 9px; border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--muted); font-size:11px; }
+.friday-chat-queue-row span { min-width:0; overflow-wrap:anywhere; }
+.friday-chat-queue-row.failed { color:var(--red); }
+.friday-chat-queue-row button { flex:0 0 auto; min-height:30px; padding:4px 8px; font-size:10px; }
+.friday-composer-actions { display:flex; gap:6px; }
 .composer { flex: 0 0 auto; border: 1px solid var(--border-strong); border-radius: 8px; background: #141b1e; box-shadow: 0 12px 44px rgba(0,0,0,.2), inset 0 1px rgba(255,255,255,.025); padding: .7rem; transition: border-color .18s ease, box-shadow .18s ease; }
 .composer:focus-within { border-color: rgba(114,217,229,.32); }
 textarea { display: block; width: 100%; min-height: 2rem; max-height: 12rem; resize: none; border: 0; background: transparent; padding: .28rem .35rem .65rem; line-height: 1.5; }
@@ -640,13 +650,9 @@ select:focus-visible, textarea:focus-visible { outline:2px solid var(--accent); 
 .file-preview,.app { padding-inline:20px; }
 .file-preview .feature-header { gap:12px; }.file-preview .feature-header p { white-space:normal; overflow-wrap:anywhere; }
 .context-sidebar { background:#10161a; padding:16px 12px; gap:12px; }
-.friday-repo-visibility > p { margin:.4rem 0; color:var(--muted); font-size:10px; line-height:1.4; }
-.friday-repo-visibility-form { display:grid; gap:.35rem; margin-top:.45rem; }
-.friday-repo-visibility-item { display:flex; align-items:center; gap:.45rem; overflow-wrap:anywhere; }
-.friday-repo-visibility-item input { width:auto; flex:none; }
 .context-heading,.panel-heading { font:10px var(--mono); letter-spacing:1px; }
 .friday-layout { grid-template-columns:220px minmax(400px,1fr) minmax(320px,35%); }
-.pi-layout { grid-template-columns:240px minmax(0,1fr); }
+.pi-layout { grid-template-columns:260px minmax(0,1fr); }
 .files-layout,.notes-layout { grid-template-columns:220px minmax(0,1fr); }
 .app { width:100%; max-width:none; }.header { min-height:76px; }
 .header h1 { font-size:19px; }.header-title>div { min-width:0; }
@@ -769,7 +775,7 @@ progress { color:var(--accent); border:0; border-radius:4px; overflow:hidden; ba
   .feature-page { padding:24px 20px; }.app-topbar { padding-inline:20px; }.shell-search-trigger { width:210px; }
   .dashboard-hero { padding:20px; }.dashboard-metrics { gap:8px; }.dashboard-metric { padding:12px 10px; }
   .dashboard-columns,.dashboard-stack { gap:14px; }.dashboard-agent-row { padding-inline:14px; gap:5px 7px; }
-  .files-layout,.notes-layout,.pi-layout { grid-template-columns:190px minmax(0,1fr); }.pi-layout { grid-template-columns:210px minmax(0,1fr); }
+  .files-layout,.notes-layout,.pi-layout { grid-template-columns:190px minmax(0,1fr); }.pi-layout { grid-template-columns:225px minmax(0,1fr); }
   .app,.file-preview { padding-inline:16px; }
   .agent-controls select { width:125px; }
   .friday-layout { grid-template-columns:210px minmax(400px,1fr) minmax(320px,35%); }

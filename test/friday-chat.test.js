@@ -142,11 +142,11 @@ rl.on('line', line => {
   assert.deepEqual(fridayPiConversations.sessions.map(({ id }) => id).sort(), ['legacy-flat', 'selected-workspace']);
   assert.deepEqual(fridayPiConversations.sessions.map(({ runId }) => runId).sort(), listedSessions.sessions.map(({ runId }) => runId).sort(), 'Friday panel sees the same stable run IDs');
   const selectedPiConversation = fridayPiConversations.sessions.find(({ id }) => id === 'selected-workspace');
-  assert.equal(selectedPiConversation.running, false, 'a saved session without an open runtime is reported as saved');
-  assert.equal(selectedPiConversation.opening, false);
   assert.deepEqual(selectedPiConversation.availableRepositories, ['repo-a', 'repo-b']);
   assert.deepEqual(selectedPiConversation.visibleRepositories, ['repo-a', 'repo-b'], 'unconfigured sessions default to all managed repositories visible');
   assert.deepEqual(fridayPiConversations.sessions.find(({ id }) => id === 'legacy-flat').visibleRepositories, ['repo-a', 'repo-b'], 'legacy sessions are visible by default without a stored override');
+  assert.equal(selectedPiConversation.running, false, 'a saved session without an open runtime is reported as saved');
+  assert.equal(selectedPiConversation.opening, false);
   const profileResponse = await request(`/api/friday/pi-conversations/${selectedPiConversation.runId}/profile`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ expertise: ['Node.js'], responsibilities: ['API ownership'], repositories: ['friday'], capacity: 2 }),
@@ -158,7 +158,6 @@ rl.on('line', line => {
   assert.deepEqual(profiled.responsibilities, ['API ownership']);
   assert.deepEqual(profiled.repositories, ['friday']);
   assert.equal(profiled.capacity, 2);
-  assert.deepEqual(profiled.workload, { queued: 0, running: 0, reviewing: 0, unknown: 0, openTasks: 0 });
   const visibilityUrl = `/api/friday/pi-conversations/${selectedPiConversation.runId}/repository-visibility`;
   const hideRepo = await request(visibilityUrl, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hiddenRepositories: ['repo-b'] }),
@@ -176,18 +175,26 @@ rl.on('line', line => {
   const afterRecheck = await (await request('/api/friday/pi-conversations')).json();
   assert.deepEqual(afterRecheck.sessions.find(({ runId }) => runId === selectedPiConversation.runId).visibleRepositories, ['repo-a', 'repo-b']);
   assert.deepEqual(afterRecheck.sessions.find(({ runId }) => runId === selectedPiConversation.runId).repositories, ['friday']);
+  assert.deepEqual(profiled.workload, { queued: 0, running: 0, reviewing: 0, unknown: 0, openTasks: 0 });
   const selectedPiResponse = await request('/api/session/select', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Friday-Session': 'friday-pi-status-test' },
     body: JSON.stringify({ cwd: piStatus.workspace, path: selectedPiConversation.path }),
   });
   assert.equal(selectedPiResponse.status, 200);
+  const selectedPiState = await selectedPiResponse.json();
   const refreshedPiConversations = await (await request('/api/friday/pi-conversations')).json();
   const openedPiConversation = refreshedPiConversations.sessions.find(({ id }) => id === 'selected-workspace');
   assert.equal(openedPiConversation.runId, selectedPiConversation.runId);
   assert.equal(openedPiConversation.running, true, 'a server-opened but idle Pi session is reported as open');
   assert.equal(openedPiConversation.busy, false, 'idle open status is distinct from a running prompt');
   assert.equal(openedPiConversation.queuedPrompts, 0);
-  const piStatusHeaders = { 'Content-Type': 'application/json', 'X-Friday-Session': 'friday-pi-status-test' };
+  const attachedWhileIdle = await request('/api/session/select', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Friday-Session': 'idle-viewer' },
+    body: JSON.stringify({ cwd: piStatus.workspace, path: selectedPiConversation.path }),
+  });
+  assert.equal(attachedWhileIdle.status, 200);
+  assert.equal((await attachedWhileIdle.json()).runtimeId, selectedPiState.runtimeId, 'opening an already-live idle session attaches without starting another runtime');
+  const piStatusHeaders = { 'Content-Type': 'application/json', 'X-Friday-Session': selectedPiState.runtimeId };
   const piLongChat = request('/api/chat', {
     method: 'POST', headers: piStatusHeaders, body: JSON.stringify({ message: 'long-running test' }),
   });
@@ -202,10 +209,23 @@ rl.on('line', line => {
   const busyPiConversation = busyPiConversations.sessions.find(({ id }) => id === 'selected-workspace');
   assert.equal(busyPiConversation.running, true);
   assert.equal(busyPiConversation.busy, true, 'the Pi conversation list distinguishes generating from open/idle');
+  const attachedWhileBusy = await request('/api/session/select', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Friday-Session': 'separate-viewer' },
+    body: JSON.stringify({ cwd: piStatus.workspace, path: selectedPiConversation.path }),
+  });
+  assert.equal(attachedWhileBusy.status, 200);
+  const attachedRuntime = await attachedWhileBusy.json();
+  assert.equal(attachedRuntime.runtimeId, selectedPiState.runtimeId, 'opening a running session attaches to its live runtime instead of switching a new runtime onto the same file');
+  assert.equal((await (await request('/api/status', { headers: piStatusHeaders })).json()).busy, true, 'view attachment preserves the active prompt');
   const piAbortResponse = await request('/api/abort', { method: 'POST', headers: piStatusHeaders });
   assert.equal(piAbortResponse.status, 200);
   assert.equal((await piAbortResponse.json()).aborted, true);
   assert.equal((await piLongChat).status, 200);
+  assert.equal((await (await request('/api/status', { headers: piStatusHeaders })).json()).busy, false, 'completion clears the attached running state');
+  const completedPiConversations = await (await request('/api/friday/pi-conversations')).json();
+  const completedPiConversation = completedPiConversations.sessions.find(({ id }) => id === 'selected-workspace');
+  assert.equal(completedPiConversation.busy, false);
+  assert.equal(completedPiConversation.queuedPrompts, 0);
   const settings = await (await request('/api/settings')).json();
   assert.equal(settings.fridayChat.directory, join(dir, 'friday'));
   assert.equal(settings.fridayChat.sessionsDirectory, join(dir, 'friday', 'sessions'));
@@ -223,7 +243,27 @@ rl.on('line', line => {
   const fridayState = await (await request('/api/friday/status')).json();
   assert.equal(fridayState.running, true);
   assert.equal(fridayState.canAbort, false);
+  assert.deepEqual(fridayState.chatQueue, []);
   assert.equal(fridayState.contextUsage, null);
+  const unauthenticatedChat = await fetch(`${base}/api/friday/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'unauthorized' }) });
+  assert.equal(unauthenticatedChat.status, 401, 'chat enqueue requires app authentication');
+  const unauthenticatedCancel = await fetch(`${base}/api/friday/chat/123e4567-e89b-42d3-a456-426614174001/cancel`, { method: 'POST' });
+  assert.equal(unauthenticatedCancel.status, 401, 'queued-message cancellation requires app authentication');
+  const enqueueResponse = await request('/api/friday/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'queue test' }) });
+  assert.equal(enqueueResponse.status, 202);
+  const queuedMessage = await enqueueResponse.json();
+  assert.match(queuedMessage.id, /^[0-9a-f-]{36}$/i);
+  assert.equal(queuedMessage.status, 'queued');
+  let queuedFailure;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const current = await (await request('/api/friday/status')).json();
+    queuedFailure = current.chatQueue.find((job) => job.id === queuedMessage.id);
+    if (queuedFailure?.status === 'failed') break;
+    await delay(10);
+  }
+  assert.equal(queuedFailure?.status, 'failed', 'background failures remain visible in the authorized chat queue status');
+  const lateCancel = await request(`/api/friday/chat/${queuedMessage.id}/cancel`, { method: 'POST' });
+  assert.equal(lateCancel.status, 409, 'a message that has started or failed cannot be cancelled as queued work');
   assert.equal((await (await request('/api/models')).json()).current.id, 'default');
   assert.equal((await (await request('/api/thinking-levels')).json()).current, 'off');
   const fridayHistory = await request('/api/friday/history');

@@ -39,6 +39,7 @@ class FakeElement {
   get scrollTop() { return this.storedScrollTop; }
   set scrollTop(value) { this.scrollWriteCount += 1; if (this.visible) this.storedScrollTop = value; }
   addEventListener(type, listener) { this.listeners.set(type, listener); }
+  focus() { this.focused = true; }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   getAttribute(name) { return this.attributes.get(name) ?? null; }
   replaceChildren(...items) {
@@ -115,7 +116,7 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   globalThis.setTimeout = (callback, delay) => { const id = ++nextTimerId; timers.set(id, { callback, delay }); return id; };
   globalThis.clearTimeout = (id) => timers.delete(id);
   const ids = [
-    'friday-messages', 'friday-form', 'friday-message', 'friday-send', 'friday-model',
+    'friday-messages', 'friday-form', 'friday-message', 'friday-send', 'friday-stop', 'friday-chat-queue', 'friday-model',
     'friday-thinking-level', 'friday-status', 'friday-task-panel', 'friday-task-board', 'friday-context-usage', 'friday-context-progress',
     'friday-context-label', 'friday-announcement',
   ];
@@ -146,6 +147,9 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   let historyReads = 0;
   const historyRequests = [];
   let delegatedTask = null;
+  let chatJobs = [];
+  const queuedPosts = [];
+  const cancelledJobs = [];
   let historyOverride = null;
   const pendingHistory = [];
   const historyWire = (items) => {
@@ -172,14 +176,26 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
     const messages = all.slice(index + (changed ? 0 : 1));
     return { messages, sessionId: backendSessionId, reset: false, incremental: true, unchanged: messages.length === 0, latestId: latest?.id || null, latestRevision: latest?.revision || null };
   };
-  const apiJson = async (path) => {
+  const apiJson = async (path, options = {}) => {
     if (path.startsWith('/api/friday/history')) {
       historyReads += 1;
       historyRequests.push(path);
       if (historyOverride) { const response = historyOverride; historyOverride = null; return response; }
       return pendingHistory.shift()?.promise || historyResponse(path);
     }
-    if (path === '/api/friday/status') return { busy: fridayBusy, canAbort: fridayBusy, contextUsage: null, delegatedTask, tasks: delegatedTask ? [delegatedTask] : [] };
+    if (path === '/api/friday/status') return { busy: fridayBusy, canAbort: fridayBusy, chatQueue: chatJobs, contextUsage: null, delegatedTask, tasks: delegatedTask ? [delegatedTask] : [] };
+    if (path === '/api/friday/chat' && options.method === 'POST') {
+      const id = `123e4567-e89b-42d3-a456-42661417400${queuedPosts.length + 1}`;
+      queuedPosts.push({ id, message: JSON.parse(options.body).message });
+      chatJobs.push({ id, status: 'queued', position: chatJobs.length + 1 });
+      return { id, status: 'queued', position: chatJobs.length };
+    }
+    const cancelMatch = path.match(/^\/api\/friday\/chat\/([0-9a-f-]+)\/cancel$/);
+    if (cancelMatch && options.method === 'POST') {
+      cancelledJobs.push(cancelMatch[1]);
+      chatJobs = chatJobs.filter((job) => job.id !== cancelMatch[1]);
+      return { id: cancelMatch[1], cancelled: true };
+    }
     if (path === '/api/friday/models') return { models: [], current: null };
     if (path === '/api/friday/thinking-levels') return { levels: ['off'], current: 'off' };
     throw new Error(`Unexpected API request: ${path}`);
@@ -410,5 +426,33 @@ test('Friday chat scrolls to latest on first visible entry and re-entry, but pre
   assert.equal(taskBoard.children[0].children.find((child) => child.className === 'friday-task-details').open, true, 'polling preserves expanded task details');
   assert.equal(taskBoard.scrollTop, 36, 'polling preserves the task list scroll position');
   assert.equal([...timers.values()][0].delay, 2_000, 'busy Friday conversations poll more frequently');
+  assert.equal(composer.disabled, false, 'the composer stays available during an active Friday response');
+  assert.equal(elements.get('friday-stop').hidden, false, 'stopping the active response is a separate control');
+  const form = elements.get('friday-form');
+  const submit = form.listeners.get('submit');
+  composer.value = 'follow-up while busy';
+  composer.listeners.get('input')();
+  assert.equal(elements.get('friday-send').disabled, false);
+  await submit({ preventDefault() {} });
+  assert.equal(queuedPosts.at(-1).message, 'follow-up while busy');
+  assert.equal(chatJobs.find((job) => job.id === queuedPosts.at(-1).id).status, 'queued');
+  composer.value = 'another follow-up';
+  composer.listeners.get('input')();
+  await submit({ preventDefault() {} });
+  const [activeJob, queuedJob] = queuedPosts.slice(-2);
+  chatJobs = [
+    { id: activeJob.id, status: 'running', position: 0 },
+    { id: queuedJob.id, status: 'queued', position: 1 },
+  ];
+  await chat.refreshTranscript();
+  const queueRows = elements.get('friday-chat-queue').children;
+  assert.equal(queueRows.length, 2, 'active and queued messages have visible per-message state');
+  assert.match(treeText(queueRows[1]), /Queued · 1/);
+  assert.match(treeText(queueRows[1]), /Cancel queued message/);
+  queueRows[1].children.find((child) => child.textContent === 'Cancel queued message').listeners.get('click')();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(cancelledJobs, [queuedJob.id], 'only the specifically queued message is cancelled');
+  assert.deepEqual(chatJobs.map((job) => job.id), [activeJob.id], 'cancellation leaves the active message untouched');
   chat.stop();
 });

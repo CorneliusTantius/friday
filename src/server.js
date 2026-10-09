@@ -741,16 +741,21 @@ async function findSession(workspace, path) {
   return session;
 }
 
+function runtimeForSessionPath(workspace, sessionPath) {
+  return [...piSessions.entries()]
+    .filter(([, entry]) => entry.pi.workspace === workspace && entry.pi.currentSessionPath === sessionPath)
+    .sort(([, a], [, b]) => Number(b.pi.isBusy) - Number(a.pi.isBusy)
+      || (b.pi.promptQueue?.length || 0) - (a.pi.promptQueue?.length || 0))
+    .map(([runtimeId, entry]) => ({ runtimeId, pi: entry.pi }))[0] || null;
+}
+
 async function sessionsWithRunIds(workspace, { includeRepositoryVisibility = false } = {}) {
   const sessions = await listSessions(workspace);
   const runIds = await piRunRegistry.ensureRuns(sessions.map(({ path, id, name }) => ({ workspace, sessionPath: path, sessionId: id, name })));
   const registeredRuns = await Promise.all(runIds.map((runId) => piRunRegistry.getRun(runId)));
-  const runtimeByPath = new Map([...piSessions.entries()]
-    .filter(([, entry]) => entry.pi.workspace === workspace && entry.pi.currentSessionPath)
-    .map(([runtimeId, entry]) => [entry.pi.currentSessionPath, { runtimeId, pi: entry.pi }]));
   return Promise.all(sessions.map(async (session, index) => {
     const runId = runIds[index];
-    const runtime = runtimeByPath.get(session.path);
+    const runtime = runtimeForSessionPath(workspace, session.path);
     const run = registeredRuns[index];
     const tasks = await piRunRegistry.listTasks({ runId });
     const openTasks = tasks.filter((task) => ['queued', 'running', 'reviewing', 'outcome-unknown'].includes(task.status));
@@ -1019,7 +1024,7 @@ async function deletePiConversation({ runId, conversationId, userMessage, previo
 async function getPiRunStatus(runId) {
   const run = await piRunRegistry.getRun(runId);
   if (!run) return null;
-  const runtime = [...piSessions.values()].find((entry) => entry.pi.currentSessionPath === run.sessionPath);
+  const runtime = runtimeForSessionPath(run.workspace, run.sessionPath)?.pi;
   const exists = (await listSessions(run.workspace)).some((session) => session.path === run.sessionPath);
   return {
     runId: run.id,
@@ -1212,6 +1217,7 @@ async function handleFridayRequest(request, response, pathname) {
       tasks: taskList.slice(0, 30),
       busy: pi.isBusy,
       canAbort: pi.canAbort,
+      chatQueue: pi.getChatQueue(),
       sessionPath: pi.currentSessionPath,
       model: modelForClient(pi.currentModel),
       thinkingLevel: pi.currentThinkingLevel,
@@ -1340,6 +1346,13 @@ async function handleFridayRequest(request, response, pathname) {
     });
     return;
   }
+  const cancelChatMatch = pathname.match(/^\/api\/friday\/chat\/([0-9a-f-]{36})\/cancel$/i);
+  if (request.method === 'POST' && cancelChatMatch) {
+    const cancelled = pi.cancelQueuedChat(cancelChatMatch[1]);
+    if (!cancelled) throw new RequestError('Only a queued Friday message can be cancelled', 409);
+    sendJson(response, 200, { id: cancelChatMatch[1], cancelled: true });
+    return;
+  }
   if (request.method === 'POST' && pathname === '/api/friday/chat') {
     const body = await readJson(request);
     if (typeof body.message !== 'string' || !body.message.trim()) {
@@ -1349,26 +1362,29 @@ async function handleFridayRequest(request, response, pathname) {
       throw new RequestError('message is too long');
     }
     const userMessage = body.message.trim();
-    await waitForConversationReview(pi.currentSessionId);
-    socialContentAccessed = false;
-    const reply = await pi.chat(userMessage);
-    const providerContentUsed = socialContentAccessed;
-    socialContentAccessed = false;
-    if (!providerContentUsed) {
-      const now = new Date();
-      try {
-        await fridayMemory.appendDailyLog({
-          date: now.toISOString().slice(0, 10),
-          timestamp: now.toISOString(),
-          conversationId: pi.currentSessionId,
-          userMessage,
-          fridayReply: reply,
-        });
-      } catch (error) {
-        console.error(`Friday daily log write failed: ${error.message}`);
-      }
-    }
-    sendJson(response, 200, { role: 'assistant', content: reply });
+    const conversationId = pi.currentSessionId;
+    const job = pi.enqueueChat(userMessage, {
+      conversationId,
+      beforeRun: () => waitForConversationReview(conversationId),
+      onComplete: async (reply) => {
+        const providerContentUsed = socialContentAccessed;
+        socialContentAccessed = false;
+        if (providerContentUsed) return;
+        const now = new Date();
+        try {
+          await fridayMemory.appendDailyLog({
+            date: now.toISOString().slice(0, 10),
+            timestamp: now.toISOString(),
+            conversationId,
+            userMessage,
+            fridayReply: reply,
+          });
+        } catch (error) {
+          console.error(`Friday daily log write failed: ${error.message}`);
+        }
+      },
+    });
+    sendJson(response, 202, job);
     return;
   }
   sendJson(response, 404, { error: 'Not found' });
@@ -2140,11 +2156,12 @@ async function handleRequest(request, response) {
     try {
       const runId = await piRunRegistry.ensureRun({ workspace, sessionPath: selected.path, sessionId: selected.id, name: selected.name });
 
-      let selectedPi = pi;
-      let runtimeId = clientIdFor(request);
+      const attachedRuntime = runtimeForSessionPath(workspace, selected.path);
+      let selectedPi = attachedRuntime?.pi || pi;
+      let runtimeId = attachedRuntime?.runtimeId || clientIdFor(request);
       const sharedRuntime = runtimeHasOtherViewers(runtimeId, viewerIdFor(request));
       const changingSharedSession = sharedRuntime && pi.currentSessionPath !== selected.path;
-      if (pi.isBusy || changingSharedSession) {
+      if (!attachedRuntime && (pi.isBusy || changingSharedSession)) {
         runtimeId = randomUUID();
         selectedPi = createPiRuntime(runtimeId, workspace);
       }

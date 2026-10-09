@@ -17,7 +17,7 @@ const css = await readFile(new URL('../public/styles.css', import.meta.url), 'ut
 const login = await readFile(new URL('../public/login.html', import.meta.url), 'utf8');
 
 test('public workspace UI contract has every feature, form, and shell integration', () => {
-  for (const id of ['friday-feature','pi-feature','files-feature','dashboard-feature','repos-feature','notes-feature','finances-feature','socials-feature','calendar-feature','settings-feature','friday-form','chat-form','file-save','finance-form','clone-repo-form','workspace-sidebar','assistant-rail','shell-command-dialog','shell-command-input']) {
+  for (const id of ['friday-feature','pi-feature','files-feature','dashboard-feature','repos-feature','notes-feature','finances-feature','socials-feature','calendar-feature','settings-feature','friday-form','friday-chat-queue','friday-stop','chat-form','file-save','finance-form','clone-repo-form','workspace-sidebar','assistant-rail','shell-command-dialog','shell-command-input']) {
     assert.equal((html.match(new RegExp(`\\bid=["']${id}["']`, 'g')) || []).length, 1, `expected one #${id}`);
   }
   assert.match(html, /data-shell-drawer="assistant"/);
@@ -32,6 +32,14 @@ test('public workspace UI contract has every feature, form, and shell integratio
   assert.match(app, /onEnter: refreshFridayAgentViewData/);
   assert.match(app, /apiJson\('\/api\/friday\/pi-conversations'/);
   assert.match(html, /id="friday-task-board"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(html, /id="friday-chat-queue"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(chat, /Cancel queued message/);
+  assert.match(chat, /function cancelQueuedMessage/);
+  assert.match(chat, /runtime\.chatQueue/);
+  assert.match(css, /\.pi-layout \{ grid-template-columns:260px minmax\(0,1fr\); \}/);
+  assert.match(css, /\.pi-layout \{ grid-template-columns:225px minmax\(0,1fr\); \}/);
+  assert.match(css, /@media \(max-width:1000px\)[\s\S]*\.pi-layout,\.files-layout,\.notes-layout \{ display:block; \}/);
+  assert.match(css, /@media \(max-width:1000px\)[\s\S]*\.pi-sidebar[^}]*width:min\(84vw,310px\)/);
   assert.match(sessionCards, /Edit staff profile/);
   assert.match(sessionCards, /Expertise \(one per line\)/);
   assert.match(sessionCards, /Responsibilities \(one per line\)/);
