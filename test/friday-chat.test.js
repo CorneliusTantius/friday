@@ -101,6 +101,10 @@ rl.on('line', line => {
   const script = await request('/friday-chat.js');
   assert.equal(script.status, 200);
   assert.match(script.headers.get('content-type'), /javascript/);
+  const sessionCards = await request('/friday-pi-session-cards.js');
+  assert.equal(sessionCards.status, 200, 'the app session-card module must be served for app.js startup');
+  assert.match(sessionCards.headers.get('content-type'), /javascript/);
+  assert.match(await sessionCards.text(), /createFridayPiSessionCards/);
   const markdown = await request('/markdown.js');
   assert.equal(markdown.status, 200, 'the app renderer module must be served for app.js startup');
   assert.match(markdown.headers.get('content-type'), /javascript/);

@@ -1153,6 +1153,7 @@ async function serveStatic(pathname, response) {
     '/login.js': 'login.js',
     '/app.js': 'app.js',
     '/friday-chat.js': 'friday-chat.js',
+    '/friday-pi-session-cards.js': 'friday-pi-session-cards.js',
     '/socials.js': 'socials.js',
     '/local-calendar.js': 'local-calendar.js',
     '/calendar-view.js': 'calendar-view.js',
